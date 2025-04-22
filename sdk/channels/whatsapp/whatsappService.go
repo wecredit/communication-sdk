@@ -22,6 +22,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	sinchData.Mobile = msg.Mobile
 	sinchData.Process = msg.ProcessName
 
+	utils.Debug("Fetching whatsapp process data")
 	wpProcessData, err := database.GetWhatsappProcessData(database.DBanalytics, msg.ProcessName, msg.Source)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err))
