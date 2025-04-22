@@ -3,7 +3,7 @@ package timespayloads
 import (
 	"strings"
 
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 )
 
 func GetTimesMediaPayload(timesApiModel extapimodels.TimesAPIModel) (map[string]interface{}, error) {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	models "dev.azure.com/wctec/communication-engine/sdk/internal/models"
+	models "github.com/wecredit/communication-sdk/sdk/internal/models"
 )
 
 func verifyMobile(mobile string) string {

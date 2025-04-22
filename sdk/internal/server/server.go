@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"dev.azure.com/wctec/communication-engine/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/config"
 )
 
 func Start() {

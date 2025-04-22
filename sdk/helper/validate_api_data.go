@@ -3,7 +3,7 @@ package helper
 // import (
 // 	"strings"
 
-// 	models "dev.azure.com/wctec/communication-engine/internal/models/api"
+// 	models "github.com/wecredit/communication-sdk/internal/models/api"
 // )
 
 // const (

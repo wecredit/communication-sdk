@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
 

@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
 	"github.com/joho/godotenv"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 // Log levels

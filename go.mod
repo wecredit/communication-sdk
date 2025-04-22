@@ -1,4 +1,4 @@
-module dev.azure.com/wctec/communication-engine
+module github.com/wecredit/communication-sdk
 
 go 1.23.5
 

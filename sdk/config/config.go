@@ -5,8 +5,8 @@ import (
 	"os"
 	"reflect"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models"
 	"github.com/joho/godotenv"
+	"github.com/wecredit/communication-sdk/sdk/internal/models"
 )
 
 // Create an instance of Config

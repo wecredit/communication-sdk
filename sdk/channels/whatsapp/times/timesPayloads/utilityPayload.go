@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 )
 
 func GetTimesUtilityPayload(timesApiModel extapimodels.TimesAPIModel) (map[string]interface{}, error) {

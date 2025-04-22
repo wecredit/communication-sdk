@@ -3,12 +3,12 @@ package sms
 import (
 	"fmt"
 
-	sinchpayloads "dev.azure.com/wctec/communication-engine/sdk/channels/sms/sinch/sinchPayloads"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models"
-	apimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/apiModels"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch/sinchPayloads"
+	"github.com/wecredit/communication-sdk/sdk/internal/models"
+	apimodels "github.com/wecredit/communication-sdk/sdk/internal/models/apiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func HitSinchApi(timesApiModel extapimodels.TimesAPIModel, config models.Config) (apimodels.WpApiResponseData, error) {

@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	sinchpayloads "dev.azure.com/wctec/communication-engine/sdk/channels/whatsapp/sinch/sinchPayloads"
-	"dev.azure.com/wctec/communication-engine/sdk/config"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/apiModels"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch/sinchPayloads"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/apiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiResponseData {

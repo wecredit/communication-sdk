@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"net/url"
 
-	"dev.azure.com/wctec/communication-engine/sdk/config"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 const (

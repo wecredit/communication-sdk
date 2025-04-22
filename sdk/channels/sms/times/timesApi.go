@@ -4,12 +4,12 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	timespayloads "dev.azure.com/wctec/communication-engine/sdk/channels/sms/times/timesPayloads"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models"
-	apimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/apiModels"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	timespayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/times/timesPayloads"
+	"github.com/wecredit/communication-sdk/sdk/internal/models"
+	apimodels "github.com/wecredit/communication-sdk/sdk/internal/models/apiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func HitTimesApi(timesApiModel extapimodels.TimesAPIModel, config models.Config) apimodels.WpApiResponseData {

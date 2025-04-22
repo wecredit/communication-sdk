@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/sdkModels"
-	services "dev.azure.com/wctec/communication-engine/sdk/internal/services/apiServices"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
+	services "github.com/wecredit/communication-sdk/sdk/internal/services/apiServices"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 )
 
 func HandleCommApi(w http.ResponseWriter, r *http.Request) {

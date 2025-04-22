@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"time"
 
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 // RetryApiCall handles retries for an API call

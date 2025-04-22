@@ -3,12 +3,12 @@ package sdk
 import (
 	"fmt"
 
-	rcs "dev.azure.com/wctec/communication-engine/sdk/channels/rcs/sinch"
-	"dev.azure.com/wctec/communication-engine/sdk/channels/whatsapp"
-	"dev.azure.com/wctec/communication-engine/sdk/config"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/sdkModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
+	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func Send(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {

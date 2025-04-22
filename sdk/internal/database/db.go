@@ -3,8 +3,8 @@ package database
 import (
 	"fmt"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models"
+	"github.com/wecredit/communication-sdk/sdk/internal/models"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 )

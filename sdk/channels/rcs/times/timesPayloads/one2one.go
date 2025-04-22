@@ -3,7 +3,7 @@ package timespayloads
 // import (
 // 	"fmt"
 
-// 	"dev.azure.com/wctec/communication-engine/internal/models"
+// 	"github.com/wecredit/communication-sdk/internal/models"
 // )
 
 // func verifyMobile(mobile string) string {
@@ -24,7 +24,7 @@ package timespayloads
 //  		"rcsDlrRetry": ”<true/false>”,
 //  		"soipDlrRetry": ”<true/false>”,
 //  		"from": "<6 Char SenderID>",
-//  		"shortMessages": 
+//  		"shortMessages":
 // 	}
 // 	return templatePayload, nil
 // }

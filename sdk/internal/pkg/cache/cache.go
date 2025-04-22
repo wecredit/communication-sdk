@@ -5,9 +5,9 @@ import (
 	"log"
 	"sync"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/database"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
 	"github.com/dgraph-io/ristretto"
+	"github.com/wecredit/communication-sdk/sdk/internal/database"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -63,7 +63,6 @@ func (c *Cache) Get(key string) ([]map[string]interface{}, bool) {
 	}
 	return nil, false
 }
-
 
 func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 	data, err := database.GetDataFromTable(tableName, db)

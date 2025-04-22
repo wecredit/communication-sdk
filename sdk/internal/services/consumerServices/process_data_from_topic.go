@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/queue"
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	"github.com/wecredit/communication-sdk/sdk/internal/queue"
 )
 
 // ConsumerService consumes messages from an Azure Service Bus subscription

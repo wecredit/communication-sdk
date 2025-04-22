@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	models "dev.azure.com/wctec/communication-engine/sdk/internal/models"
+	models "github.com/wecredit/communication-sdk/sdk/internal/models"
 )
 
 func GetBulkMessagePayload(recpients []string, config models.Config) (map[string]interface{}, error) {

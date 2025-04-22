@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"dev.azure.com/wctec/communication-engine/sdk/config"
-	"dev.azure.com/wctec/communication-engine/sdk/helper"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/helper"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 )
 
 func GetSinchMediaPayload(sinchApiModel extapimodels.SinchAPIModel) map[string]interface{} {

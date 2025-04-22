@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/sdkModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/pkg/cache"
 )
 
 // Define a key type to avoid context key collisions

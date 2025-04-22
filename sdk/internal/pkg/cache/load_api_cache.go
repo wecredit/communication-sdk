@@ -1,9 +1,9 @@
 package cache
 
 import (
-	"dev.azure.com/wctec/communication-engine/sdk/internal/database"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/internal/database"
+	"github.com/wecredit/communication-sdk/sdk/internal/models"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 )
 
 func LoadApiDataIntoCache(config models.Config) {

@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	"dev.azure.com/wctec/communication-engine/sdk/helper"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/helper"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 )
 
 type TokenCache struct {

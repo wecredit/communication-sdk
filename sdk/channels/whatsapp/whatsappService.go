@@ -3,13 +3,13 @@ package whatsapp
 import (
 	"fmt"
 
-	sinchWhatsapp "dev.azure.com/wctec/communication-engine/sdk/channels/whatsapp/sinch"
-	timesWhatsapp "dev.azure.com/wctec/communication-engine/sdk/channels/whatsapp/times"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/database"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/sdkModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	sinchWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch"
+	timesWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times"
+	"github.com/wecredit/communication-sdk/sdk/internal/database"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {

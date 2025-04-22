@@ -3,13 +3,13 @@ package rcs
 import (
 	"fmt"
 
-	"dev.azure.com/wctec/communication-engine/sdk/config"
-	"dev.azure.com/wctec/communication-engine/sdk/helper"
-	extapimodels "dev.azure.com/wctec/communication-engine/sdk/internal/models/extApiModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/models/sdkModels"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/pkg/cache"
-	"dev.azure.com/wctec/communication-engine/sdk/internal/utils"
-	"dev.azure.com/wctec/communication-engine/sdk/variables"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/helper"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/internal/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendRCSMessage(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
