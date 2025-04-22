@@ -6,8 +6,6 @@ import (
 	"reflect"
 
 	"github.com/joho/godotenv"
-	"github.com/wecredit/communication-sdk/sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 	"github.com/wecredit/communication-sdk/sdk/models"
 )
 
@@ -46,19 +44,19 @@ func LoadConfigs() error {
 		}
 	}
 
-	// Connect Analytics DB
-	err := database.ConnectDB(database.Analytics, Configs)
-	if err != nil {
-		return fmt.Errorf("failed to initialize Analytics database: %v", err)
-	}
-	utils.Info("Analytics Database connection pool initialized successfully.")
+	// // Connect Analytics DB
+	// err := database.ConnectDB(database.Analytics, Configs)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to initialize Analytics database: %v", err)
+	// }
+	// utils.Info("Analytics Database connection pool initialized successfully.")
 
-	// Connect Tech DB
-	err = database.ConnectDB(database.Tech, Configs)
-	if err != nil {
-		return fmt.Errorf("failed to initialize Tech database: %v", err)
-	}
-	utils.Info("Tech Database connection pool initialized successfully.")
+	// // Connect Tech DB
+	// err = database.ConnectDB(database.Tech, Configs)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to initialize Tech database: %v", err)
+	// }
+	// utils.Info("Tech Database connection pool initialized successfully.")
 
 	// Configure Queue client
 	// err = queue.InitClient(Configs.AzureCallbackServiceBusConnectionString, true)
