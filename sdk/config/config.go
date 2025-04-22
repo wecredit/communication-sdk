@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	"github.com/joho/godotenv"
-	"github.com/wecredit/communication-sdk/sdk/internal/models"
+	"github.com/wecredit/communication-sdk/sdk/models"
 )
 
 // Create an instance of Config

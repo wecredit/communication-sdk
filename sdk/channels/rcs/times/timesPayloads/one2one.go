@@ -3,7 +3,7 @@ package timespayloads
 // import (
 // 	"fmt"
 
-// 	"github.com/wecredit/communication-sdk/internal/models"
+// 	"github.com/wecredit/communication-sdk/models"
 // )
 
 // func verifyMobile(mobile string) string {

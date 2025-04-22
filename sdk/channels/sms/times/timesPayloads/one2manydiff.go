@@ -3,7 +3,7 @@ package timespayloads
 import (
 	"fmt"
 
-	models "github.com/wecredit/communication-sdk/sdk/internal/models"
+	models "github.com/wecredit/communication-sdk/sdk/models"
 )
 
 // Get Bulk SMS Payload

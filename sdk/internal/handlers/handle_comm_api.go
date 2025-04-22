@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/apiServices"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
 func HandleCommApi(w http.ResponseWriter, r *http.Request) {

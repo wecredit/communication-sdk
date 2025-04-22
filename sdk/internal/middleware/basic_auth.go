@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
 // Define a key type to avoid context key collisions

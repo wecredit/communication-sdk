@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	models "github.com/wecredit/communication-sdk/sdk/internal/models"
+	models "github.com/wecredit/communication-sdk/sdk/models"
 )
 
 func verifyMobile(mobile string) string {

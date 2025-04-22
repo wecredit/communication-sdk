@@ -2,8 +2,8 @@ package cache
 
 import (
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/internal/models"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/models"
 )
 
 func LoadApiDataIntoCache(config models.Config) {

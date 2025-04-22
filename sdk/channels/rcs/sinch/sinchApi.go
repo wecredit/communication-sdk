@@ -5,10 +5,10 @@ import (
 
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/helper"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
-	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 

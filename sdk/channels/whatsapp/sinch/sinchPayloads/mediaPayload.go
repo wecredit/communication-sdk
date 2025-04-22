@@ -6,7 +6,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/helper"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
 func GetSinchMediaPayload(sinchApiModel extapimodels.SinchAPIModel) map[string]interface{} {

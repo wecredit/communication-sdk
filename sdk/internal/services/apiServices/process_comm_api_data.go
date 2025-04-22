@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
 // GenerateCommID generates a unique lead ID using the UUID library

@@ -9,8 +9,8 @@ import (
 	"net/url"
 
 	"github.com/wecredit/communication-sdk/sdk/config"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 

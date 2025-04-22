@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/helper"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
 type TokenCache struct {

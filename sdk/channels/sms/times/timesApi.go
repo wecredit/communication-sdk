@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	timespayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/times/timesPayloads"
-	"github.com/wecredit/communication-sdk/sdk/internal/models"
-	apimodels "github.com/wecredit/communication-sdk/sdk/internal/models/apiModels"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/models"
+	apimodels "github.com/wecredit/communication-sdk/sdk/models/apiModels"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 

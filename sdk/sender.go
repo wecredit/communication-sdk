@@ -6,8 +6,8 @@ import (
 	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
 	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/internal/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
