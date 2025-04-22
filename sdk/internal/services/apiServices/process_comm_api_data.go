@@ -1,5 +1,5 @@
 package services
-
+/* 
 import (
 	"encoding/json"
 	"fmt"
@@ -26,8 +26,7 @@ func GenerateCommID() string {
 }
 
 func ProcessCommApiData(data sdkModels.CommApiRequestBody) (int, sdkModels.CommApiResponseBody) {
-
-	/* 	isValidate, message := helper.ValidateCommRequest(data)
+ 	isValidate, message := helper.ValidateCommRequest(data)
 
 	   	if !isValidate {
 	   		return http.StatusBadRequest, models.CommApiResponseBody{
@@ -35,7 +34,6 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (int, sdkModels.CommA
 	   			StatusMessage: message,
 	   		}
 	   	}
-	*/
 	// Set CommId for requested Data
 	CommId := GenerateCommID()
 
@@ -79,3 +77,4 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (int, sdkModels.CommA
 		CommId:  CommId,
 	}
 }
+ */

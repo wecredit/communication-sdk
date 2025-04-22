@@ -34,18 +34,7 @@ type Config struct {
 	// Times API Details
 	TimesWpApiUrl   string `envconfig:"TIMES_WP_API_URL"`
 	TimesWpAPIToken string `envconfig:"TIMES_WP_API_TOKEN"`
-
-	// Azure Service bus
-	AzureTopicName                          string `envconfig:"AZURE_TOPIC_NAME"`
-	AzureTopicSubscription                  string `envconfig:"AZURE_TOPIC_SUBSCRIPTION"`
-	AzureLenderDelayQueue                   string `envconfig:"AZURE_LENDER_DELAY_QUEUE"`
-	MasterApiSubscription                   string `envconfig:"MASTER_API_SUBSCRIPTION"`
-	AzureErrorQueue                         string `envconfig:"AZURE_ERROR_QUEUE"`
-	AzureCallbackTopicName                  string `envconfig:"AZURE_CALLBACK_TOPIC_NAME"`
-	AzureCallbackSubscription               string `envconfig:"AZURE_CALLBACK_SUBSCRIPTION"`
-	AzureServiceBusConnectionString         string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
-	AzureCallbackServiceBusConnectionString string `envconfig:"AZURE_CALLBACK_SERVICEBUS_CONNECTION_STRING"`
-
+	
 	// Times SMS API Variables
 	TimesSmsApiUserName  string `envconfig:"TIMES_SMS_API_USERNAME"`
 	TimesSmsApiPassword  string `envconfig:"TIMES_SMS_API_PASSWORD"`

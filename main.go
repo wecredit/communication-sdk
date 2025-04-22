@@ -11,11 +11,12 @@ import (
 func main() {
 
 	request := sdkModels.CommApiRequestBody{
-		Mobile:      "7570897034",
-		Email:       "",
-		Channel:     "WHATSAPP",
-		ProcessName: "lnt_ag",
-		Source:      "sinch",
+		DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
+		Mobile:       "7570897034",
+		Email:        "",
+		Channel:      "WHATSAPP",
+		ProcessName:  "lnt_ag",
+		Source:       "sinch",
 	}
 
 	// Call your SDK's Send function

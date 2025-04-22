@@ -1,12 +1,13 @@
 package sdkModels
 
 type CommApiRequestBody struct {
-	DSN         string
-	Mobile      string `json:"mobile"`
-	Email       string `json:"email"`
-	Channel     string `json:"channel"`
-	ProcessName string `json:"processName"`
-	Source      string `json:"source"`
+	DsnAnalytics string
+	DsnTech      string
+	Mobile       string `json:"mobile"`
+	Email        string `json:"email"`
+	Channel      string `json:"channel"`
+	ProcessName  string `json:"processName"`
+	Source       string `json:"source"`
 }
 
 type CommApiResponseBody struct {

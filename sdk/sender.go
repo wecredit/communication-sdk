@@ -26,7 +26,7 @@ func Send(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, erro
 
 	utils.Debug(fmt.Sprintf("Channel: %s", msg.Channel))
 
-	dbAnalytics, err = gorm.Open(sqlserver.Open(msg.DSN), &gorm.Config{})
+	dbAnalytics, err = gorm.Open(sqlserver.Open(msg.DsnAnalytics), &gorm.Config{})
 	if err != nil {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to connect to Analytical DB: %w", err)
 	}

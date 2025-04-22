@@ -1,6 +1,6 @@
 package server
 
-import (
+/* import (
 	"log"
 	"net/http"
 
@@ -18,3 +18,4 @@ func StartConsumer(port string) {
 	log.Printf("Server running on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
+ */
