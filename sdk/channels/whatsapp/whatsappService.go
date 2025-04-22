@@ -10,9 +10,10 @@ import (
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
+	"gorm.io/gorm"
 )
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+func SendWpByProcess(db *gorm.DB, msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
 	var timeData extapimodels.TimesAPIModel
 	var sinchData extapimodels.SinchAPIModel
 
@@ -23,7 +24,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	sinchData.Process = msg.ProcessName
 
 	utils.Debug("Fetching whatsapp process data")
-	wpProcessData, err := database.GetWhatsappProcessData(database.DBanalytics, msg.ProcessName, msg.Source)
+	wpProcessData, err := database.GetWhatsappProcessData(db, msg.ProcessName, msg.Source)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err))
 		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err)
