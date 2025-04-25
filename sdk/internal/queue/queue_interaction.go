@@ -15,7 +15,7 @@ import (
 ) */
 
 // SendMessage allows putting data in Azure Topic with a subject for a specific subscription
-func SendMessage(messageMap interface{}, topicName string) error {
+func SendMessage(messageMap interface{}, topicName, subject string) error {
 	// Serialize the map to JSON
 	messageBytes, err := json.Marshal(messageMap)
 	if err != nil {
@@ -31,8 +31,8 @@ func SendMessage(messageMap interface{}, topicName string) error {
 
 	// Prepare and send the message with a subject
 	sbMessage := &azservicebus.Message{
-		Body: messageBytes,
-		// Subject: &subject,
+		Body:    messageBytes,
+		Subject: &subject,
 	}
 	err = sender.SendMessage(context.TODO(), sbMessage, nil)
 	if err != nil {

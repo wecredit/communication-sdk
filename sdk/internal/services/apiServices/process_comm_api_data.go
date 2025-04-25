@@ -34,6 +34,12 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiRes
 	// Set CommId for requested Data
 	CommId := GenerateCommID()
 
+	subject := "nonpriority"
+
+	if data.IsPriority {
+		subject = "priority"
+	}
+
 	// Convert the struct to JSON (byte slice)
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
@@ -49,18 +55,9 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiRes
 		utils.Error(fmt.Errorf("failed to convert data to map: %w", err))
 	}
 
-	// Define topic subject based on source
-	// var subject string
-
-	// if data.Source == variables.MasterApi || data.Source == variables.MasterApiTest {
-	// 	subject = variables.MasterData
-	// } else {
-	// 	subject = variables.NonMasterData
-	// }
-
 	// Send the map to Azure Queue
 
-	err = queue.SendMessage(dataMap, config.Configs.QueueTopicName)
+	err = queue.SendMessage(dataMap, config.Configs.QueueTopicName, subject)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))
 		return sdkModels.CommApiResponseBody{

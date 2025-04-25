@@ -7,6 +7,7 @@ type CommApiRequestBody struct {
 	Email       string `json:"email"`
 	Channel     string `json:"channel"`
 	ProcessName string `json:"processName"`
+	IsPriority  bool   `json:"isPriority"`
 	Vendor      string `json:"vendor"`
 }
 
