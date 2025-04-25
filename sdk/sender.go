@@ -1,14 +1,13 @@
 package sdk
 
 import (
+	"encoding/json"
 	"fmt"
 
-	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
-	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	services "github.com/wecredit/communication-sdk/sdk/internal/services/apiServices"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
-	"github.com/wecredit/communication-sdk/sdk/variables"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 )
@@ -31,12 +30,23 @@ func Send(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, erro
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to connect to Analytical DB: %w", err)
 	}
 
-	switch msg.Channel {
-	case variables.WhatsApp:
-		return whatsapp.SendWpByProcess(dbAnalytics, msg)
-	case variables.RCS:
-		return rcs.SendRCSMessage(msg)
-	default:
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid channel: %s", msg.Channel)
+	response, err := services.ProcessCommApiData(msg)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in processing message: %v", err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in processing message: %v", err)
 	}
+
+	responseJSON, _ := json.Marshal(response)
+	utils.Info("Response Data: " + string(responseJSON))
+
+	return response, nil
+
+	// switch msg.Channel {
+	// case variables.WhatsApp:
+	// 	return whatsapp.SendWpByProcess(dbAnalytics, msg)
+	// case variables.RCS:
+	// 	return rcs.SendRCSMessage(msg)
+	// default:
+	// 	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid channel: %s", msg.Channel)
+	// }
 }

@@ -18,6 +18,11 @@ type Config struct {
 	DbPasswordTech string `envconfig:"DB_PASSWORD_TECH"`
 	DbNameTech     string `envconfig:"DB_NAME_TECH"`
 
+	// Azure Queue Details
+	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
+	QueueTopicName        string `envconfig:"AZURE_TOPIC_NAME"`
+	QueueSubscriptionName string `envconfig:"AZURE_DB_SUBSCRIPTION"`
+
 	// Auth Table Variables
 	BasicAuthTableName string `envconfig:"AUTH_TABLE_NAME"`
 
@@ -34,7 +39,7 @@ type Config struct {
 	// Times API Details
 	TimesWpApiUrl   string `envconfig:"TIMES_WP_API_URL"`
 	TimesWpAPIToken string `envconfig:"TIMES_WP_API_TOKEN"`
-	
+
 	// Times SMS API Variables
 	TimesSmsApiUserName  string `envconfig:"TIMES_SMS_API_USERNAME"`
 	TimesSmsApiPassword  string `envconfig:"TIMES_SMS_API_PASSWORD"`

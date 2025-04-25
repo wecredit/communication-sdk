@@ -1,6 +1,11 @@
 package env
 
 const (
+	// Azure Queue Details
+	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
+	AZURE_TOPIC_NAME                   = "communication-uat"
+	AZURE_DB_SUBSCRIPTION              = "communication-sub"
+
 	// Times API Details
 	TIMES_WP_API_URL   = "https://wecredit1.timespanel.in/wa/v2/messages/send"
 	TIMES_WP_API_TOKEN = "9a0ca0c782680cc6348da75f6fe97f060ee0c52ec742be2186"

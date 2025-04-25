@@ -3,8 +3,8 @@ package database
 import (
 	"fmt"
 
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
 	"github.com/wecredit/communication-sdk/sdk/models"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 )

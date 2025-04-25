@@ -1,51 +1,46 @@
 package helper
 
-// import (
-// 	"strings"
+import (
+	"strings"
 
-// 	models "github.com/wecredit/communication-sdk/models/api"
-// )
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/variables"
+)
 
-// const (
-// 	Sms      = "SMS"
-// 	Email    = "Email"
-// 	WhatsApp = "WhatsApp"
-// )
+// ValidateCommRequest validates the CommApi request fields
+func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
+	// Trim inputs to avoid issues with spaces
+	channel := strings.TrimSpace(data.Channel)
+	mobile := strings.TrimSpace(data.Mobile)
+	email := strings.TrimSpace(data.Email)
+	processName := strings.TrimSpace(data.ProcessName)
 
-// // ValidateCommRequest validates the CommApi request fields
-// func ValidateCommRequest(data models.CommApiRequestBody) (bool, string) {
-// 	// Trim inputs to avoid issues with spaces
-// 	commType := strings.TrimSpace(data.Channel)
-// 	mobile := strings.TrimSpace(data.Mobile)
-// 	email := strings.TrimSpace(data.Email)
-// 	processName := strings.TrimSpace(data.ProcessName)
+	// Check if channel is provided
+	if channel == "" {
+		return false, "channel is required"
+	}
 
-// 	// Check if CommType is provided
-// 	if commType == "" {
-// 		return false, "CommType is required"
-// 	}
+	if processName == "" {
+		return false, "ProcessName is required"
+	}
 
-// 	if processName == "" {
-// 		return false, "ProcessName is required"
-// 	}
+	// Validate based on channel
+	switch channel {
+	case variables.SMS:
+		if mobile == "" {
+			return false, "Mobile is required for SMS communication"
+		}
+	case variables.RCS:
+		if email == "" {
+			return false, "Email is required for Email communication"
+		}
+	case variables.WhatsApp:
+		if mobile == "" {
+			return false, "Mobile and ProcessName are required for WhatsApp communication"
+		}
+	default:
+		return false, "Invalid Channel"
+	}
 
-// 	// Validate based on CommType
-// 	switch commType {
-// 	case Sms:
-// 		if mobile == "" {
-// 			return false, "Mobile is required for SMS communication"
-// 		}
-// 	case Email:
-// 		if email == "" {
-// 			return false, "Email is required for Email communication"
-// 		}
-// 	case WhatsApp:
-// 		if mobile == "" {
-// 			return false, "Mobile and ProcessName are required for WhatsApp communication"
-// 		}
-// 	default:
-// 		return false, "Invalid CommType"
-// 	}
-
-// 	return true, "Success" // Validation successful
-// }
+	return true, "Success" // Validation successful
+}

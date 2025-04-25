@@ -6,7 +6,7 @@ import (
 
 	timespayloads "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times/timesPayloads"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/models/apiModels"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"

@@ -11,6 +11,9 @@ func Start() {
 	// Create a new ServeMux
 	mux := http.NewServeMux()
 
+	
+
+
 	// Start the server
 	port := config.Configs.Port
 	log.Printf("Server running on port %s", port)

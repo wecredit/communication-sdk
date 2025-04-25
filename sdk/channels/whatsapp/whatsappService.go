@@ -6,7 +6,7 @@ import (
 	sinchWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"

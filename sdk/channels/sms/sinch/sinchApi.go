@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch/sinchPayloads"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	apimodels "github.com/wecredit/communication-sdk/sdk/models/apiModels"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"

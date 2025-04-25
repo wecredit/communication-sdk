@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
