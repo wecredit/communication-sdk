@@ -29,7 +29,7 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiRes
 	isValidate, message := helper.ValidateCommRequest(data)
 
 	if !isValidate {
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", &message)
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
 	}
 	// Set CommId for requested Data
 	CommId := GenerateCommID()
@@ -60,6 +60,9 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiRes
 
 	// Send the map to Azure Queue
 	fmt.Println("Azure :======")
+	fmt.Println("config:", config.Configs.QueueTopicName)
+	fmt.Println("datamap:", dataMap)
+
 	err = queue.SendMessage(dataMap, config.Configs.QueueTopicName)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))

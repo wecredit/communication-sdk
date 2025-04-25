@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -10,7 +12,14 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
+	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
+	"gorm.io/driver/sqlserver"
+	"gorm.io/gorm"
 )
 
 // ConsumerService consumes messages from an Azure Service Bus subscription
@@ -71,21 +80,21 @@ func ConsumerService(count int, topicName, subscriptionName string) {
 					go renewLock(msgCtx, receiver, msg, lockRenewalDone)
 
 					// Process the message
-					// if processMessage(msg) {
-					// 	// Successfully processed, complete the message
-					// 	if err := receiver.CompleteMessage(ctx, msg, nil); err != nil {
-					// 		log.Printf("Failed to complete message: %v", err)
-					// 	} else {
-					// 		log.Println("Message processed and removed from queue.")
-					// 	}
-					// } else {
-					// 	// Processing failed, abandon the message
-					// 	if err := receiver.AbandonMessage(ctx, msg, nil); err != nil {
-					// 		log.Printf("Failed to abandon message: %v", err)
-					// 	} else {
-					// 		log.Println("Message abandoned and will be retried.")
-					// 	}
-					// }
+					if processMessage(msg) {
+						// Successfully processed, complete the message
+						if err := receiver.CompleteMessage(ctx, msg, nil); err != nil {
+							log.Printf("Failed to complete message: %v", err)
+						} else {
+							log.Println("Message processed and removed from queue.")
+						}
+					} else {
+						// Processing failed, abandon the message
+						if err := receiver.AbandonMessage(ctx, msg, nil); err != nil {
+							log.Printf("Failed to abandon message: %v", err)
+						} else {
+							log.Println("Message abandoned and will be retried.")
+						}
+					}
 
 					// Stop lock renewal
 					close(lockRenewalDone)
@@ -129,4 +138,43 @@ func handleShutdown(cancelFunc context.CancelFunc) {
 	sig := <-sigChan
 	log.Printf("Received shutdown signal: %v", sig)
 	cancelFunc()
+}
+
+func processMessage(message *azservicebus.ReceivedMessage) bool {
+	var data sdkModels.CommApiRequestBody
+
+	// Unmarshal the message body into the LeadApiRequestData struct
+	if err := json.Unmarshal(message.Body, &data); err != nil {
+		log.Printf("Failed to unmarshal message body: %v", err)
+		return false
+	}
+	dbAnalytics, err := gorm.Open(sqlserver.Open(data.DsnAnalytics), &gorm.Config{})
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to connect to Analytical DB: %w", err))
+		return false
+	}
+
+	switch data.Channel {
+	case variables.WhatsApp:
+		response, err := whatsapp.SendWpByProcess(dbAnalytics, data)
+		if err == nil {
+			utils.Debug(fmt.Sprintf("%v", response))
+			return true
+		} else {
+			utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
+			return false
+		}
+	case variables.RCS:
+		response, err := rcs.SendRCSMessage(data)
+		if err == nil {
+			utils.Debug(fmt.Sprintf("%v", response))
+			return true
+		} else {
+			utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
+			return false
+		}
+	default:
+		utils.Error(fmt.Errorf("invalid channel: %s", data.Channel))
+		return false
+	}
 }

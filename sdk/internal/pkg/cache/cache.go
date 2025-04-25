@@ -7,7 +7,7 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/internal/utils"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
 )
 

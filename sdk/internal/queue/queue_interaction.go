@@ -29,10 +29,11 @@ func SendMessage(messageMap interface{}, topicName string) error {
 		return fmt.Errorf("failed to create sender: %w", err)
 	}
 	defer sender.Close(context.TODO())
+	fmt.Println("Sender:", sender)
 
 	// Prepare and send the message with a subject
 	sbMessage := &azservicebus.Message{
-		Body:    messageBytes,
+		Body: messageBytes,
 		// Subject: &subject,
 	}
 	err = sender.SendMessage(context.TODO(), sbMessage, nil)

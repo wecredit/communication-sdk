@@ -1,6 +1,6 @@
 package server
 
-/* import (
+import (
 	"log"
 	"net/http"
 
@@ -13,9 +13,8 @@ func StartConsumer(port string) {
 
 	// go services.SendRCSMessage()
 
-	go services.ConsumerService(10, config.Configs.AzureTopicName, config.Configs.AzureTopicSubscription)
+	go services.ConsumerService(10, config.Configs.QueueTopicName, config.Configs.QueueSubscriptionName)
 
 	log.Printf("Server running on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
- */
