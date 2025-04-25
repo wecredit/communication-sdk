@@ -6,14 +6,13 @@ import (
 	sinchWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/utils"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
-	"gorm.io/gorm"
 )
 
-func SendWpByProcess(db *gorm.DB, msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
 	var timeData extapimodels.TimesAPIModel
 	var sinchData extapimodels.SinchAPIModel
 
@@ -24,7 +23,7 @@ func SendWpByProcess(db *gorm.DB, msg sdkModels.CommApiRequestBody) (sdkModels.C
 	sinchData.Process = msg.ProcessName
 
 	utils.Debug("Fetching whatsapp process data")
-	wpProcessData, err := database.GetWhatsappProcessData(db, msg.ProcessName, msg.Source)
+	wpProcessData, err := database.GetWhatsappProcessData(database.DBanalytics, msg.ProcessName, msg.Vendor)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err))
 		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err)
@@ -48,7 +47,7 @@ func SendWpByProcess(db *gorm.DB, msg sdkModels.CommApiRequestBody) (sdkModels.C
 	}
 
 	// Hit Into WP
-	switch msg.Source {
+	switch msg.Vendor {
 	case variables.TIMES:
 		timeResponse := timesWhatsapp.HitTimesWhatsappApi(timeData)
 		if timeResponse.StatusCode == 200 {
@@ -69,5 +68,5 @@ func SendWpByProcess(db *gorm.DB, msg sdkModels.CommApiRequestBody) (sdkModels.C
 			}, nil
 		}
 	}
-	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for source: %s", msg.Source)
+	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for source: %s", msg.Vendor)
 }

@@ -1,6 +1,18 @@
 package env
 
 const (
+	DB_SERVER_ANALYTICS   = "10.1.0.21"
+	DB_PORT_ANALYTICS     = "1433"
+	DB_USER_ANALYTICS     = "Amartya"
+	DB_PASSWORD_ANALYTICS = "WeCred!T@2302$"
+	DB_NAME_ANALYTICS     = "master"
+
+	DB_SERVER_TECH   = "10.1.0.6"
+	DB_PORT_TECH     = "1433"
+	DB_USER_TECH     = "A.Dey"
+	DB_PASSWORD_TECH = "Amar2024@Wc123456"
+	DB_NAME_TECH     = "communication"
+
 	// Azure Queue Details
 	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
 	AZURE_TOPIC_NAME                   = "communication-uat"

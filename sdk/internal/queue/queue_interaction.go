@@ -4,16 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 )
 
-const (
+/* const (
 	maxRetries   = 3               // Maximum retries for message processing
 	retryBackoff = time.Second * 5 // Initial backoff duration
 	pollInterval = time.Second * 3 // Interval for checking the queue when empty
-)
+) */
 
 // SendMessage allows putting data in Azure Topic with a subject for a specific subscription
 func SendMessage(messageMap interface{}, topicName string) error {
@@ -29,7 +28,6 @@ func SendMessage(messageMap interface{}, topicName string) error {
 		return fmt.Errorf("failed to create sender: %w", err)
 	}
 	defer sender.Close(context.TODO())
-	fmt.Println("Sender:", sender)
 
 	// Prepare and send the message with a subject
 	sbMessage := &azservicebus.Message{

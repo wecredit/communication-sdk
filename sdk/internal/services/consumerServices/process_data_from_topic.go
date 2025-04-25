@@ -18,8 +18,6 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
-	"gorm.io/driver/sqlserver"
-	"gorm.io/gorm"
 )
 
 // ConsumerService consumes messages from an Azure Service Bus subscription
@@ -148,15 +146,17 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		log.Printf("Failed to unmarshal message body: %v", err)
 		return false
 	}
-	dbAnalytics, err := gorm.Open(sqlserver.Open(data.DsnAnalytics), &gorm.Config{})
-	if err != nil {
-		utils.Error(fmt.Errorf("failed to connect to Analytical DB: %w", err))
-		return false
-	}
+	// dbAnalytics, err := gorm.Open(sqlserver.Open(data.DsnAnalytics), &gorm.Config{})
+	// if err != nil {
+	// 	utils.Error(fmt.Errorf("failed to connect to Analytical DB: %w", err))
+	// 	return false
+	// }
+
+	fmt.Println("Data:", data)
 
 	switch data.Channel {
 	case variables.WhatsApp:
-		response, err := whatsapp.SendWpByProcess(dbAnalytics, data)
+		response, err := whatsapp.SendWpByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
 			return true

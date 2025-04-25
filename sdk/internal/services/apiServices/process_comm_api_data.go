@@ -59,9 +59,6 @@ func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiRes
 	// }
 
 	// Send the map to Azure Queue
-	fmt.Println("Azure :======")
-	fmt.Println("config:", config.Configs.QueueTopicName)
-	fmt.Println("datamap:", dataMap)
 
 	err = queue.SendMessage(dataMap, config.Configs.QueueTopicName)
 	if err != nil {

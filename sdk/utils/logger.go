@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	env "github.com/wecredit/communication-sdk/sdk/constant"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
@@ -29,7 +30,7 @@ func init() {
 	}
 
 	// Read log level from environment variable
-	level := os.Getenv("LOG_LEVEL")
+	level := env.LOG_LEVEL
 	switch strings.ToUpper(level) {
 	case variables.Debug:
 		logLevel = DEBUG
