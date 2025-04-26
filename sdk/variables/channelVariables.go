@@ -5,4 +5,5 @@ var (
 	SMS      string = "SMS"
 	RCS      string = "RCS"
 	WhatsApp string = "WHATSAPP"
+	Email    string = "EMAIL"
 )

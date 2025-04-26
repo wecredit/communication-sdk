@@ -28,19 +28,25 @@ type SinchRcsPayload struct {
 		} `json:"identified_by"`
 	} `json:"recipient"`
 	Message struct {
-		CardMessage struct {
-			Title       string `json:"title"`
-			Description string `json:"description"`
-			Media       struct {
-				URL string `json:"url"`
-			} `json:"media_message"`
-			Height  string `json:"height"`
-			Choices []struct {
-				UrlMessage struct {
-					Url string `json:"url"`
-				} `json:"url_message"`
-				PostbackData string `json:"postback_data"`
-			} `json:"choices"`
-		} `json:"card_message"`
+		TemplateMessage struct {
+			// Title       string `json:"title"`
+			// Description string `json:"description"`
+			// Media       struct {
+			// 	URL string `json:"url"`
+			// } `json:"media_message"`
+			// Height  string `json:"height"`
+			// Choices []struct {
+			// 	UrlMessage struct {
+			// 		Url string `json:"url"`
+			// 	} `json:"url_message"`
+			// 	PostbackData string `json:"postback_data"`
+			// } `json:"choices"`
+			ChannelTemplate struct {
+				RCS struct {
+					TemplateId   string `json:"template_id"`
+					LanguageCode string `json:"language_code"`
+				} `json:"RCS"`
+			} `json:"channel_template"`
+		} `json:"template_message"`
 	} `json:"message"`
 }

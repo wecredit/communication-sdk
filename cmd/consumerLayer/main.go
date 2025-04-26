@@ -13,5 +13,5 @@ func init() {
 
 func main() {
 	// Start consumer server
-	server.StartConsumer("8080")
+	server.StartConsumer("8081")
 }

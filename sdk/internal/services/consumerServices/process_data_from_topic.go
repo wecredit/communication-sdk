@@ -13,6 +13,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
+	sms "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch"
 	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -146,11 +147,6 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		log.Printf("Failed to unmarshal message body: %v", err)
 		return false
 	}
-	// dbAnalytics, err := gorm.Open(sqlserver.Open(data.DsnAnalytics), &gorm.Config{})
-	// if err != nil {
-	// 	utils.Error(fmt.Errorf("failed to connect to Analytical DB: %w", err))
-	// 	return false
-	// }
 
 	fmt.Println("Data:", data)
 
@@ -170,9 +166,21 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 			utils.Debug(fmt.Sprintf("%v", response))
 			return true
 		} else {
-			utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
+			utils.Error(fmt.Errorf("error in sending RCS: %v", err))
 			return false
 		}
+
+	case variables.SMS:
+		// return false
+		response, err := sms.HitSinchApi(data)
+		if err == nil {
+			utils.Debug(fmt.Sprintf("%v", response))
+			return true
+		} else {
+			utils.Error(fmt.Errorf("error in sending SMS: %v", err))
+			return false
+		}
+
 	default:
 		utils.Error(fmt.Errorf("invalid channel: %s", data.Channel))
 		return false

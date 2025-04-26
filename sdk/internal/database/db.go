@@ -33,7 +33,7 @@ func ConnectDB(dbType string, config models.Config) error {
 
 	// Determine configuration based on the database type
 	switch dbType {
-	case Tech:
+	case Analytics:
 		dsn = GetDSN(
 			config.DbUserAnalytical,
 			config.DbPasswordAnalytical,
@@ -48,7 +48,7 @@ func ConnectDB(dbType string, config models.Config) error {
 		}
 		utils.Info("Database connection established for Analytical DB.")
 
-	case Analytics:
+	case Tech:
 		dsn = GetDSN(
 			config.DbUserTech,
 			config.DbPasswordTech,

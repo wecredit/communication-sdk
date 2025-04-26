@@ -4,18 +4,17 @@ import (
 	"fmt"
 
 	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch/sinchPayloads"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
-	"github.com/wecredit/communication-sdk/sdk/models"
-	apimodels "github.com/wecredit/communication-sdk/sdk/models/apiModels"
-	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchApi(timesApiModel extapimodels.TimesAPIModel, config models.Config) (apimodels.WpApiResponseData, error) {
-	var response apimodels.WpApiResponseData
+func HitSinchApi(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+	var response sdkModels.CommApiResponseBody
 
 	// Getting the API URL
-	apiUrl := config.SinchSmsApiUrl
+	apiUrl := config.Configs.SinchSmsApiUrl
 
 	// Setting the API header
 	apiHeader := map[string]string{
@@ -23,25 +22,27 @@ func HitSinchApi(timesApiModel extapimodels.TimesAPIModel, config models.Config)
 	}
 
 	// Get api payload
-	apiPayload, err := sinchpayloads.GetTemplatePayload("", config)
+	apiPayload, err := sinchpayloads.GetTemplatePayload(msg.Mobile, config.Configs)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
+		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
 	}
+
+	fmt.Println("apiResponse:", apiResponse)
 
 	// TODO Handling For Api Responses
 
-	if code, ok := apiResponse["code"].(float64); ok {
-		response.StatusCode = code
-	} else {
-		return response, fmt.Errorf("unexpected type for code: %T", apiResponse["code"])
-	}
-	response.Message = apiResponse["message"].(string)
-	response.Status = apiResponse["status"].(bool)
+	// if code, ok := apiResponse["code"].(float64); ok {
+	// 	response.StatusCode = code
+	// } else {
+	// 	return response, fmt.Errorf("unexpected type for code: %T", apiResponse["code"])
+	// }
+	// response.Message = apiResponse["message"].(string)
+	// response.Status = apiResponse["status"].(bool)
 
 	return response, nil
 }

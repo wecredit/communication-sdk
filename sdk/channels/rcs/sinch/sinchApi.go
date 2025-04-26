@@ -32,28 +32,16 @@ func SendRCSMessage(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponse
 	}
 
 	payload := extapimodels.SinchRcsPayload{
-		AppID: "01JR7CR52EDC4YZV10B73A9FXX",
+		AppID: "01JR7CXY604M1JZB7DNJ7ZV8C7",
 	}
 	payload.Recipient.IdentifiedBy.ChannelIdentities = []struct {
 		Channel  string `json:"channel"`
 		Identity string `json:"identity"`
 	}{
-		{Channel: "RCS", Identity: "919123359755"},
+		{Channel: "RCS", Identity: "917570897034"},
 	}
-	payload.Message.CardMessage.Title = "Sign up for our newsletter"
-	payload.Message.CardMessage.Description = "Our weekly newsletter with deals and extra content!"
-	payload.Message.CardMessage.Media.URL = "https://sample-videos.com/img/Sample-jpg-image-100kb.jpg"
-	payload.Message.CardMessage.Height = "MEDIUM"
-	payload.Message.CardMessage.Choices = []struct {
-		UrlMessage struct {
-			Url string `json:"url"`
-		} `json:"url_message"`
-		PostbackData string `json:"postback_data"`
-	}{
-		{UrlMessage: struct {
-			Url string `json:"url"`
-		}{Url: "Sign up here"}, PostbackData: "Hello"},
-	}
+	payload.Message.TemplateMessage.ChannelTemplate.RCS.TemplateId = "olyv_stage_3e_5_mar"
+	payload.Message.TemplateMessage.ChannelTemplate.RCS.LanguageCode = "en"
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, rcsApiUrl, apiHeaders, "", "", payload, variables.ContentTypeJSON)
 	if err != nil {

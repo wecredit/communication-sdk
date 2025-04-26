@@ -31,12 +31,17 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 			return false, "Mobile is required for SMS communication"
 		}
 	case variables.RCS:
-		if email == "" {
-			return false, "Email is required for Email communication"
+		if mobile == "" {
+			return false, "Mobile is required for RCS communication"
 		}
 	case variables.WhatsApp:
 		if mobile == "" {
 			return false, "Mobile and ProcessName are required for WhatsApp communication"
+		}
+
+	case variables.Email:
+		if email == "" {
+			return false, "Email is required for Email communication"
 		}
 	default:
 		return false, "Invalid Channel"

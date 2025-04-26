@@ -66,8 +66,8 @@ func LoadConfigs() error {
 	}
 
 	// Initiate Default quueue client
-	queue.GetClient(Configs.QueueConnectionString)
-
+	client := queue.GetClient(Configs.QueueConnectionString)
+	fmt.Println("client", client)
 	// Connect Analytics DB
 	err := database.ConnectDB(database.Analytics, Configs)
 	if err != nil {

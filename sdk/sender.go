@@ -24,7 +24,7 @@ func SendWithoutClient(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespo
 	// 	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to connect to Analytical DB: %w", err)
 	// }
 
-	response, err := services.ProcessCommApiData(msg)
+	response, err := services.ProcessCommApiData(&msg)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in processing message: %v", err)
@@ -36,16 +36,18 @@ func SendWithoutClient(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespo
 	return response, nil
 }
 
-func (c *CommSdkClient) Send(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.CommApiResponseBody, error) {
+	fmt.Println("Client SDK:", c)
+	fmt.Println("Message:", &msg)
 	if !c.isAuthed {
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
 	}
 
 	response, err := services.ProcessCommApiData(msg)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
-		return sdkModels.CommApiResponseBody{Success: false}, err
+		return &sdkModels.CommApiResponseBody{Success: false}, err
 	}
 
-	return response, nil
+	return &response, nil
 }

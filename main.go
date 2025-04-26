@@ -16,12 +16,15 @@ func main() {
 		fmt.Println("Error in creating SDK Client")
 	}
 
-	request := sdkModels.CommApiRequestBody{
+	fmt.Println("Client Created:", client)
+
+	request := &sdkModels.CommApiRequestBody{
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
-		Mobile:      "8003366950",
+		Mobile:      "7570897034",
 		Email:       "",
 		Channel:     "WHATSAPP",
 		ProcessName: "lnt_ag",
+		IsPriority:  true,
 		Vendor:      "sinch",
 	}
 

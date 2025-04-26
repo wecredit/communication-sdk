@@ -25,8 +25,9 @@ func GenerateCommID() string {
 	return newUUID.String()
 }
 
-func ProcessCommApiData(data sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
-	isValidate, message := helper.ValidateCommRequest(data)
+func ProcessCommApiData(data *sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+	fmt.Println("Data:", data)
+	isValidate, message := helper.ValidateCommRequest(*data)
 
 	if !isValidate {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
