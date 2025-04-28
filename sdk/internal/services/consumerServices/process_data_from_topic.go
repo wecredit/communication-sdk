@@ -15,7 +15,10 @@ import (
 	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
 	sms "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch"
 	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
+	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
+	services "github.com/wecredit/communication-sdk/sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -148,10 +151,18 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		return false
 	}
 
-	fmt.Println("Data:", data)
+	dbMappedData, err := services.MapIntoDbModel(data)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
+	}
+
+	utils.Debug(fmt.Sprintf("Data: %v", data))
 
 	switch data.Channel {
 	case variables.WhatsApp:
+		if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtech, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		}
 		response, err := whatsapp.SendWpByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
@@ -161,6 +172,9 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 			return false
 		}
 	case variables.RCS:
+		if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtech, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		}
 		response, err := rcs.SendRCSMessage(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
@@ -172,6 +186,9 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 
 	case variables.SMS:
 		// return false
+		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		}
 		response, err := sms.HitSinchApi(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))

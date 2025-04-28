@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	env "github.com/wecredit/communication-sdk/sdk/constant"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
@@ -14,7 +15,7 @@ import (
 // Create an instance of Config
 var Configs models.Config
 
-func LoadConfigs() error {
+func LoadConfigs() (*azservicebus.Client, error) {
 	// Use reflection to set the struct fields with environment variables
 	val := reflect.ValueOf(&Configs).Elem() // Pass a pointer to the struct
 	typ := reflect.TypeOf(Configs)          // Use the struct type (not the pointer)
@@ -67,19 +68,20 @@ func LoadConfigs() error {
 
 	// Initiate Default quueue client
 	client := queue.GetClient(Configs.QueueConnectionString)
-	fmt.Println("client", client)
+
 	// Connect Analytics DB
 	err := database.ConnectDB(database.Analytics, Configs)
 	if err != nil {
-		return fmt.Errorf("failed to initialize Analytics database: %v", err)
+		return client, fmt.Errorf("failed to initialize Analytics database: %v", err)
 	}
 	utils.Info("Analytics Database connection pool initialized successfully.")
 
 	// Connect Tech DB
 	err = database.ConnectDB(database.Tech, Configs)
 	if err != nil {
-		return fmt.Errorf("failed to initialize Tech database: %v", err)
+		return client, fmt.Errorf("failed to initialize Tech database: %v", err)
 	}
+
 	utils.Info("Tech Database connection pool initialized successfully.")
-	return nil
+	return client, nil
 }

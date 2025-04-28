@@ -7,3 +7,8 @@ var (
 	WhatsApp string = "WHATSAPP"
 	Email    string = "EMAIL"
 )
+
+var (
+	Priority    string = "priority"
+	NonPriority string = "nonpriority"
+)

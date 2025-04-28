@@ -15,37 +15,37 @@ var (
 )
 
 // Initialize the Azure Service Bus client
-func InitClient(connString string, isCallback bool) error {
+func InitClient(connString string, isCallback bool) (*azservicebus.Client, error) {
 	mu.Lock()
 	defer mu.Unlock()
-
-	var err error
-
 	if isCallback {
 		if CallbackClient == nil {
-			CallbackClient, err = azservicebus.NewClientFromConnectionString(connString, nil)
+			callbackClient, err := azservicebus.NewClientFromConnectionString(connString, nil)
 			if err != nil {
-				return fmt.Errorf("failed to create Callback Azure Service Bus client: %v", err)
+				return nil, fmt.Errorf("failed to create Callback Azure Service Bus client: %v", err)
 			}
 			fmt.Println("Callback Azure Bus Service connection successful")
+			return callbackClient, nil
 		}
 	} else {
 		if Client == nil {
-			Client, err = azservicebus.NewClientFromConnectionString(connString, nil)
+			client, err := azservicebus.NewClientFromConnectionString(connString, nil)
 			if err != nil {
-				return fmt.Errorf("failed to create Azure Service Bus client: %v", err)
+				return nil, fmt.Errorf("failed to create Azure Service Bus client: %v", err)
 			}
 			fmt.Println("Azure Bus Service connection successful")
+			return client, nil
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // GetClient returns the main client
 func GetClient(connString string) *azservicebus.Client {
+	var err error
 	if Client == nil {
-		if err := InitClient(connString, false); err != nil {
+		if Client, err = InitClient(connString, false); err != nil {
 			fmt.Println("Failed to initialize Azure Service Bus client.")
 			panic(err)
 		}
@@ -55,11 +55,22 @@ func GetClient(connString string) *azservicebus.Client {
 
 // GetCallbackClient returns the callback client
 func GetCallbackClient(connString string) *azservicebus.Client {
+	var err error
 	if CallbackClient == nil {
-		if err := InitClient(connString, true); err != nil {
+		if CallbackClient, err = InitClient(connString, true); err != nil {
 			fmt.Println("Failed to initialize Callback Azure Service Bus client.")
 			panic(err)
 		}
 	}
 	return CallbackClient
+}
+
+func GetSdkQueueClient(connString string) *azservicebus.Client {
+	var err error
+	var client *azservicebus.Client
+	if client, err = InitClient(connString, true); err != nil {
+		fmt.Println("Failed to initialize Azure Service Bus client.")
+		panic(err)
+	}
+	return client
 }

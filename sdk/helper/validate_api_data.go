@@ -36,7 +36,7 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 		}
 	case variables.WhatsApp:
 		if mobile == "" {
-			return false, "Mobile and ProcessName are required for WhatsApp communication"
+			return false, "Mobile and ProcessName are required for WhatsApp Communication"
 		}
 
 	case variables.Email:

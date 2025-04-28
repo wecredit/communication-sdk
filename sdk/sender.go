@@ -1,16 +1,14 @@
 package sdk
 
 import (
-	"encoding/json"
 	"fmt"
 
-	"github.com/wecredit/communication-sdk/sdk/config"
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/apiServices"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
-func SendWithoutClient(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+/* func SendWithoutClient(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
 	err := config.LoadConfigs()
 	if err != nil {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in loading configuration:%v", err)
@@ -34,16 +32,20 @@ func SendWithoutClient(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespo
 	utils.Info("Response Data: " + string(responseJSON))
 
 	return response, nil
-}
+} */
 
 func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.CommApiResponseBody, error) {
-	fmt.Println("Client SDK:", c)
-	fmt.Println("Message:", &msg)
+	if c == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("sdk client is not initialized")
+	}
 	if !c.isAuthed {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
 	}
-
-	response, err := services.ProcessCommApiData(msg)
+	if c.QueueClient == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("queue client not initialized")
+	}
+	
+	response, err := services.ProcessCommApiData(msg, c.QueueClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err

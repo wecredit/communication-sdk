@@ -1,6 +1,6 @@
 package variables
 
 const (
-	SINCH string = "sinch" //TODO: Change to capital
-	TIMES string = "times"
+	SINCH string = "SINCH" //TODO: Change to capital
+	TIMES string = "TIMES"
 )

@@ -10,7 +10,7 @@ import (
 
 func init() {
 	// Load configurations
-	err := config.LoadConfigs()
+	_, err := config.LoadConfigs()
 	if err != nil {
 		utils.Error(err)
 	}
