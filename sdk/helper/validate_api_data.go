@@ -10,38 +10,38 @@ import (
 // ValidateCommRequest validates the CommApi request fields
 func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 	// Trim inputs to avoid issues with spaces
-	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
-	mobile := strings.TrimSpace(data.Mobile)
-	email := strings.TrimSpace(data.Email)
-	processName := strings.TrimSpace(data.ProcessName)
+	data.Channel = strings.ToUpper(strings.TrimSpace(data.Channel))
+	data.Mobile = strings.TrimSpace(data.Mobile)
+	data.Email = strings.TrimSpace(data.Email)
+	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
 
 	// Check if channel is provided
-	if channel == "" {
+	if data.Channel == "" {
 		return false, "channel is required"
 	}
 
-	if processName == "" {
+	if data.ProcessName == "" {
 		return false, "ProcessName is required"
 	}
 
 	// Validate based on channel
 
-	switch channel {
+	switch data.Channel {
 	case variables.SMS:
-		if mobile == "" {
+		if data.Mobile == "" {
 			return false, "Mobile is required for SMS communication"
 		}
 	case variables.RCS:
-		if mobile == "" {
+		if data.Mobile == "" {
 			return false, "Mobile is required for RCS communication"
 		}
 	case variables.WhatsApp:
-		if mobile == "" {
+		if data.Mobile == "" {
 			return false, "Mobile and ProcessName are required for WhatsApp Communication"
 		}
 
 	case variables.Email:
-		if email == "" {
+		if data.Email == "" {
 			return false, "Email is required for Email communication"
 		}
 	default:

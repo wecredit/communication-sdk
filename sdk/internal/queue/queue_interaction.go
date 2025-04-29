@@ -16,7 +16,7 @@ const (
 )
 
 // SendMessage allows putting data in Azure Topic with a subject for a specific subscription
-func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topicName, subject string) error {
+func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topicName, subject, messageId string) error {
 	// Serialize the map to JSON
 	messageBytes, err := json.Marshal(messageMap)
 	if err != nil {
@@ -36,8 +36,9 @@ func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topic
 
 		// Prepare and send the message with a subject
 		sbMessage := &azservicebus.Message{
-			Body:    messageBytes,
-			Subject: &subject,
+			Body:      messageBytes,
+			Subject:   &subject,
+			MessageID: &messageId,
 		}
 
 		sendErr := sender.SendMessage(context.TODO(), sbMessage, nil)

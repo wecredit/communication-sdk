@@ -62,7 +62,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, queueClient *azservi
 	}
 
 	// Send the map to Azure Queue
-	err = queue.SendMessage(queueClient, dataMap, config.SdkConfigs.QueueTopicName, subject)
+	err = queue.SendMessage(queueClient, dataMap, config.SdkConfigs.QueueTopicName, subject, data.AzureIdempotencyKey)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))
 		return sdkModels.CommApiResponseBody{

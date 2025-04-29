@@ -153,6 +153,8 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 	}
 
 	data.Channel = strings.ToUpper(data.Channel)
+	data.ProcessName = strings.ToUpper(data.ProcessName)
+	data.Vendor = strings.ToUpper(data.Vendor)
 
 	dbMappedData, err := services.MapIntoDbModel(data)
 	if err != nil {
