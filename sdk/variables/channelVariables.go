@@ -7,3 +7,14 @@ var (
 	WhatsApp string = "WHATSAPP"
 	Email    string = "EMAIL"
 )
+
+var (
+	Priority    string = "priority"
+	NonPriority string = "nonpriority"
+)
+
+var (
+	SignUp                string = "SIGNUP"
+	ApplicationIncomplete string = "APPLICATIONINCOMPLETE"
+	JourneyStarted        string = "JOURNEYSTARTED"
+)

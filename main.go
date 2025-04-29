@@ -22,10 +22,11 @@ func main() {
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
 		Mobile:      "7570897034",
 		Email:       "",
-		Channel:     "WHATSAPP",
-		ProcessName: "lnt_ag",
+		Channel:     "Whatsapp",
+		ProcessName: "OLYV",
+		Stage:       1,
 		IsPriority:  true,
-		Vendor:      "sinch",
+		Vendor:      "SINCH",
 	}
 
 	// Call your SDK's Send function

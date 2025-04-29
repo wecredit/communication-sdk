@@ -6,9 +6,9 @@ import (
 
 	timespayloads "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times/timesPayloads"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/models/apiModels"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
@@ -32,6 +32,8 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.TimesAPIModel) apiModels.WpA
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
+
+	fmt.Println("Times Whatsapp payload:", timesApiModel)
 
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {

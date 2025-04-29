@@ -5,7 +5,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/helper"
-	"github.com/wecredit/communication-sdk/sdk/internal/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -38,7 +38,7 @@ func SendRCSMessage(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponse
 		Channel  string `json:"channel"`
 		Identity string `json:"identity"`
 	}{
-		{Channel: "RCS", Identity: "917570897034"},
+		{Channel: "RCS", Identity: fmt.Sprintf("91%s", msg.Mobile)},
 	}
 	payload.Message.TemplateMessage.ChannelTemplate.RCS.TemplateId = "olyv_stage_3e_5_mar"
 	payload.Message.TemplateMessage.ChannelTemplate.RCS.LanguageCode = "en"

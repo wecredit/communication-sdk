@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"encoding/json"
 	"fmt"
 
 	sinchWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch"
@@ -23,24 +24,24 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	sinchData.Process = msg.ProcessName
 
 	utils.Debug("Fetching whatsapp process data")
-	wpProcessData, err := database.GetWhatsappProcessData(database.DBanalytics, msg.ProcessName, msg.Vendor)
+	wpProcessData, err := database.GetTemplateDetails(database.DBtech, msg.ProcessName, msg.Channel, msg.Vendor, msg.Stage)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err))
 		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err)
 	}
 
 	for _, record := range wpProcessData {
-		if templateName, exists := record["template_name"]; exists && templateName != nil {
+		if templateName, exists := record["TemplateName"]; exists && templateName != nil {
 			timeData.TemplateName = templateName.(string)
 			sinchData.TemplateName = templateName.(string)
 		}
-		if imageUrl, exists := record["image_url"]; exists && imageUrl != nil {
+		if imageUrl, exists := record["ImageUrl"]; exists && imageUrl != nil {
 			timeData.ImageUrl = imageUrl.(string)
 		}
-		if imageId, exists := record["image_id"]; exists && imageId != nil {
+		if imageId, exists := record["ImageId"]; exists && imageId != nil {
 			sinchData.ImageID = imageId.(string)
 		}
-		if buttonLink, exists := record["link"]; exists && buttonLink != nil {
+		if buttonLink, exists := record["Link"]; exists && buttonLink != nil {
 			timeData.ButtonLink = buttonLink.(string)
 			sinchData.ButtonLink = buttonLink.(string)
 		}
@@ -50,20 +51,25 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	switch msg.Vendor {
 	case variables.TIMES:
 		timeResponse := timesWhatsapp.HitTimesWhatsappApi(timeData)
+		jsonBytes, _ := json.Marshal(timeResponse)
+		utils.Debug(fmt.Sprintf("TimesWhatsappResponse: %s", string(jsonBytes)))
+
 		if timeResponse.StatusCode == 200 {
 			utils.Info(fmt.Sprintf("WP sent successfully for: %s", msg.Mobile))
 			return sdkModels.CommApiResponseBody{
-				CommId:  "TimesId: Amartya",
+				CommId:  msg.CommId,
 				Success: true,
 			}, nil
 		}
 
 	case variables.SINCH:
 		sinchResponse := sinchWhatsapp.HitSinchApi(sinchData)
+		jsonBytes, _ := json.Marshal(sinchResponse)
+		utils.Debug(fmt.Sprintf("SinchWhatsappResponse: %s", string(jsonBytes)))
 		if sinchResponse.StatusCode == 200 {
 			utils.Info(fmt.Sprintf("WP sent successfully for: %s", msg.Mobile))
 			return sdkModels.CommApiResponseBody{
-				CommId:  "SinchId: A.Dey",
+				CommId:  msg.CommId,
 				Success: true,
 			}, nil
 		}

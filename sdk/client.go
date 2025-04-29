@@ -15,7 +15,7 @@ type CommSdkClient struct {
 }
 
 func NewSdkClient(username, password string) (*CommSdkClient, error) {
-	err := config.LoadConfigs()
+	queueClient, err := config.LoadSDKConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configs: %v", err)
 	}
@@ -27,8 +27,9 @@ func NewSdkClient(username, password string) (*CommSdkClient, error) {
 		}
 	*/
 	return &CommSdkClient{
-		Username: username,
-		Password: password,
-		isAuthed: true,
+		Username:    username,
+		Password:    password,
+		isAuthed:    true,
+		QueueClient: queueClient,
 	}, nil
 }

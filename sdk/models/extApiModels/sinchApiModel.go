@@ -29,18 +29,6 @@ type SinchRcsPayload struct {
 	} `json:"recipient"`
 	Message struct {
 		TemplateMessage struct {
-			// Title       string `json:"title"`
-			// Description string `json:"description"`
-			// Media       struct {
-			// 	URL string `json:"url"`
-			// } `json:"media_message"`
-			// Height  string `json:"height"`
-			// Choices []struct {
-			// 	UrlMessage struct {
-			// 		Url string `json:"url"`
-			// 	} `json:"url_message"`
-			// 	PostbackData string `json:"postback_data"`
-			// } `json:"choices"`
 			ChannelTemplate struct {
 				RCS struct {
 					TemplateId   string `json:"template_id"`
@@ -49,4 +37,12 @@ type SinchRcsPayload struct {
 			} `json:"channel_template"`
 		} `json:"template_message"`
 	} `json:"message"`
+}
+
+type SinchSmsPayload struct {
+	Process       string
+	Stage         int
+	DltTemplateId int64
+	TemplateText  string
+	Mobile        string
 }

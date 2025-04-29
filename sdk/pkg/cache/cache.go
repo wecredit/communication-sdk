@@ -76,3 +76,38 @@ func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 
 	utils.Info(fmt.Sprint("Cache initialized successfully for: ", key))
 }
+
+func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey string, db *gorm.DB) {
+	// Step 1: Fetch all data from DB
+	data, err := database.GetDataFromTable(
+		tableName,
+		db,
+	)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to fetch initial data for cache: %v", err))
+		return
+	}
+
+	// Optional: Log size of data
+	utils.Info(fmt.Sprintf("fetched %d entries from DB", len(data)))
+
+	// Step 2: Transform into map using a specific column as key
+	mappedData := make(map[string]map[string]interface{})
+
+	for _, row := range data {
+		if keyVal, ok := row[columnNameToBeUsedAsKey]; ok {
+			keyStr := fmt.Sprintf("%v", keyVal) // safely convert to string even if int or other type
+			mappedData[keyStr] = row
+		} else {
+			utils.Warn(fmt.Sprintf("skipped a row: column '%s' missing", columnNameToBeUsedAsKey))
+		}
+	}
+
+	// Step 3: Store into cache
+	if !GetCache().Set(key, mappedData) {
+		utils.Error(fmt.Errorf("failed to set data in cache for key: %v", key))
+		return
+	}
+
+	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
+}

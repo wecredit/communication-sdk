@@ -3,12 +3,16 @@ package sdkModels
 type CommApiRequestBody struct {
 	// DsnAnalytics string
 	// DsnTech      string
-	Mobile      string `json:"mobile"`
-	Email       string `json:"email"`
-	Channel     string `json:"channel"`
-	ProcessName string `json:"processName"`
-	IsPriority  bool   `json:"isPriority"`
-	Vendor      string `json:"vendor"`
+	CommId              string `json:"commId" gorm:"CommId"`
+	Mobile              string `json:"mobile" gorm:"Mobile"`
+	Email               string `json:"email" gorm:-`
+	Channel             string `json:"channel" gorm:-` // Channel used for sending message
+	ProcessName         string `json:"processName" gorm:"ProcessName"`
+	Stage               int    `json:"stage" gorm:"Stage"`
+	IsPriority          bool   `json:"isPriority" gorm:"IsPriority"`
+	AzureIdempotencyKey string `json:"azureIdempotencyKey" gorm:"AzureIdempotencyKey"`
+	Vendor              string `json:"vendor" gorm:-`        // vendor who we use to send the message through
+	Client              string `json:"client" gorm:"Client"` // User using this sdk
 }
 
 type CommApiResponseBody struct {

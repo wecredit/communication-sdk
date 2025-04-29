@@ -3,17 +3,15 @@ package main
 import (
 	"fmt"
 
-	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/server"
-	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 func init() {
-	// Load configurations
-	err := config.LoadConfigs()
-	if err != nil {
-		utils.Error(err)
-	}
+	// // Load configurations
+	// _, err := config.LoadConfigs()
+	// if err != nil {
+	// 	utils.Error(err)
+	// }
 	fmt.Println("Configurations loaded successfully.")
 }
 

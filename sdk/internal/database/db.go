@@ -41,11 +41,13 @@ func ConnectDB(dbType string, config models.Config) error {
 			config.DbPortAnalytical,
 			config.DbNameAnalytical,
 		)
+		fmt.Println("Get DSN", dsn)
 		// Connect to Analytical DB
 		DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
 		if err != nil {
 			return fmt.Errorf("failed to connect to Analytical DB: %w", err)
 		}
+		fmt.Println("DBAnal:", DBanalytics)
 		utils.Info("Database connection established for Analytical DB.")
 
 	case Tech:

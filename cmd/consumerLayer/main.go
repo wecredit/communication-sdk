@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/server"
 )
@@ -8,10 +10,10 @@ import (
 func init() {
 	// Load configs
 	config.LoadConfigs()
-
+	// cache.LoadConsumerDataIntoCache(config.Configs)
 }
 
 func main() {
 	// Start consumer server
-	server.StartConsumer("8081")
+	server.StartConsumer(os.Getenv("CONSUMER_SERVER_PORT"))
 }
