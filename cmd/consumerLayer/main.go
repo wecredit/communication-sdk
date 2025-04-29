@@ -10,7 +10,7 @@ import (
 func init() {
 	// Load configs
 	config.LoadConfigs()
-
+	// cache.LoadConsumerDataIntoCache(config.Configs)
 }
 
 func main() {

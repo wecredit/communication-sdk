@@ -10,7 +10,7 @@ import (
 // ValidateCommRequest validates the CommApi request fields
 func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 	// Trim inputs to avoid issues with spaces
-	channel := strings.TrimSpace(data.Channel)
+	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
 	mobile := strings.TrimSpace(data.Mobile)
 	email := strings.TrimSpace(data.Email)
 	processName := strings.TrimSpace(data.ProcessName)
@@ -25,6 +25,7 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 	}
 
 	// Validate based on channel
+
 	switch channel {
 	case variables.SMS:
 		if mobile == "" {

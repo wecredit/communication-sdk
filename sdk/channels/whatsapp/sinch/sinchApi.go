@@ -6,9 +6,9 @@ import (
 
 	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch/sinchPayloads"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/models/apiModels"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
@@ -59,6 +59,8 @@ func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiRespon
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
+	fmt.Println("WHatsapp payload:", apiPayload)
+
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
@@ -72,6 +74,7 @@ func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiRespon
 		response.StatusCode = 200
 		response.Message = "success"
 		response.Status = true
+		response.ResponseId = apiResponse["responseId"].(string)
 	} else {
 		response.StatusCode = 500
 		response.Message = "failed to send message"

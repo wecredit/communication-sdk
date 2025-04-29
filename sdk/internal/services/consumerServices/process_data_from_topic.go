@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -150,6 +151,8 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		log.Printf("Failed to unmarshal message body: %v", err)
 		return false
 	}
+
+	data.Channel = strings.ToUpper(data.Channel)
 
 	dbMappedData, err := services.MapIntoDbModel(data)
 	if err != nil {

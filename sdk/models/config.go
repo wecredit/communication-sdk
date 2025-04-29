@@ -31,6 +31,11 @@ type Config struct {
 	SdkRcsInputTable      string `envconfig:"SDK_RCS_INPUT_TABLE"`
 	SdkSmsInputTable      string `envconfig:"SDK_SMS_INPUT_TABLE"`
 
+	// RCS Tables
+	RcsTemplateAppIdTable string `envconfig:"RCS_TEMPLATE_APP_ID_TABLE"`
+
+
+
 	// Sinch API Variables
 	SinchTokenApiUrl   string `envconfig:"SINCH_GENERATE_TOKEN_API_URL"`
 	SinchMessageApiUrl string `envconfig:"SINCH_SEND_MESSAGE_API_URL"`

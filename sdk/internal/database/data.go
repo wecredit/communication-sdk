@@ -64,12 +64,44 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 	return results, nil
 }
 
-// GetWhatsappProcessData fetches records based on the provided process name
-func GetWhatsappProcessData(db *gorm.DB, process, source string) ([]map[string]interface{}, error) {
+func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 	var query *gorm.DB
 
-	switch source {
+	switch vendor {
+	case variables.TIMES:
+		query = db.Table("TemplateDetails").
+			Where("Process LIKE ?", process).
+			Where("Stage = ?", stage).
+			Where("Channel = ?", channel).
+			Where("Vendor = ?", "TIMES").
+			Where("IsActive = ?", true)
+
+	case variables.SINCH:
+		query = db.Table("TemplateDetails").
+			Where("Process LIKE ?", process).
+			Where("Stage = ?", stage).
+			Where("Channel = ?", channel).
+			Where("Vendor = ?", "SINCH").
+			Where("IsActive = ?", true)
+	}
+
+	if err := query.Find(&results).Error; err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// GetWhatsappProcessData fetches records based on the provided process name
+func GetWhatsappProcessData(db *gorm.DB, process, vendor string) ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+	var query *gorm.DB
+
+	fmt.Println("db:", db)
+	fmt.Println("Process:", process, vendor)
+
+	switch vendor {
 	case variables.TIMES:
 		query = db.Table("API-HITS.dbo.whatsapp_process_temp").
 			Where("Process LIKE ?", process).
@@ -84,9 +116,13 @@ func GetWhatsappProcessData(db *gorm.DB, process, source string) ([]map[string]i
 			Where("IsActive = ?", true).
 			Where("CAST(Execution_date AS DATE) = CAST(GETDATE() AS DATE)")
 	}
+
+	fmt.Println("Query:", query)
+
 	if err := query.Find(&results).Error; err != nil {
 		return nil, err
 	}
+	fmt.Println("Results:", results)
 
 	return results, nil
 }
