@@ -1,8 +1,8 @@
 package apiModels
 
 type WpApiResponseData struct {
-	StatusCode float64 `json:"statusCode"`
-	Status     bool    `json:"status"`
-	Message    string  `json:"statusMessage"`
-	ResponseId string  `json:"responseId"`
+	StatusCode int    `json:"statusCode"`
+	Status     bool   `json:"status"`
+	Message    string `json:"statusMessage"`
+	ResponseId string `json:"responseId"`
 }

@@ -40,7 +40,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.TimesAPIModel) apiModels.WpA
 		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
 	}
 
-	response.StatusCode = apiResponse["code"].(float64)
+	response.StatusCode = apiResponse["ApistatusCode"].(int)
 	response.Message = apiResponse["message"].(string)
 	response.Status = apiResponse["status"].(bool)
 

@@ -4,13 +4,14 @@ import (
 	"os"
 
 	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/server"
 )
 
 func init() {
 	// Load configs
 	config.LoadConfigs()
-	// cache.LoadConsumerDataIntoCache(config.Configs)
+	cache.LoadConsumerDataIntoCache(config.Configs)
 }
 
 func main() {

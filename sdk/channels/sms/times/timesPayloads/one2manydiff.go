@@ -1,4 +1,4 @@
-package timespayloads
+package timesSmsPayload
 
 import (
 	"fmt"

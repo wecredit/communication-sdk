@@ -5,10 +5,15 @@ import "fmt"
 var (
 	AuthDetails        string = "authDetails"
 	PriorityData       string = "priorityData"
-	SubLendersData     string = "subLendersData"
+	VendorsData        string = "vendorsData"
+	ActiveVendors      string = "activeVendors"
 	RcsTemplateAppData string = "rcsTemplateAppData"
 )
 
 func GetRankKey(subLenderId int) string {
 	return fmt.Sprintf("%v_priority", subLenderId)
+}
+
+func GetVendorKey(vendorName, channelName string) string {
+	return fmt.Sprintf("%s_%s", vendorName, channelName)
 }

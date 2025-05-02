@@ -1,52 +1,58 @@
-package sms
+package timesSms
 
 import (
-	"encoding/base64"
 	"fmt"
 
 	timespayloads "github.com/wecredit/communication-sdk/sdk/channels/sms/times/timesPayloads"
-	"github.com/wecredit/communication-sdk/sdk/utils"
-	"github.com/wecredit/communication-sdk/sdk/models"
-	apimodels "github.com/wecredit/communication-sdk/sdk/models/apiModels"
+	"github.com/wecredit/communication-sdk/sdk/config"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitTimesApi(timesApiModel extapimodels.TimesAPIModel, config models.Config) apimodels.WpApiResponseData {
-	var response apimodels.WpApiResponseData
+func HitTimesSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
+	var timesSmsResponse extapimodels.SmsResponse
+	timesSmsResponse.IsSent = false
 
 	// Getting the API URL
-	apiUrl := config.TimesSmsApiUrl
+	apiUrl := config.Configs.TimesSmsApiUrl
 
 	// Getting the WhatsApp Authorization token
-	// apiAuthorization := config.TimesApiToken
+	// apiAuthorization := config.Configs.TimesApiToken
 
-	username := config.TimesSmsApiUserName
-	password := config.TimesSmsApiPassword
-	credentials := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password)))
+	// username := config.Configs.TimesSmsApiUserName
+	// password := config.Configs.TimesSmsApiPassword
+	// credentials := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", username, password)))
 
 	// Setting the API header
 	apiHeader := map[string]string{
-		"Authorization": fmt.Sprintf("Basic %s", credentials),
-		"Content-Type":  "application/json",
+		"Content-Type": "application/json",
 	}
 
 	// Get api payload
-	apiPayload, err := timespayloads.GetTemplatePayload(config)
+	apiPayload, err := timespayloads.GetTemplatePayload(data, config.Configs)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
+		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
+		timesSmsResponse.ResponseMessage = fmt.Sprintf("Error in getting Times SMS Payload: %v", err)
 	}
 
-	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
+	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, config.Configs.TimesSmsApiUserName, config.Configs.TimesSmsApiPassword, apiPayload, variables.ContentTypeJSON)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
+		utils.Error(fmt.Errorf("error occured while hitting into Times Sms API: %v", err))
+		timesSmsResponse.ResponseMessage = fmt.Sprintf("Error in hitting Times SMS API: %v", err)
 	}
 
-	// TODO Handling For Api Responses
+	status := apiResponse["state"].(string)
+	description := apiResponse["description"].(string)
 
-	response.StatusCode = apiResponse["code"].(float64)
-	response.Message = apiResponse["message"].(string)
-	response.Status = apiResponse["status"].(bool)
+	timesSmsResponse.ResponseMessage = fmt.Sprintf("%s:%s", status, description)
+	timesSmsResponse.TransactionId = fmt.Sprintf("%d", int(apiResponse["transactionId"].(float64)))
 
-	return response
+	if status == "SUBMIT_ACCEPTED" {
+		timesSmsResponse.IsSent = true
+	}
+
+	fmt.Println("TimesSMSResponseFinal:", timesSmsResponse)
+
+	return timesSmsResponse
 }

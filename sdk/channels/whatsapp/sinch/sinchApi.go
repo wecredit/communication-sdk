@@ -1,4 +1,4 @@
-package services
+package sinchWhatsapp
 
 import (
 	"fmt"

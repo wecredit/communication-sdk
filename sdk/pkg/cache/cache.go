@@ -21,6 +21,17 @@ var (
 	once     sync.Once // Ensure initialization happens only once
 )
 
+// Global cache
+var ChannelVendorSlots = map[string][100]string{} // for fast weighted lookup
+var channelActiveVendors = map[string][]Vendor{}  // optional if needed elsewhere
+
+type Vendor struct {
+	Name    string
+	Channel string
+	Status  int
+	Weight  int
+}
+
 // InitializeCache initializes the global cache instance
 func InitializeCache() {
 	once.Do(func() { // Singleton pattern to ensure only one instance is created
@@ -77,7 +88,7 @@ func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 	utils.Info(fmt.Sprint("Cache initialized successfully for: ", key))
 }
 
-func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey string, db *gorm.DB) {
+func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixColumnName string, db *gorm.DB) {
 	// Step 1: Fetch all data from DB
 	data, err := database.GetDataFromTable(
 		tableName,
@@ -95,12 +106,23 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey string, db
 	mappedData := make(map[string]map[string]interface{})
 
 	for _, row := range data {
-		if keyVal, ok := row[columnNameToBeUsedAsKey]; ok {
-			keyStr := fmt.Sprintf("%v", keyVal) // safely convert to string even if int or other type
-			mappedData[keyStr] = row
-		} else {
+		keyVal, ok := row[columnNameToBeUsedAsKey]
+		if !ok {
 			utils.Warn(fmt.Sprintf("skipped a row: column '%s' missing", columnNameToBeUsedAsKey))
+			continue
 		}
+
+		keyStr := fmt.Sprintf("%v", keyVal)
+
+		if suffixColumnName != "" {
+			if suffixVal, ok := row[suffixColumnName]; ok {
+				keyStr = fmt.Sprintf("%s_%v", keyStr, suffixVal)
+			} else {
+				utils.Warn(fmt.Sprintf("suffix column '%s' missing for a row", suffixColumnName))
+			}
+		}
+
+		mappedData[keyStr] = row
 	}
 
 	// Step 3: Store into cache
@@ -108,6 +130,65 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey string, db
 		utils.Error(fmt.Errorf("failed to set data in cache for key: %v", key))
 		return
 	}
+	TransformAndCacheVendors(mappedData)
 
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
+}
+
+func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
+	temp := make(map[string][]Vendor)
+	// Step 1: Group by channel with only active vendors
+	for _, row := range raw {
+		status, _ := row["Status"].(int64)
+		if status != 1 {
+			continue
+		}
+
+		v := Vendor{
+			Name:    fmt.Sprintf("%v", row["Name"]),
+			Channel: fmt.Sprintf("%v", row["Channel"]),
+			Status:  1,
+			Weight:  int(row["Weight"].(int64)), // depending on actual DB type
+		}
+		temp[v.Channel] = append(temp[v.Channel], v)
+	}
+
+	// Step 2: Pre-compute vendor slots for each channel
+	final := make(map[string][100]string)
+	for channel, vendors := range temp {
+		var slots [100]string
+		pos := 0
+		for _, v := range vendors {
+			end := pos + v.Weight
+			if end > 100 {
+				end = 100
+			}
+			for i := pos; i < end; i++ {
+				slots[i] = v.Name
+			}
+			pos = end
+			if pos >= 100 {
+				break
+			}
+		}
+		final[channel] = slots
+	}
+
+	// Step 3: Store in global vars
+	ChannelVendorSlots = final
+	channelActiveVendors = temp
+}
+
+// Get fetches the data from the cache for a given key
+func (c *Cache) GetMappedData(key string) (map[string]map[string]interface{}, bool) {
+	value, found := c.store.Get(key)
+	if !found {
+		fmt.Println("Cache key not found:", key)
+		return nil, false
+	}
+
+	// Convert slice to map using lender names as keys
+	mappedData := value.(map[string]map[string]interface{})
+
+	return mappedData, true
 }

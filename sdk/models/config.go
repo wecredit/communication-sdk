@@ -30,11 +30,12 @@ type Config struct {
 	SdkWhatsappInputTable string `envconfig:"SDK_WHATSAPP_INPUT_TABLE"`
 	SdkRcsInputTable      string `envconfig:"SDK_RCS_INPUT_TABLE"`
 	SdkSmsInputTable      string `envconfig:"SDK_SMS_INPUT_TABLE"`
+	SmsOutputTable        string `envconfig:"SMS_OUTPUT_TABLE"`
+
+	VendorTable string `envconfig:"VENDOR_TABLE"`
 
 	// RCS Tables
 	RcsTemplateAppIdTable string `envconfig:"RCS_TEMPLATE_APP_ID_TABLE"`
-
-
 
 	// Sinch API Variables
 	SinchTokenApiUrl   string `envconfig:"SINCH_GENERATE_TOKEN_API_URL"`

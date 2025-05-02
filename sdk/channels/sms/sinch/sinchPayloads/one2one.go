@@ -1,4 +1,4 @@
-package sinchpayloads
+package sinchSmsPayload
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ func verifyMobile(mobile string) string {
 	return ""
 }
 
-func GetTemplatePayload(data extapimodels.SinchSmsPayload, config models.Config) (map[string]interface{}, error) {
+func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) (map[string]interface{}, error) {
 	templatePayload := map[string]interface{}{
 		"userId":      config.SinchSmsApiUserName,
 		"pass":        config.SinchSmsApiPassword,

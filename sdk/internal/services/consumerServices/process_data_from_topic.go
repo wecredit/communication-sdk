@@ -14,7 +14,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
-	sms "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch"
+	sms "github.com/wecredit/communication-sdk/sdk/channels/sms"
 	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
@@ -194,7 +194,8 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
-		response, err := sms.HitSinchApi(data)
+		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		response, err := sms.SendSmsByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
 			return true

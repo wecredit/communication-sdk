@@ -45,4 +45,5 @@ type SinchSmsPayload struct {
 	DltTemplateId int64
 	TemplateText  string
 	Mobile        string
+	CommId        string
 }

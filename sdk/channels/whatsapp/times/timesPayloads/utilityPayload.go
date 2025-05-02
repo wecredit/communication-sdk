@@ -1,4 +1,4 @@
-package timespayloads
+package timesWhatsappPayload
 
 import (
 	"fmt"

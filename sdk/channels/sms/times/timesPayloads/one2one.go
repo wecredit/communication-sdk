@@ -1,9 +1,10 @@
-package timespayloads
+package timesSmsPayload
 
 import (
 	"fmt"
 
 	models "github.com/wecredit/communication-sdk/sdk/models"
+	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
 func verifyMobile(mobile string) string {
@@ -13,14 +14,14 @@ func verifyMobile(mobile string) string {
 	return ""
 }
 
-func GetTemplatePayload(config models.Config) (map[string]interface{}, error) {
+func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) (map[string]interface{}, error) {
 	templatePayload := map[string]interface{}{
 		"extra": map[string]string{
-			"dltContentId": config.TimesSmsDltContentId,
+			"dltContentId": fmt.Sprintf("%d", data.DltTemplateId),
 		},
 		"message": map[string]string{
-			"recipient": fmt.Sprintf("91%s", verifyMobile("8003366950")),
-			"text":      fmt.Sprintf("Dear Customer. Login to WeCredit using OTP . WeCredit"),
+			"recipient": fmt.Sprintf("91%s", verifyMobile(data.Mobile)),
+			"text":      data.TemplateText,
 		},
 		"sender":  config.TimesSmsApiSender,
 		"unicode": "False",

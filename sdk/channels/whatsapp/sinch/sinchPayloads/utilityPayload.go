@@ -1,4 +1,4 @@
-package sinchpayloads
+package sinchWhatsappPayload
 
 import (
 	"strconv"
