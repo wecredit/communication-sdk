@@ -6,7 +6,7 @@ import (
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
-func GetTimesMediaPayload(timesApiModel extapimodels.TimesAPIModel) (map[string]interface{}, error) {
+func GetTimesMediaPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	buttonURL := timesApiModel.ButtonLink
 
 	// Handling For Dynamic Link

@@ -62,7 +62,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	case variables.TIMES:
 		response = timesSms.HitTimesSmsApi(requestBody)
 	case variables.SINCH:
-		response, _ = sinchSms.HitSinchSmsApi(requestBody)
+		response = sinchSms.HitSinchSmsApi(requestBody)
 	}
 	response.DltTemplateId = requestBody.DltTemplateId
 	response.CommId = msg.CommId
@@ -80,7 +80,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("SmsResponse: %s", string(jsonBytes)))
 	if response.IsSent {
-		utils.Info(fmt.Sprintf("SMS sent successfully for: %s through %s", msg.Mobile, msg.Vendor))
+		utils.Info(fmt.Sprintf("SMS sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 		return sdkModels.CommApiResponseBody{
 			CommId:  msg.CommId,
 			Success: true,

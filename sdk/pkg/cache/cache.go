@@ -23,7 +23,7 @@ var (
 
 // Global cache
 var ChannelVendorSlots = map[string][100]string{} // for fast weighted lookup
-var channelActiveVendors = map[string][]Vendor{}  // optional if needed elsewhere
+// var channelActiveVendors = map[string][]Vendor{}  // optional if needed elsewhere
 
 type Vendor struct {
 	Name    string
@@ -130,6 +130,7 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		utils.Error(fmt.Errorf("failed to set data in cache for key: %v", key))
 		return
 	}
+	
 	TransformAndCacheVendors(mappedData)
 
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
@@ -176,7 +177,7 @@ func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
 
 	// Step 3: Store in global vars
 	ChannelVendorSlots = final
-	channelActiveVendors = temp
+	// channelActiveVendors = temp
 }
 
 // Get fetches the data from the cache for a given key

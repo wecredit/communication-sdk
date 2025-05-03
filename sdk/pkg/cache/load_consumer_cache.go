@@ -15,6 +15,7 @@ func LoadConsumerDataIntoCache(config models.Config) {
 
 	// Store Vendors Data into cache
 	StoreMappedDataIntoCache(VendorsData, config.VendorTable, "Name", "Channel", database.DBtech)
+	
 	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtech)
 
 	// Store auth data into cache

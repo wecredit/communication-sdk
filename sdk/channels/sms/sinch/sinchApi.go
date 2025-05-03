@@ -10,7 +10,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchSmsApi(data extapimodels.SmsRequestBody) (extapimodels.SmsResponse, error) {
+func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	var sinchSmsResponse extapimodels.SmsResponse
 	sinchSmsResponse.IsSent = false
 
@@ -26,16 +26,19 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) (extapimodels.SmsResponse,
 	apiPayload, err := sinchpayloads.GetTemplatePayload(data, config.Configs)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
+		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured while getting Sinch SMS payload: %v", err)
+		return sinchSmsResponse
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch SMS API: %v", err))
+		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch SMS payload: %v", err)
 	}
 
-	accepted := apiResponse["accepted"].(string)
+	accepted := apiResponse["accepted"].(bool)
 
-	if accepted == "true" {
+	if accepted {
 		sinchSmsResponse.TransactionId = apiResponse["respid"].(string)
 		sinchSmsResponse.IsSent = true
 		sinchSmsResponse.ResponseMessage = "Message Submitted Successfully"
@@ -54,7 +57,7 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) (extapimodels.SmsResponse,
 	// response.Status = apiResponse["status"].(bool)
 	fmt.Println("Sinch SMS Final response:", sinchSmsResponse)
 
-	return sinchSmsResponse, nil
+	return sinchSmsResponse
 }
 
 // RejectionCodeMap maps rejection codes to their descriptions

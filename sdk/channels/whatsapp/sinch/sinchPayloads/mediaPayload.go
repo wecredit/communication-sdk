@@ -9,7 +9,7 @@ import (
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
-func GetSinchMediaPayload(sinchApiModel extapimodels.SinchAPIModel) map[string]interface{} {
+func GetSinchMediaPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
 	var buttonURL string
 
 	if strings.Contains(sinchApiModel.Process, "poonawalla") {

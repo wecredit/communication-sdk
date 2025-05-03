@@ -28,3 +28,22 @@ type SmsResponse struct {
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
+
+type WhatsappRequestBody struct {
+	Mobile       string
+	Process      string
+	TemplateName string
+	ImageUrl     string
+	ImageID      string
+	ButtonLink   string
+	AccessToken  string
+}
+
+type WhatsappResponse struct {
+	TemplateName    string `json:"templateName" gorm:"TemplateName"`
+	IsSent          bool   `json:"isSent" gorm:"IsSent"`
+	CommId          string `json:"CommId" gorm:"CommId"`
+	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
+	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+}

@@ -7,7 +7,7 @@ import (
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 )
 
-func GetTimesUtilityPayload(timesApiModel extapimodels.TimesAPIModel) (map[string]interface{}, error) {
+func GetTimesUtilityPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	buttonURL := timesApiModel.ButtonLink
 
 	fmt.Println("Process: ", timesApiModel.Process)

@@ -6,19 +6,22 @@ import (
 
 	sinchpayloads "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch/sinchPayloads"
 	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/models/apiModels"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiResponseData {
-	var response apiModels.WpApiResponseData
+func HitSinchApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
+	// var response apiModels.WpApiResponseData
+	var responseBody extapimodels.WhatsappResponse
+	responseBody.IsSent = false
 
 	headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
 	generateTokenURL := config.Configs.SinchTokenApiUrl
 	if generateTokenURL == "" {
 		utils.Error(fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set"))
+		responseBody.ResponseMessage = "SINCH_GENERATE_TOKEN_API_URL is not set"
+		return responseBody
 	}
 
 	tokenPayload := map[string]string{
@@ -36,10 +39,8 @@ func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiRespon
 	if accessToken, ok := tokenResponse["access_token"].(string); ok {
 		sinchApiModel.AccessToken = accessToken
 	} else {
-		response.StatusCode = 500
-		response.Message = "failed to generate access token"
-		response.Status = false
-		return response
+		responseBody.ResponseMessage = "failed to generate access token"
+		return responseBody
 	}
 
 	sendMessageURL := config.Configs.SinchMessageApiUrl
@@ -66,25 +67,33 @@ func HitSinchApi(sinchApiModel extapimodels.SinchAPIModel) apiModels.WpApiRespon
 		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
 	}
 
-	// TODO Handling For Api Responses
-
 	success := apiResponse["success"].(string)
 
 	if success == "true" {
-		response.StatusCode = 200
-		response.Message = "success"
-		response.Status = true
-		response.ResponseId = apiResponse["responseId"].(string)
+		responseBody.IsSent = true
+		responseBody.ResponseMessage = "Message submitted successfully"
+		responseBody.TransactionId = apiResponse["responseId"].(string)
 	} else {
-		response.StatusCode = 500
-		response.Message = "failed to send message"
-		response.Status = false
+		responseBody.IsSent = false
+		description, ok := apiResponse["description"].([]interface{})
+		if ok && len(description) > 0 {
+			firstDesc, ok := description[0].(map[string]interface{})
+			if ok {
+				errorCode, _ := firstDesc["errorCode"].(string)
+				errorDesc, _ := firstDesc["errorDescription"].(string)
+				responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s", errorCode, errorDesc)
+			}
+		} else {
+			responseBody.ResponseMessage = "failed to send message"
+		}
 	}
 
-	return response
+	fmt.Println("SINCH FINAL WHATSAPP RESPONSE:", responseBody)
+
+	return responseBody
 }
 
-func getPayload(sinchApiModel extapimodels.SinchAPIModel) (map[string]interface{}, error) {
+func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	if strings.Contains(sinchApiModel.Process, "utility") {
 		// For Utility Payload
 		return sinchpayloads.GetSinchUtilityPayload(sinchApiModel), nil

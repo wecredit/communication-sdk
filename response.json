@@ -1,21 +1,22 @@
-{
-    "TIMES_SMS_FAIL": {
-        "transactionId": 0,
-        "state": "SUBMIT_FAILED",
-        "description": "message text not found",
-        "pdu": 0,
-        "corelationId": null
+[
+    {
+        "TIMES_SMS_FAIL": {
+            "transactionId": 0,
+            "state": "SUBMIT_FAILED",
+            "description": "message text not found",
+            "pdu": 0,
+            "corelationId": null
+        }
+    },
+    {
+        "SINCH_WHATSAPP_FAIL": {
+            "success": "false",
+            "description": [
+                {
+                    "errorCode": "invalid_msisdn",
+                    "errorDescription": "INVALID MSISDN"
+                }
+            ]
+        }
     }
-}
-
-
-Data Cache: map[SINCH_EMAIL:map[Channel:EMAIL CreatedOn: 2025-04-30 12: 34: 07.303 +0000 UTC Id: 4 IsHealthy: 1 Name:SINCH Status: 1 UpdatedOn:<nil> Weight: 20
-    ] SINCH_RCS:map[Channel:RCS CreatedOn: 2025-04-30 12: 33: 48.177 +0000 UTC Id: 2 IsHealthy: 1 Name:SINCH Status: 1 UpdatedOn:<nil> Weight: 60
-    ] SINCH_SMS:map[Channel:SMS CreatedOn: 2025-04-30 12: 33: 55.89 +0000 UTC Id: 3 IsHealthy: 1 Name:SINCH Status: 1 UpdatedOn:<nil> Weight: 70
-    ] SINCH_WHATSAPP:map[Channel:WHATSAPP CreatedOn: 2025-04-23 20: 04: 38.6 +0000 UTC Id: 1 IsHealthy: 1 Name:SINCH Status: 1 UpdatedOn:<nil> Weight: 100
-    ] TIMES_EMAIL:map[Channel:EMAIL CreatedOn: 2025-04-30 12: 34: 58.127 +0000 UTC Id: 8 IsHealthy: 1 Name:TIMES Status: 1 UpdatedOn:<nil> Weight: 80
-    ] TIMES_RCS:map[Channel:RCS CreatedOn: 2025-04-30 12: 34: 36.013 +0000 UTC Id: 6 IsHealthy: 1 Name:TIMES Status: 1 UpdatedOn:<nil> Weight: 30
-    ] TIMES_SMS:map[Channel:SMS CreatedOn: 2025-04-30 12: 34: 47.127 +0000 UTC Id: 7 IsHealthy: 1 Name:TIMES Status: 1 UpdatedOn:<nil> Weight: 40
-    ] TIMES_WHATSAPP:map[Channel:WHATSAPP CreatedOn: 2025-04-30 12: 34: 23.517 +0000 UTC Id: 5 IsHealthy: 1 Name:TIMES Status: 0 UpdatedOn:<nil> Weight: 100
-    ]
 ]

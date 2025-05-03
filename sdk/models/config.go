@@ -28,9 +28,11 @@ type Config struct {
 
 	// SDK Tables
 	SdkWhatsappInputTable string `envconfig:"SDK_WHATSAPP_INPUT_TABLE"`
-	SdkRcsInputTable      string `envconfig:"SDK_RCS_INPUT_TABLE"`
-	SdkSmsInputTable      string `envconfig:"SDK_SMS_INPUT_TABLE"`
-	SmsOutputTable        string `envconfig:"SMS_OUTPUT_TABLE"`
+	WhatsappOutputTable   string `envconfig:"WHATSAPP_OUTPUT_TABLE"`
+
+	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE"`
+	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
+	SmsOutputTable   string `envconfig:"SMS_OUTPUT_TABLE"`
 
 	VendorTable string `envconfig:"VENDOR_TABLE"`
 

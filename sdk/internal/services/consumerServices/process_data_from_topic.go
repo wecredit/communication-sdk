@@ -155,6 +155,7 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 	data.Channel = strings.ToUpper(data.Channel)
 	data.ProcessName = strings.ToUpper(data.ProcessName)
 	data.Vendor = strings.ToUpper(data.Vendor)
+	// data.Client = strings.ToUpper(data.Client)
 
 	dbMappedData, err := services.MapIntoDbModel(data)
 	if err != nil {
@@ -168,6 +169,7 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
+		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 		response, err := whatsapp.SendWpByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
