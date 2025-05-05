@@ -17,6 +17,7 @@ const (
 	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
 	AZURE_TOPIC_NAME                   = "communication-uat"
 	AZURE_DB_SUBSCRIPTION              = "priority"
+	BASIC_AUTH_API_URL                 = "http://localhost:8080/clients/validate-client"
 
 	// Times API Details
 	TIMES_WP_API_URL   = "https://wecredit1.timespanel.in/wa/v2/messages/send"

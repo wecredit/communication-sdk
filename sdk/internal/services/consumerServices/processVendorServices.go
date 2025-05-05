@@ -67,9 +67,17 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 	return s.DB.Save(&existing).Error
 }
 
+func (s *VendorService) DeleteVendor(id int) error {
+	result := s.DB.Where("id = ?", id).Delete(&apiModels.Vendor{})
+	if result.Error != nil {
+		return result.Error
+	}
 
-func (s *VendorService) DeleteVendor(id uint) error {
-	return s.DB.Delete(&apiModels.Vendor{}, id).Error
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
@@ -89,5 +97,6 @@ func (s *VendorService) GetVendors(channel string) ([]apiModels.Vendor, error) {
 	if err := query.Find(&vendors).Error; err != nil {
 		return nil, err
 	}
+
 	return vendors, nil
 }

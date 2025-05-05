@@ -31,6 +31,7 @@ func LoadSDKConfigs() (*azservicebus.Client, error) {
 		// "DB_NAME_TECH":                       env.DB_NAME_TECH,
 		"AZURE_SERVICEBUS_CONNECTION_STRING": env.AZURE_SERVICEBUS_CONNECTION_STRING,
 		"AZURE_TOPIC_NAME":                   env.AZURE_TOPIC_NAME,
+		"BASIC_AUTH_API_URL":                 env.BASIC_AUTH_API_URL,
 		// "AZURE_DB_SUBSCRIPTION":              env.AZURE_DB_SUBSCRIPTION,
 		// "TIMES_WP_API_URL":                   env.TIMES_WP_API_URL,
 		// "TIMES_WP_API_TOKEN":                 env.TIMES_WP_API_TOKEN,

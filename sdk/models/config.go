@@ -22,6 +22,7 @@ type Config struct {
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
 	QueueTopicName        string `envconfig:"AZURE_TOPIC_NAME"`
 	QueueSubscriptionName string `envconfig:"AZURE_DB_SUBSCRIPTION"`
+	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// Auth Table Variables
 	BasicAuthTableName string `envconfig:"AUTH_TABLE_NAME"`

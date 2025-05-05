@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/models/apiModels"
+	"gorm.io/gorm"
 )
 
 type VendorHandler struct {
@@ -42,8 +45,14 @@ func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 	channel := c.Param("channel")
 
 	var vendor apiModels.Vendor
+
 	if err := c.ShouldBindJSON(&vendor); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body"})
+		return
+	}
+
+	if name != vendor.Name || channel != vendor.Channel {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Name and Channel doesn't match from URL"})
 		return
 	}
 
@@ -56,7 +65,7 @@ func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "vendor updated successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("vendor %s updated successfully for channel %s", vendor.Name, vendor.Channel)})
 }
 
 func (h *VendorHandler) DeleteVendor(c *gin.Context) {
@@ -67,12 +76,16 @@ func (h *VendorHandler) DeleteVendor(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.DeleteVendor(uint(id)); err != nil {
+	err = h.Service.DeleteVendor(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("vendor not found with id: %d", id)})
+		return
+	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "vendor deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "vendor deleted successfully"})
 }
 
 func (h *VendorHandler) GetVendorByID(c *gin.Context) {
@@ -98,6 +111,11 @@ func (h *VendorHandler) GetVendors(c *gin.Context) {
 	vendors, err := h.Service.GetVendors(channel)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(vendors) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "No vendors found"})
 		return
 	}
 

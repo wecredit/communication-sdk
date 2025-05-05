@@ -22,16 +22,25 @@ func StartConsumer(port string) {
 		})
 	})
 
-	vendorService := services.NewVendorService(database.DBtech)
-	vendorHandler := handlers.NewVendorHandler(vendorService)
-
-	v := r.Group("/vendors")
+	vendorHandler := handlers.NewVendorHandler(services.NewVendorService(database.DBtech)) // Create handler for vendors passing them database object
+	vendors := r.Group("/vendors")
 	{
-		v.GET("/", vendorHandler.GetVendors)       // Optional filter: ?channel=WHATSAPP
-		v.GET("/:id", vendorHandler.GetVendorByID) // Get by ID
-		v.POST("/add", vendorHandler.AddVendor)
-		v.PUT("/:name/:channel", vendorHandler.UpdateVendorByNameAndChannel)
-		v.DELETE("/:id", vendorHandler.DeleteVendor)
+		vendors.GET("/", vendorHandler.GetVendors) // endpoint:- /vendors; filter: ?channel=WHATSAPP
+		vendors.POST("/add-vendor", vendorHandler.AddVendor)
+		vendors.PUT("/:name/:channel", vendorHandler.UpdateVendorByNameAndChannel)
+		vendors.GET("/id/:id", vendorHandler.GetVendorByID) // endpoint:- /vendors/{id};
+		vendors.DELETE("/id/:id", vendorHandler.DeleteVendor)
+	}
+
+	clientHandler := handlers.NewClientHandler(services.NewClientService(database.DBtech)) // Create handler for vendors passing them database object
+	clients := r.Group("/clients")
+	{
+		clients.GET("/", clientHandler.GetClients)
+		clients.POST("/add-client", clientHandler.AddClient)
+		clients.PUT("/:name/:channel", clientHandler.UpdateClientByNameAndChannel)
+		clients.GET("/id/:id", clientHandler.GetClientByID)
+		clients.DELETE("/id/:id", clientHandler.DeleteClient)
+		clients.POST("/validate-client", clientHandler.ValidateClient)
 	}
 
 	log.Printf("Server running on port %s", port)
