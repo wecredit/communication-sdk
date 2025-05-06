@@ -15,8 +15,8 @@ import (
 func HitSinchRcsApi(data extapimodels.RcsRequesBody) extapimodels.RcsResponse {
 	var responseBody extapimodels.RcsResponse
 	responseBody.IsSent = false
-	rcsApiUrl := config.Configs.SinchRcsApiUrl
-	rcsApiUrl = fmt.Sprintf("%s%s%s", config.Configs.SinchRcsApiUrl, data.ProjectId, "/messages:send")
+	// rcsApiUrl := config.Configs.SinchRcsApiUrl
+	rcsApiUrl := fmt.Sprintf("%s%s%s", config.Configs.SinchRcsApiUrl, data.ProjectId, "/messages:send")
 	accessToken, ok := cache.GetAccessToken()
 	if !ok {
 		token, err := helper.GetNewToken()
