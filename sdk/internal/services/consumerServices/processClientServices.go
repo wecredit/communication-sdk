@@ -16,6 +16,36 @@ func NewClientService(db *gorm.DB) *ClientService {
 	return &ClientService{DB: db}
 }
 
+func (s *ClientService) GetClients(channel, name string) ([]apiModels.Client, error) {
+	var clients []apiModels.Client
+	query := s.DB.Model(&apiModels.Client{})
+	if channel != "" && name == "" {
+		query = query.Where("channel = ?", channel)
+	}
+
+	if channel == "" && name != "" {
+		query = query.Where("name = ?", name)
+	}
+
+	if channel != "" && name != "" {
+		query = query.Where("channel = ? and name = ?", channel, name)
+	}
+
+	if err := query.Find(&clients).Error; err != nil {
+		return nil, err
+	}
+
+	return clients, nil
+}
+
+func (s *ClientService) GetClientByID(id uint) (*apiModels.Client, error) {
+	var client apiModels.Client
+	if err := s.DB.First(&client, id).Error; err != nil {
+		return nil, err
+	}
+	return &client, nil
+}
+
 func (s *ClientService) AddClient(client *apiModels.Client) error {
 	var clientName string
 	err := s.DB.Model(apiModels.Userbasicauth{}).
@@ -31,7 +61,9 @@ func (s *ClientService) AddClient(client *apiModels.Client) error {
 	}
 
 	client.Status = 1
-	client.CreatedOn = time.Now()
+	istOffset := 5*time.Hour + 30*time.Minute
+	now := time.Now().UTC().Add(istOffset)
+	client.CreatedOn = now
 
 	return s.DB.Create(client).Error
 }
@@ -42,13 +74,11 @@ func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updat
 		return errors.New("client not found")
 	}
 
-	// existing.Name = updates.Name
-	// existing.Channel = updates.Channel
 	existing.Status = updates.Status
 	existing.RateLimitPerMinute = updates.RateLimitPerMinute
-	// istOffset := 5*time.Hour + 30*time.Minute
-	// now := time.Now().UTC().Add(istOffset)
-	// existing.UpdatedOn = &now
+	istOffset := 5*time.Hour + 30*time.Minute
+	now := time.Now().UTC().Add(istOffset)
+	existing.UpdatedOn = &now
 	return s.DB.Save(&existing).Error
 }
 
@@ -63,36 +93,6 @@ func (s *ClientService) DeleteClient(id int) error {
 	}
 
 	return nil
-}
-
-func (s *ClientService) GetClientByID(id uint) (*apiModels.Client, error) {
-	var Client apiModels.Client
-	if err := s.DB.First(&Client, id).Error; err != nil {
-		return nil, err
-	}
-	return &Client, nil
-}
-
-func (s *ClientService) GetClients(channel, name string) ([]apiModels.Client, error) {
-	var Clients []apiModels.Client
-	query := s.DB.Model(&apiModels.Client{})
-	if channel != "" && name == "" {
-		query = query.Where("channel = ?", channel)
-	}
-
-	if channel == "" && name != "" {
-		query = query.Where("name = ?", name)
-	}
-
-	if channel != "" && name != "" {
-		query = query.Where("channel = ? and name = ?", channel, name)
-	}
-
-	if err := query.Find(&Clients).Error; err != nil {
-		return nil, err
-	}
-
-	return Clients, nil
 }
 
 func (s *ClientService) ValidateCredentials(username, password string) (*apiModels.Userbasicauth, error) {

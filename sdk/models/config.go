@@ -32,6 +32,8 @@ type Config struct {
 	WhatsappOutputTable   string `envconfig:"WHATSAPP_OUTPUT_TABLE"`
 
 	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE"`
+	RcsOutputTable   string `envconfig:"RCS_OUTPUT_TABLE"`
+
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
 	SmsOutputTable   string `envconfig:"SMS_OUTPUT_TABLE"`
 

@@ -31,7 +31,7 @@ const (
 	SINCH_API_USERNAME           = "wecreditpd"
 	SINCH_API_PASSWORD           = "Sinch@8655685383"
 	SINCH_WP_CALLBACK_URL        = "https://sinch-whatsapp-callback-api-h0a0hjafgvbjb7cb.centralindia-01.azurewebsites.net/api/v1/sinch-whatsapp/callback"
-	SINCH_RCS_API_URL            = "https://convapi.aclwhatsapp.com/v1/projects/74f097ac-a2a9-4004-81f9-b294b82d4849/messages:send"
+	SINCH_RCS_API_URL            = "https://convapi.aclwhatsapp.com/v1/projects/"
 	SINCH_SMS_API_URL            = "https://push3.aclgateway.com/v1/enterprises/messages.json"
 
 	// Log Level

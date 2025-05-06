@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
-	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
+	rcs "github.com/wecredit/communication-sdk/sdk/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/sdk/channels/sms"
 	"github.com/wecredit/communication-sdk/sdk/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/sdk/config"
@@ -183,7 +183,8 @@ func processMessage(message *azservicebus.ReceivedMessage) bool {
 		if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
-		response, err := rcs.SendRCSMessage(data)
+		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		response, err := rcs.SendRcsByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
 			return true

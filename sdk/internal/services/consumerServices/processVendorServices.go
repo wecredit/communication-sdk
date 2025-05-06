@@ -16,26 +16,58 @@ func NewVendorService(db *gorm.DB) *VendorService {
 	return &VendorService{DB: db}
 }
 
-func (s *VendorService) AddVendor(v *apiModels.Vendor) error {
+func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, error) {
+	var vendors []apiModels.Vendor
+	query := s.DB.Model(&apiModels.Vendor{})
+	if channel != "" && name == "" {
+		query = query.Where("channel = ?", channel)
+	}
+
+	if channel == "" && name != "" {
+		query = query.Where("name = ?", name)
+	}
+
+	if channel != "" && name != "" {
+		query = query.Where("channel = ? and name = ?", channel, name)
+	}
+
+	if err := query.Find(&vendors).Error; err != nil {
+		return nil, err
+	}
+
+	return vendors, nil
+}
+
+func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
+	var vendor apiModels.Vendor
+	if err := s.DB.First(&vendor, id).Error; err != nil {
+		return nil, err
+	}
+	return &vendor, nil
+}
+
+func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
 	var totalWeight int64
 
 	err := s.DB.Model(apiModels.Vendor{}).
-		Where("channel = ? AND status = 1", v.Channel).
+		Where("channel = ? AND status = 1", vendor.Channel).
 		Select("COALESCE(SUM(weight), 0)").
 		Scan(&totalWeight).Error
 	if err != nil {
 		return err
 	}
 
-	if totalWeight+int64(v.Weight) > 100 {
+	if totalWeight+int64(vendor.Weight) > 100 {
 		return errors.New("weight exceeds 100 for active vendors on this channel")
 	}
 
-	v.Status = 1
-	v.IsHealthy = 1
-	v.CreatedOn = time.Now()
+	vendor.Status = 1
+	vendor.IsHealthy = 1
+	istOffset := 5*time.Hour + 30*time.Minute
+	now := time.Now().UTC().Add(istOffset)
+	vendor.CreatedOn = now
 
-	return s.DB.Create(v).Error
+	return s.DB.Create(vendor).Error
 }
 
 func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updates apiModels.Vendor) error {
@@ -56,8 +88,6 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 		return errors.New("updated weight exceeds 100 for active vendors on this channel")
 	}
 
-	existing.Name = updates.Name
-	existing.Channel = updates.Channel
 	existing.Status = updates.Status
 	existing.IsHealthy = updates.IsHealthy
 	existing.Weight = updates.Weight
@@ -78,25 +108,4 @@ func (s *VendorService) DeleteVendor(id int) error {
 	}
 
 	return nil
-}
-
-func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
-	var vendor apiModels.Vendor
-	if err := s.DB.First(&vendor, id).Error; err != nil {
-		return nil, err
-	}
-	return &vendor, nil
-}
-
-func (s *VendorService) GetVendors(channel string) ([]apiModels.Vendor, error) {
-	var vendors []apiModels.Vendor
-	query := s.DB.Model(&apiModels.Vendor{})
-	if channel != "" {
-		query = query.Where("channel = ?", channel)
-	}
-	if err := query.Find(&vendors).Error; err != nil {
-		return nil, err
-	}
-
-	return vendors, nil
 }

@@ -20,6 +20,41 @@ func NewClientHandler(s *services.ClientService) *ClientHandler {
 	return &ClientHandler{Service: s}
 }
 
+func (h *ClientHandler) GetClients(c *gin.Context) {
+	channel := c.Query("channel")
+	name := c.Query("name")
+
+	clients, err := h.Service.GetClients(channel, name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(clients) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "No Clients found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, clients)
+}
+
+func (h *ClientHandler) GetClientByID(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
+		return
+	}
+
+	client, err := h.Service.GetClientByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, client)
+}
+
 func (h *ClientHandler) AddClient(c *gin.Context) {
 	var client apiModels.Client
 	if c.Request.Method != "POST" {
@@ -86,41 +121,6 @@ func (h *ClientHandler) DeleteClient(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Client deleted successfully"})
-}
-
-func (h *ClientHandler) GetClientByID(c *gin.Context) {
-	idParam := c.Param("id")
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
-		return
-	}
-
-	client, err := h.Service.GetClientByID(uint(id))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, client)
-}
-
-func (h *ClientHandler) GetClients(c *gin.Context) {
-	channel := c.Query("channel")
-	name := c.Query("name")
-
-	clients, err := h.Service.GetClients(channel, name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if len(clients) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"message": "No Clients found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, clients)
 }
 
 func (h *ClientHandler) ValidateClient(c *gin.Context) {

@@ -65,7 +65,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	case variables.TIMES:
 		response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
 	case variables.SINCH:
-		response = sinchWhatsapp.HitSinchApi(requestBody)
+		response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
 	}
 
 	response.CommId = msg.CommId
@@ -83,7 +83,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if response.IsSent {
-		utils.Info(fmt.Sprintf("WP sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 		return sdkModels.CommApiResponseBody{
 			CommId:  msg.CommId,
 			Success: true,

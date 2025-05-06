@@ -19,13 +19,13 @@ func main() {
 
 	request := &sdkModels.CommApiRequestBody{
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
-		Mobile:              "9123359755",
+		Mobile:              "7579214351",
 		Email:               "",
-		Channel:             "WHATSAPP",
+		Channel:             "RCS",
 		ProcessName:         "OLYV",
-		Stage:               1,
+		Stage:               3,
 		IsPriority:          true,
-		AzureIdempotencyKey: "N",
+		AzureIdempotencyKey: "V",
 	}
 
 	// Call your SDK's Send function

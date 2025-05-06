@@ -43,6 +43,16 @@ func StartConsumer(port string) {
 		clients.POST("/validate-client", clientHandler.ValidateClient)
 	}
 
+	templateHandler := handlers.NewTemplateHandler(services.NewTemplateService(database.DBtech))
+	templates := r.Group("/templates")
+	{
+		templates.GET("/", templateHandler.GetTemplates)
+		templates.POST("/add-template", templateHandler.AddTemplate)
+		templates.PUT("/:name/:channel", templateHandler.UpdateTemplateByNameAndChannel)
+		templates.GET("/id/:id", templateHandler.GetTemplateByID)
+		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)
+	}
+
 	log.Printf("Server running on port %s", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

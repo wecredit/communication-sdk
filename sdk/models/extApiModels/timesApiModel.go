@@ -47,3 +47,22 @@ type WhatsappResponse struct {
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
+
+type RcsRequesBody struct {
+	Mobile       string
+	Process      string
+	TemplateName string
+	AppId        string
+	AppIdKey     string
+	ProjectId    string
+	ApiKey       string
+}
+
+type RcsResponse struct {
+	TemplateName    string `json:"templateName" gorm:"TemplateName"`
+	CommId          string `json:"CommId" gorm:"CommId"`
+	IsSent          bool   `json:"isSent" gorm:"IsSent"`
+	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
+	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+}

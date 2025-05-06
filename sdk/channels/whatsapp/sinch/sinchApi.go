@@ -11,7 +11,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
+func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
 	// var response apiModels.WpApiResponseData
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false

@@ -18,5 +18,75 @@
                 }
             ]
         }
+    },
+    {
+        "SINCH_RCS_FAIL_1": {
+            "error": {
+                "code": 403,
+                "message": "",
+                "status": "PERMISSION_DENIED",
+                "details": []
+            }
+        },
+        "SINCH_RCS_FAIL_2": {
+            "error": {
+                "code": 404,
+                "message": "Requested resource could not be found",
+                "status": "NOT_FOUND",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ResourceInfo",
+                        "resource_type": "sinch.conversationapi.type.App",
+                        "resource_name": "01JR7CXY604M1JZB7DNJ7ZV8C7",
+                        "owner": "",
+                        "description": "Resource could not be found"
+                    }
+                ]
+            }
+        },        
+        "SINCH_RCS_FAIL_3": {
+            "error": {
+                "code": 400,
+                "message": "Invalid argument",
+                "status": "INVALID_ARGUMENT",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.BadRequest",
+                        "field_violations": [
+                            {
+                                "field": "app_id",
+                                "description": "Invalid app_id"
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "SINCH_RCS_FAIL_4": {
+            "error": {
+                "code": 400,
+                "message": "Invalid argument",
+                "status": "INVALID_ARGUMENT",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.BadRequest",
+                        "field_violations": [
+                            {
+                                "field": "app_id",
+                                "description": "Invalid app_id"
+                            },
+                            {
+                                "field": "recipient.identified_by.channel_identities[RCS].identity",
+                                "description": "Field is mandatory."
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "SINCH_RCS_SUCCESS":{
+            "message_id": "01JTJK3KKPP4Z355NA3HW3FN8P",
+            "accepted_time": "2025-05-06T10:43:46.934Z"
+        }
     }
 ]

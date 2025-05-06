@@ -64,6 +64,19 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 	return results, nil
 }
 
+func GetRcsAppId(db *gorm.DB, AppId string) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	var query *gorm.DB
+	query = db.Table("RcsTemplateAppId").
+		Where("AppId LIKE ?", AppId)
+
+	if err := query.Find(&result).Error; err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 	var query *gorm.DB
@@ -89,6 +102,8 @@ func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int)
 	if err := query.Find(&results).Error; err != nil {
 		return nil, err
 	}
+
+	fmt.Println("Results", results)
 
 	return results, nil
 }
