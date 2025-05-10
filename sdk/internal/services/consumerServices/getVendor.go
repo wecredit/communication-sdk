@@ -6,7 +6,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 )
 
-func getVendor(idempotencyKey string) string {
+func GetVendor(idempotencyKey string) string {
 	h := fnv.New32a()
 	h.Write([]byte(idempotencyKey))
 	hashValue := h.Sum32() % 100

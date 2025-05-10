@@ -21,10 +21,10 @@ func NewTemplateHandler(s *services.TemplateService) *TemplateHandler {
 }
 
 func (h *TemplateHandler) GetTemplates(c *gin.Context) {
-	channel := c.Query("channel")
-	name := c.Query("name")
+	process := c.Query("process")
+	stage := c.Query("stage")
 
-	templates, err := h.Service.GetTemplates(channel, name)
+	templates, err := h.Service.GetTemplates(process, stage)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

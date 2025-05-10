@@ -120,9 +120,7 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 
 		// Build Id index
 		if id, ok := row["Id"].(int64); ok {
-			fmt.Println("Id", id)
 			idIndex[uint(id)] = keyStr
-			fmt.Println("udidnde", idIndex)
 		}
 	}
 
@@ -133,7 +131,6 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 
 	// Store Id index
 	idIndexKey := key + ":IdIndex"
-	fmt.Println("idIndexKey", idIndexKey)
 	if !GetCache().Set(idIndexKey, idIndex) {
 		utils.Error(fmt.Errorf("failed to set Id index in cache for key: %v", idIndexKey))
 		return

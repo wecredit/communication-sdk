@@ -32,9 +32,9 @@ type Client struct {
 
 type Userbasicauth struct {
 	Id        int       `json:"Id"`
-	Username  string    `gorm:"username" json:"username" binding:"required"`
-	Password  string    `gorm:"password" json:"password" binding:"required"`
-	CreatedOn time.Time `gorm:"createdOn" json:"createdOn,omitempty"`
+	Username  string    `gorm:"column:username" json:"username" binding:"required"`
+	Password  string    `gorm:"column:password" json:"password" binding:"required"`
+	CreatedOn time.Time `gorm:"column:createdOn" json:"createdOn,omitempty"`
 }
 
 type Templatedetails struct {

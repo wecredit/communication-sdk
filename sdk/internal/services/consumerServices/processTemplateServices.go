@@ -20,18 +20,19 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 	return &TemplateService{DB: db}
 }
 
-func (s *TemplateService) GetTemplates(channel, name string) ([]apiModels.Templatedetails, error) {
+func (s *TemplateService) GetTemplates(process, stage string) ([]apiModels.Templatedetails, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
 		return nil, errors.New("template data not found in cache")
 	}
+	// TODO: store templates in cache more better way, use key as Process:Stage:Channel:Vendorß
 
 	var templates []apiModels.Templatedetails
 
 	// Case 1: both name and channel provided -> direct key lookup
-	if name != "" && channel != "" {
-		key := fmt.Sprintf("Process:%s|Channel:%s", name, channel)
+	if process != "" && stage != "" {
+		key := fmt.Sprintf("Process:%s|Stage:%s", process, stage)
 		if data, ok := templateDetails[key]; ok {
 			template, err := mapToTemplate(data)
 			if err != nil {
@@ -45,7 +46,7 @@ func (s *TemplateService) GetTemplates(channel, name string) ([]apiModels.Templa
 
 	// Case 2: filtering
 	for _, data := range templateDetails {
-		if (channel != "" && data["Channel"] != channel) || (name != "" && data["TemplateName"] != name) {
+		if (process != "" && data["Process"] != process) || (stage != "" && data["Stage"] != stage) {
 			continue
 		}
 		template, err := mapToTemplate(data)
@@ -140,10 +141,20 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 // Helper: Convert map to Templatedetails struct
 func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, error) {
 	template := &apiModels.Templatedetails{
-		Id:           int(data["Id"].(int64)),
-		TemplateName: data["TemplateName"].(string),
-		Channel:      data["Channel"].(string),
-		IsActive:     data["IsActive"].(bool),
+		Id:            int(data["Id"].(int64)),
+		TemplateName:  data["TemplateName"].(string),
+		ImageId:       data["ImageId"].(string),
+		Process:       data["Process"].(string),
+		Stage:         int(data["Stage"].(int64)),
+		ImageUrl:      data["ImageUrl"].(string),
+		DltTemplateId: int64(data["DltTemplateId"].(int64)),
+		Channel:       data["Channel"].(string),
+		Vendor:        data["Vendor"].(string),
+		IsActive: func() bool {
+			return data["IsActive"].(int64) == 1
+		}(),
+		TemplateText: data["TemplateText"].(string),
+		Link:         data["Link"].(string),
 	}
 
 	if createdOn, ok := data["CreatedOn"].(time.Time); ok {

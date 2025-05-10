@@ -133,7 +133,7 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 	var sum int64
 	if err := s.DB.Model(&apiModels.Vendor{}).
 		Where("channel = ? AND status = 1 AND name != ?", channel, name).
-		Select("SUM(weight)").Scan(&sum).Error; err != nil {
+		Select("COALESCE(SUM(weight), 0)").Scan(&sum).Error; err != nil {
 		return err
 	}
 
