@@ -89,21 +89,16 @@ func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 }
 
 func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixColumnName string, db *gorm.DB) {
-	// Step 1: Fetch all data from DB
-	data, err := database.GetDataFromTable(
-		tableName,
-		db,
-	)
+	data, err := database.GetDataFromTable(tableName, db)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to fetch initial data for cache: %v", err))
 		return
 	}
 
-	// Optional: Log size of data
 	utils.Info(fmt.Sprintf("fetched %d entries from DB", len(data)))
 
-	// Step 2: Transform into map using a specific column as key
 	mappedData := make(map[string]map[string]interface{})
+	idIndex := make(map[uint]string) // Map Id to cache key
 
 	for _, row := range data {
 		keyVal, ok := row[columnNameToBeUsedAsKey]
@@ -112,27 +107,41 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 			continue
 		}
 
-		keyStr := fmt.Sprintf("%v", keyVal)
-
+		keyStr := fmt.Sprintf("%s:%v", columnNameToBeUsedAsKey, keyVal)
 		if suffixColumnName != "" {
 			if suffixVal, ok := row[suffixColumnName]; ok {
-				keyStr = fmt.Sprintf("%s_%v", keyStr, suffixVal)
+				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)
 			} else {
 				utils.Warn(fmt.Sprintf("suffix column '%s' missing for a row", suffixColumnName))
 			}
 		}
 
 		mappedData[keyStr] = row
+
+		// Build Id index
+		if id, ok := row["Id"].(int64); ok {
+			fmt.Println("Id", id)
+			idIndex[uint(id)] = keyStr
+			fmt.Println("udidnde", idIndex)
+		}
 	}
 
-	// Step 3: Store into cache
 	if !GetCache().Set(key, mappedData) {
 		utils.Error(fmt.Errorf("failed to set data in cache for key: %v", key))
 		return
 	}
-	
-	TransformAndCacheVendors(mappedData)
 
+	// Store Id index
+	idIndexKey := key + ":IdIndex"
+	fmt.Println("idIndexKey", idIndexKey)
+	if !GetCache().Set(idIndexKey, idIndex) {
+		utils.Error(fmt.Errorf("failed to set Id index in cache for key: %v", idIndexKey))
+		return
+	}
+
+	if key == VendorsData {
+		TransformAndCacheVendors(mappedData)
+	}
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
 }
 
@@ -190,6 +199,19 @@ func (c *Cache) GetMappedData(key string) (map[string]map[string]interface{}, bo
 
 	// Convert slice to map using lender names as keys
 	mappedData := value.(map[string]map[string]interface{})
+
+	return mappedData, true
+}
+
+func (c *Cache) GetMappedIdData(key string) (map[uint]string, bool) {
+	value, found := c.store.Get(key)
+	if !found {
+		fmt.Println("Cache key not found:", key)
+		return nil, false
+	}
+
+	// Convert slice to map using lender names as keys
+	mappedData := value.(map[uint]string)
 
 	return mappedData, true
 }

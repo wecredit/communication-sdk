@@ -25,7 +25,7 @@ type Config struct {
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// Auth Table Variables
-	BasicAuthTableName string `envconfig:"AUTH_TABLE_NAME"`
+	BasicAuthTableName string `envconfig:"BASIC_AUTH_TABLE"`
 
 	// SDK Tables
 	SdkWhatsappInputTable string `envconfig:"SDK_WHATSAPP_INPUT_TABLE"`
@@ -37,7 +37,9 @@ type Config struct {
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
 	SmsOutputTable   string `envconfig:"SMS_OUTPUT_TABLE"`
 
-	VendorTable string `envconfig:"VENDOR_TABLE"`
+	VendorTable          string `envconfig:"VENDORS_TABLE"`
+	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
+	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
 
 	// RCS Tables
 	RcsTemplateAppIdTable string `envconfig:"RCS_TEMPLATE_APP_ID_TABLE"`

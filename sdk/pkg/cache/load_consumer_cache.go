@@ -13,9 +13,16 @@ func LoadConsumerDataIntoCache(config models.Config) {
 	// Initialize the global cache
 	InitializeCache()
 
+	// Store auth data into cache
+	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtech)
+
 	// Store Vendors Data into cache
 	StoreMappedDataIntoCache(VendorsData, config.VendorTable, "Name", "Channel", database.DBtech)
-	
+
+	StoreMappedDataIntoCache(ClientsData, config.ClientsTable, "Name", "Channel", database.DBtech)
+
+	StoreMappedDataIntoCache(TemplateDetailsData, config.TemplateDetailsTable, "Process", "Stage", database.DBtech)
+
 	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtech)
 
 	// Store auth data into cache
@@ -25,5 +32,3 @@ func LoadConsumerDataIntoCache(config models.Config) {
 	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)
 
 }
-
-

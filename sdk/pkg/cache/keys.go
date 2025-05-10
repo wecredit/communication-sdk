@@ -3,11 +3,13 @@ package cache
 import "fmt"
 
 var (
-	AuthDetails        string = "authDetails"
-	PriorityData       string = "priorityData"
-	VendorsData        string = "vendorsData"
-	ActiveVendors      string = "activeVendors"
-	RcsTemplateAppData string = "rcsTemplateAppData"
+	AuthDetails         string = "authDetails"
+	PriorityData        string = "priorityData"
+	VendorsData         string = "vendorsData"
+	ClientsData         string = "clientsData"
+	TemplateDetailsData string = "templateDetailsData"
+	ActiveVendors       string = "activeVendors"
+	RcsTemplateAppData  string = "rcsTemplateAppData"
 )
 
 func GetRankKey(subLenderId int) string {
