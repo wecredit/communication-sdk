@@ -7,10 +7,10 @@ const (
 	DB_PASSWORD_ANALYTICS = "WeCred!T@2302$"
 	DB_NAME_ANALYTICS     = "master"
 
-	DB_SERVER_TECH   = "10.1.0.6"
+	DB_SERVER_TECH   = "13.127.97.26"
 	DB_PORT_TECH     = "1433"
-	DB_USER_TECH     = "A.Dey"
-	DB_PASSWORD_TECH = "Amar2024@Wc123456"
+	DB_USER_TECH     = "WCAppUser"
+	DB_PASSWORD_TECH = "WeCred!TaPP@2025"
 	DB_NAME_TECH     = "communication"
 
 	// Azure Queue Details

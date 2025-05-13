@@ -10,22 +10,22 @@ import (
 
 func main() {
 
-	client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=")
+	client, err := sdk.NewSdkClient("nahs", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
 	}
 
-	fmt.Println("Client Created:", client)
+	fmt.Println("\nClient Created:", client)
 
 	request := &sdkModels.CommApiRequestBody{
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
-		Mobile:              "7579214351",
+		Mobile:              "7570897034", //"7579214351",
 		Email:               "",
 		Channel:             "RCS",
 		ProcessName:         "OLYV",
 		Stage:               3,
 		IsPriority:          true,
-		AzureIdempotencyKey: "V",
+		AzureIdempotencyKey: "X",
 	}
 
 	// Call your SDK's Send function

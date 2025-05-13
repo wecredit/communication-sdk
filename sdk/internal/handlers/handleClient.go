@@ -125,18 +125,14 @@ func (h *ClientHandler) DeleteClient(c *gin.Context) {
 
 func (h *ClientHandler) ValidateClient(c *gin.Context) {
 	var userInput apiModels.Userbasicauth
-
 	if err := c.ShouldBindJSON(&userInput); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input: " + err.Error()})
 		return
 	}
 
 	user, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
-		return
-	} else if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

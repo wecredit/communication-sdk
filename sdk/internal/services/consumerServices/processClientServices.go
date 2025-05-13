@@ -151,13 +151,36 @@ func (s *ClientService) DeleteClient(id int) error {
 
 func (s *ClientService) ValidateCredentials(username, password string) (*apiModels.Userbasicauth, error) {
 	var user apiModels.Userbasicauth
-	err := s.DB.Where("username = ? AND password = ?", username, password).First(&user).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, gorm.ErrRecordNotFound
+
+	// Collecting BasicAuthData
+	authDetails, _ := cache.GetCache().Get("authDetails")
+
+	// Validate the credentials
+	isValid := false
+	for _, data := range authDetails {
+		// extract username and password from the map
+		usernameFromData, _ := data["username"].(string)
+		passwordFromData, _ := data["password"].(string)
+
+		// Validate headers username and password
+		if usernameFromData == username && passwordFromData == password {
+			isValid = true
+			break
 		}
-		return nil, err
+
 	}
+
+	if !isValid {
+		return nil, errors.New("invalid Username and Password")
+	}
+
+	// err := s.DB.Where("username = ? AND password = ?", username, password).First(&user).Error
+	// if err != nil {
+	// 	if errors.Is(err, gorm.ErrRecordNotFound) {
+	// 		return nil, gorm.ErrRecordNotFound
+	// 	}
+	// 	return nil, err
+	// }
 	return &user, nil
 }
 
