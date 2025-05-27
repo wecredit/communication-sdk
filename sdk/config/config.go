@@ -61,8 +61,14 @@ func LoadConfigs() error {
 	utils.Info("Tech Database connection pool initialized successfully.")
 
 	// Configure Queue client
-	_ = queue.GetClient(Configs.QueueConnectionString)
-
+	queue.InitAWSClients(Configs.AWSRegion)
+	// _, err = queue.GetSdkSnsClient(Configs.AWSRegion)
+	// if err != nil {
+	// 	utils.Error(fmt.Errorf("failed to initialize SDK Client: %v", err))
+	// 	return err
+	// } else {
+	// 	utils.Info("SNS Client initialized successfully.")
+	// }
 	return nil
 }
 

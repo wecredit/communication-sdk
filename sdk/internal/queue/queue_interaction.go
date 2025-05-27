@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
@@ -14,6 +16,44 @@ const (
 	maxRetries   = 3               // Max retry attempts
 	retryBackoff = 2 * time.Second // Wait between retries
 )
+
+// SendMessage sends a message to an AWS SNS topic with the subject as a message attribute
+func SendMessageToAwsQueue(client *sns.SNS,messageMap interface{}, topicARN string, subject string) error {
+	// Ensure SNS client is initialized
+	// if SNSClient == nil {
+	// 	if err := InitSNSClient("ap-south-1"); err != nil { // use correct region
+	// 		return err
+	// 	}
+	// }
+
+	fmt.Println("Sending message to SNS topic:", topicARN)
+
+	// Convert message to JSON
+	messageBytes, err := json.Marshal(messageMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message to JSON: %w", err)
+	}
+
+	// Prepare message attributes (for filtering)
+	messageAttributes := map[string]*sns.MessageAttributeValue{
+		"SubjectKey": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String(subject),
+		},
+	}
+
+	// Publish message using global SNSClient
+	_, err = client.Publish(&sns.PublishInput{
+		Message:           aws.String(string(messageBytes)),
+		TopicArn:          aws.String(topicARN),
+		MessageAttributes: messageAttributes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	return nil
+}
 
 // SendMessage allows putting data in Azure Topic with a subject for a specific subscription
 func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topicName, subject, messageId string) error {

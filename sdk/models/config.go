@@ -24,6 +24,12 @@ type Config struct {
 	QueueSubscriptionName string `envconfig:"AZURE_DB_SUBSCRIPTION"`
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
+	// AWS Credentials
+	AWSRegion string `envconfig:"AWS_REGION"`
+	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
+	AwsQueueUrl string `envconfig:"AWS_QUEUE_URL"`
+
+
 	// Auth Table Variables
 	BasicAuthTableName string `envconfig:"BASIC_AUTH_TABLE"`
 

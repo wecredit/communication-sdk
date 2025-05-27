@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/google/uuid"
 	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/helper"
@@ -29,7 +29,7 @@ func GenerateCommID() string {
 	return commID
 }
 
-func ProcessCommApiData(data *sdkModels.CommApiRequestBody, queueClient *azservicebus.Client) (sdkModels.CommApiResponseBody, error) {
+func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS) (sdkModels.CommApiResponseBody, error) {
 	isValidate, message := helper.ValidateCommRequest(*data)
 
 	if !isValidate {
@@ -62,7 +62,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, queueClient *azservi
 	}
 
 	// Send the map to Azure Queue
-	err = queue.SendMessage(queueClient, dataMap, config.SdkConfigs.QueueTopicName, subject, data.AzureIdempotencyKey)
+	err = queue.SendMessageToAwsQueue(snsClient, dataMap, config.SdkConfigs.AwsSnsArn, subject)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))
 		return sdkModels.CommApiResponseBody{
@@ -70,7 +70,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, queueClient *azservi
 		}, fmt.Errorf("error occurred while sending data to queue: %w", err)
 	}
 
-	utils.Info("Message sent to Azure Queue.")
+	utils.Info("Message sent to AWS SNS.")
 
 	return sdkModels.CommApiResponseBody{
 		Success: true,

@@ -15,13 +15,13 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	if !c.isAuthed {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
 	}
-	if c.QueueClient == nil {
-		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("queue client not initialized")
+	if c.AwsSnsClient == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("AWS SNS client not initialized")
 	}
 
 	msg.Client = c.ClientName
 
-	response, err := services.ProcessCommApiData(msg, c.QueueClient)
+	response, err := services.ProcessCommApiData(msg, c.AwsSnsClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err

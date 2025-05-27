@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/ristretto"
+	"github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
@@ -114,6 +115,10 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 			} else {
 				utils.Warn(fmt.Sprintf("suffix column '%s' missing for a row", suffixColumnName))
 			}
+		}
+
+		if tableName == config.Configs.TemplateDetailsTable {
+			keyStr = fmt.Sprintf("%s|Channel:%v|Vendor:%v", keyStr, row["Channel"], row["Channel"])
 		}
 
 		mappedData[keyStr] = row

@@ -20,19 +20,20 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 	return &TemplateService{DB: db}
 }
 
-func (s *TemplateService) GetTemplates(process, stage string) ([]apiModels.Templatedetails, error) {
+func (s *TemplateService) GetTemplates(process, stage, channel, vendor string) ([]apiModels.Templatedetails, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
 		return nil, errors.New("template data not found in cache")
 	}
-	// TODO: store templates in cache more better way, use key as Process:Stage:Channel:Vendorß
+
+	fmt.Println("Template DEtails", templateDetails)
 
 	var templates []apiModels.Templatedetails
 
-	// Case 1: both name and channel provided -> direct key lookup
-	if process != "" && stage != "" {
-		key := fmt.Sprintf("Process:%s|Stage:%s", process, stage)
+	// Case 1: both process and stage and channel and vendor provided -> direct key lookup
+	if process != "" && stage != "" && channel != "" && vendor != "" {
+		key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", process, stage, channel, vendor)
 		if data, ok := templateDetails[key]; ok {
 			template, err := mapToTemplate(data)
 			if err != nil {
@@ -101,7 +102,8 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 		return err
 	}
 
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "TemplateName", "Channel", s.DB)
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
+
 	return nil
 }
 
@@ -121,7 +123,7 @@ func (s *TemplateService) UpdateTemplateByNameAndChannel(name, channel string, u
 		return err
 	}
 
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "TemplateName", "Channel", s.DB)
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
 	return nil
 }
 
@@ -134,7 +136,7 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 		return gorm.ErrRecordNotFound
 	}
 
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "TemplateName", "Channel", s.DB)
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
 	return nil
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 func StartConsumer(port string) {
-	go services.ConsumerService(10, config.Configs.QueueTopicName, config.Configs.QueueSubscriptionName)
+	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
 
 	// Set up Gin router
 	r := gin.Default()
@@ -54,8 +54,8 @@ func StartConsumer(port string) {
 	}
 
 	log.Printf("Server running on port %s", port)
-	// if err := r.Run(":" + port); err != nil {
-	if err := r.Run("0.0.0.0:8080"); err != nil {
+	if err := r.Run(":" + port); err != nil {
+		// if err := r.Run("0.0.0.0:8080"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

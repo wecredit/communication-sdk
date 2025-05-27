@@ -10,7 +10,7 @@ import (
 
 func main() {
 
-	client, err := sdk.NewSdkClient("nahs", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=")
+	client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
 	}
@@ -24,8 +24,8 @@ func main() {
 		Channel:             "RCS",
 		ProcessName:         "OLYV",
 		Stage:               3,
-		IsPriority:          true,
-		AzureIdempotencyKey: "X",
+		IsPriority:          false,
+		AzureIdempotencyKey: "Y",
 	}
 
 	// Call your SDK's Send function

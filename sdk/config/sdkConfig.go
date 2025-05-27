@@ -1,9 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"reflect"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
+	"github.com/aws/aws-sdk-go/service/sns"
 	env "github.com/wecredit/communication-sdk/sdk/constant"
 	"github.com/wecredit/communication-sdk/sdk/internal/queue"
 	"github.com/wecredit/communication-sdk/sdk/models"
@@ -12,7 +13,7 @@ import (
 // Create an instance of Config
 var SdkConfigs models.Config
 
-func LoadSDKConfigs() (*azservicebus.Client, error) {
+func LoadSDKConfigs() (*sns.SNS, error) {
 	// Use reflection to set the struct fields with environment variables
 	val := reflect.ValueOf(&SdkConfigs).Elem() // Pass a pointer to the struct
 	typ := reflect.TypeOf(SdkConfigs)          // Use the struct type (not the pointer)
@@ -32,6 +33,8 @@ func LoadSDKConfigs() (*azservicebus.Client, error) {
 		"AZURE_SERVICEBUS_CONNECTION_STRING": env.AZURE_SERVICEBUS_CONNECTION_STRING,
 		"AZURE_TOPIC_NAME":                   env.AZURE_TOPIC_NAME,
 		"BASIC_AUTH_API_URL":                 env.BASIC_AUTH_API_URL,
+		"AWS_REGION":                         env.AWS_REGION,
+		"AWS_COMM_TOPIC_ARN":                 env.AWS_COMM_TOPIC_ARN,
 		// "AZURE_DB_SUBSCRIPTION":              env.AZURE_DB_SUBSCRIPTION,
 		// "TIMES_WP_API_URL":                   env.TIMES_WP_API_URL,
 		// "TIMES_WP_API_TOKEN":                 env.TIMES_WP_API_TOKEN,
@@ -65,21 +68,10 @@ func LoadSDKConfigs() (*azservicebus.Client, error) {
 	}
 
 	// Initiate Default quueue client
-	client := queue.GetSdkQueueClient(SdkConfigs.QueueConnectionString)
+	client, err := queue.GetSdkSnsClient(SdkConfigs.AWSRegion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize SDK Client: %v", err)
+	}
 
-	// Connect Analytics DB
-	/* 	err := database.ConnectDB(database.Analytics, Configs)
-	   	if err != nil {
-	   		return client, fmt.Errorf("failed to initialize Analytics database: %v", err)
-	   	}
-	   	utils.Info("Analytics Database connection pool initialized successfully.")
-
-	   	// Connect Tech DB
-	   	err = database.ConnectDB(database.Tech, Configs)
-	   	if err != nil {
-	   		return client, fmt.Errorf("failed to initialize Tech database: %v", err)
-	   	}
-
-	   	utils.Info("Tech Database connection pool initialized successfully.") */
 	return client, nil
 }

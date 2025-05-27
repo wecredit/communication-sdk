@@ -11,7 +11,7 @@ import (
 )
 
 // getVendor returns the vendor name based on hash of idempotency key
-func getVendor(idempotencyKey string) string {
+func GetVendor(idempotencyKey string) string {
 	h := fnv.New32a()
 	h.Write([]byte(idempotencyKey))
 	hashValue := h.Sum32() % 100
@@ -27,7 +27,7 @@ type Vendor struct {
 	Weight int
 }
 
-func getVendorByWeight(idempotencyKey string, vendors []Vendor) string {
+func GetVendorByWeight(idempotencyKey string, vendors []Vendor) string {
 	h := fnv.New32a()
 	h.Write([]byte(idempotencyKey))
 	hashValue := h.Sum32() % 100
