@@ -19,11 +19,11 @@ func main() {
 
 	request := &sdkModels.CommApiRequestBody{
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
-		Mobile:              "7570897034", //"7579214351",
+		Mobile:              "8003366950", //"7579214351",
 		Email:               "",
-		Channel:             "RCS",
+		Channel:             "WHATSAPP",
 		ProcessName:         "OLYV",
-		Stage:               3,
+		Stage:               1,
 		IsPriority:          false,
 		AzureIdempotencyKey: "Y",
 	}

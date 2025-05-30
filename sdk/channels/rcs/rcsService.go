@@ -2,7 +2,9 @@ package rcs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 
 	sinchRcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/sinch"
 	timesRcs "github.com/wecredit/communication-sdk/sdk/channels/rcs/times"
@@ -11,43 +13,37 @@ import (
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/dbService"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
-	// var timeData extapimodels.TimesAPIModel
-	// var sinchData extapimodels.SinchAPIModel
-
 	requestBody := extapimodels.RcsRequesBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
 	}
+	utils.Debug("Fetching rcs template data from cache")
 
-	// timeData.Mobile = msg.Mobile
-	// timeData.Process = msg.ProcessName
-
-	// sinchData.Mobile = msg.Mobile
-	// sinchData.Process = msg.ProcessName
-
-	utils.Debug("Fetching rcs template data")
-	fmt.Println("Process:", msg.ProcessName, msg.Channel, msg.Vendor)
-	rcsProcessData, err := database.GetTemplateDetails(database.DBtech, msg.ProcessName, msg.Channel, msg.Vendor, msg.Stage)
-	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while fetching RCS process template for process '%s': %v", msg.ProcessName, err))
-		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching RCS process template for process '%s': %v", msg.ProcessName, err)
+	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+	if !found {
+		utils.Error(fmt.Errorf("template data not found in cache"))
+		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
 	}
 
-	for _, record := range rcsProcessData {
-		if templateName, exists := record["TemplateName"]; exists && templateName != nil {
-			// timeData.TemplateName = templateName.(string)
-			// sinchData.TemplateName = templateName.(string)
-			requestBody.TemplateName = templateName.(string)
-		}
-		if imageId, exists := record["ImageId"]; exists && imageId != nil {
-			// sinchData.ImageID = imageId.(string)
-			requestBody.AppId = imageId.(string)
-		}
+	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
+	var data map[string]interface{}
+	var ok bool
+	if data, ok = templateDetails[key]; !ok {
+		fmt.Println("No template found for the given key:", key)
+		return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given key: %s", key)
+	}
+
+	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
+		requestBody.TemplateName = templateName.(string)
+	}
+	if imageId, exists := data["ImageId"]; exists && imageId != nil {
+		requestBody.AppId = imageId.(string)
 	}
 
 	utils.Debug("Fetching AppId data")
@@ -58,16 +54,12 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	}
 
 	if appIdKey, exists := rcsAppIdData["AppIdKey"]; exists && appIdKey != nil {
-		// timeData.TemplateName = templateName.(string)
-		// sinchData.TemplateName = templateName.(string)
 		requestBody.AppIdKey = appIdKey.(string)
 	}
 	if projectId, exists := rcsAppIdData["ProjectId"]; exists && projectId != nil {
-		// sinchData.ImageID = imageId.(string)
 		requestBody.ProjectId = projectId.(string)
 	}
 	if apikey, exists := rcsAppIdData["ProjectId"]; exists && apikey != nil {
-		// sinchData.ImageID = imageId.(string)
 		requestBody.ApiKey = apikey.(string)
 	}
 

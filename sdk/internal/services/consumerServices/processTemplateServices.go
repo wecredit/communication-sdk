@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/config"
@@ -96,6 +97,9 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
+	template.Process = strings.ToUpper(template.Process)
+	template.Channel = strings.ToUpper(template.Channel)
+	template.Vendor = strings.ToUpper(template.Vendor)
 
 	err := s.DB.Create(template).Error
 	if err != nil {

@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/config"
@@ -111,6 +112,8 @@ func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
 
 	vendor.Status = 1
 	vendor.IsHealthy = 1
+	vendor.Name = strings.ToUpper(vendor.Name)
+	vendor.Channel = strings.ToUpper(vendor.Channel)
 	istOffset := 5*time.Hour + 30*time.Minute
 	now := time.Now().UTC().Add(istOffset)
 	vendor.CreatedOn = now
@@ -144,6 +147,8 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 	existing.Status = updates.Status
 	existing.IsHealthy = updates.IsHealthy
 	existing.Weight = updates.Weight
+	existing.Name = strings.ToUpper(existing.Name)
+	existing.Channel = strings.ToUpper(existing.Channel)
 	istOffset := 5*time.Hour + 30*time.Minute
 	now := time.Now().UTC().Add(istOffset)
 	existing.UpdatedOn = &now

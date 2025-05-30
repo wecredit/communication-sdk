@@ -2,7 +2,10 @@ package whatsapp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	sinchWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/sdk/channels/whatsapp/times"
@@ -11,51 +14,63 @@ import (
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/dbService"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
-	// var timeData extapimodels.TimesAPIModel
-	// var sinchData extapimodels.SinchAPIModel
-
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
 	}
 
-	// timeData.Mobile = msg.Mobile
-	// timeData.Process = msg.ProcessName
-
-	// sinchData.Mobile = msg.Mobile
-	// sinchData.Process = msg.ProcessName
-
-	utils.Debug("Fetching whatsapp process data")
-	wpProcessData, err := database.GetTemplateDetails(database.DBtech, msg.ProcessName, msg.Channel, msg.Vendor, msg.Stage)
-	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err))
-		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err)
+	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+	if !found {
+		utils.Error(fmt.Errorf("template data not found in cache"))
+		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
 	}
 
-	for _, record := range wpProcessData {
-		if templateName, exists := record["TemplateName"]; exists && templateName != nil {
-			// timeData.TemplateName = templateName.(string)
-			// sinchData.TemplateName = templateName.(string)
-			requestBody.TemplateName = templateName.(string)
+	vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
+	if !found {
+		utils.Error(fmt.Errorf("vendor data not found in cache"))
+		return sdkModels.CommApiResponseBody{}, errors.New("vendor data not found in cache")
+	}
+	fmt.Println("Vendor Details:", vendorDetails)
+
+	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
+	var data map[string]interface{}
+	var ok bool
+	var matchedVendor string
+	if data, ok = templateDetails[key]; !ok {
+		fmt.Println("No template found for the given key:", key)
+		for otherKey, val := range templateDetails {
+			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Channel)) {
+				fmt.Printf("Found fallback template with key: %s\n", otherKey)
+				data = val
+				parts := strings.Split(otherKey, "|")
+				if len(parts) == 4 {
+					vendorPart := strings.TrimPrefix(parts[3], "Vendor:")
+					matchedVendor = vendorPart
+				}
+				fmt.Println("matchedVendor:", matchedVendor)
+				msg.Vendor = matchedVendor
+				break
+			}
 		}
-		if imageUrl, exists := record["ImageUrl"]; exists && imageUrl != nil {
-			// timeData.ImageUrl = imageUrl.(string)
-			requestBody.ImageUrl = imageUrl.(string)
-		}
-		if imageId, exists := record["ImageId"]; exists && imageId != nil {
-			// sinchData.ImageID = imageId.(string)
-			requestBody.ImageID = imageId.(string)
-		}
-		if buttonLink, exists := record["Link"]; exists && buttonLink != nil {
-			// timeData.ButtonLink = buttonLink.(string)
-			// sinchData.ButtonLink = buttonLink.(string)
-			requestBody.ButtonLink = buttonLink.(string)
-		}
+	}
+
+	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
+		requestBody.TemplateName = templateName.(string)
+	}
+	if imageUrl, exists := data["ImageUrl"]; exists && imageUrl != nil {
+		requestBody.ImageUrl = imageUrl.(string)
+	}
+	if imageId, exists := data["ImageId"]; exists && imageId != nil {
+		requestBody.ImageID = imageId.(string)
+	}
+	if buttonLink, exists := data["Link"]; exists && buttonLink != nil {
+		requestBody.ButtonLink = buttonLink.(string)
 	}
 
 	var response extapimodels.WhatsappResponse

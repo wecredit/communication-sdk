@@ -2,7 +2,9 @@ package sms
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 
 	sinchSms "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch"
 	timesSms "github.com/wecredit/communication-sdk/sdk/channels/sms/times"
@@ -11,6 +13,7 @@ import (
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/dbService"
 	extapimodels "github.com/wecredit/communication-sdk/sdk/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -22,38 +25,26 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 		Process: msg.ProcessName,
 	}
 
-	// var responseData extapimodels.SmsResponse
-	// var timeData extapimodels.TimesAPIModel
-	// var sinchData extapimodels.SinchSmsPayload
-
-	// sinchData.Mobile = msg.Mobile
-	// sinchData.Process = msg.ProcessName
-	// sinchData.Stage = msg.Stage
-	// sinchData.CommId = msg.CommId
-
-	// timeData.Mobile = msg.Mobile
-	// timeData.Process = msg.ProcessName
-	// timeData.Stage = msg.Stage
-	// timeData.CommId = msg.CommId
-
-	utils.Debug("Fetching SMS process data")
-	smsProcessData, err := database.GetTemplateDetails(database.DBtech, msg.ProcessName, msg.Channel, msg.Vendor, msg.Stage)
-	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while fetching SMS process data for process '%s': %v", msg.ProcessName, err))
-		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching WhatsApp process data for process '%s': %v", msg.ProcessName, err)
+	utils.Debug("Fetching SMS process data from cache")
+	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+	if !found {
+		utils.Error(fmt.Errorf("template data not found in cache"))
+		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
 	}
 
-	for _, record := range smsProcessData {
-		if dltTemplateId, exists := record["DltTemplateId"]; exists && dltTemplateId != nil {
-			// sinchData.DltTemplateId = dltTemplateId.(int64)
-			// timeData.DltTemplateId = dltTemplateId.(int64)
-			requestBody.DltTemplateId = dltTemplateId.(int64)
-		}
-		if templateText, exists := record["TemplateText"]; exists && templateText != nil {
-			// sinchData.TemplateText = templateText.(string)
-			// timeData.TemplateText = templateText.(string)
-			requestBody.TemplateText = templateText.(string)
-		}
+	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
+	var data map[string]interface{}
+	var ok bool
+	if data, ok = templateDetails[key]; !ok {
+		fmt.Println("No template found for the given key:", key)
+		return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given key: %s", key)
+	}
+
+	if dltTemplateId, exists := data["DltTemplateId"]; exists && dltTemplateId != nil {
+		requestBody.DltTemplateId = dltTemplateId.(int64)
+	}
+	if templateText, exists := data["TemplateText"]; exists && templateText != nil {
+		requestBody.TemplateText = templateText.(string)
 	}
 
 	var response extapimodels.SmsResponse
@@ -86,33 +77,5 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 			Success: true,
 		}, nil
 	}
-
-	/* 	// Hit Into WP
-	   	switch msg.Vendor {
-	   	case variables.TIMES:
-	   		timeResponse := timesSms.HitTimesSmsApi(requestBody)
-	   		jsonBytes, _ := json.Marshal(timeResponse)
-	   		utils.Debug(fmt.Sprintf("TimesSmsResponse: %s", string(jsonBytes)))
-
-	   		if timeResponse.IsSent {
-	   			utils.Info(fmt.Sprintf("SMS sent successfully for: %s", msg.Mobile))
-	   			return sdkModels.CommApiResponseBody{
-	   				CommId:  msg.CommId,
-	   				Success: true,
-	   			}, nil
-	   		}
-
-	   	case variables.SINCH:
-	   		sinchResponse, _ := sinchSms.HitSinchSmsApi(requestBody)
-	   		jsonBytes, _ := json.Marshal(sinchResponse)
-	   		utils.Debug(fmt.Sprintf("SinchSmsResponse: %s", string(jsonBytes)))
-	   		if sinchResponse.IsSent {
-	   			utils.Info(fmt.Sprintf("SMS sent successfully for: %s", msg.Mobile))
-	   			return sdkModels.CommApiResponseBody{
-	   				CommId:  msg.CommId,
-	   				Success: true,
-	   			}, nil
-	   		}
-	   	} */
 	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for process: %s", msg.ProcessName)
 }

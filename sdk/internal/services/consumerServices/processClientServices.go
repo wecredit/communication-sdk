@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/config"
@@ -105,6 +106,9 @@ func (s *ClientService) AddClient(client *apiModels.Client) error {
 		return errors.New("add credentials for this client first")
 	}
 
+	client.Name = strings.ToLower(client.Name)
+	client.Channel = strings.ToUpper(client.Channel)
+
 	client.Status = 1
 	istOffset := 5*time.Hour + 30*time.Minute
 	client.CreatedOn = time.Now().UTC().Add(istOffset)
@@ -123,6 +127,8 @@ func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updat
 		return errors.New("client not found")
 	}
 
+	existing.Name = strings.ToLower(existing.Name)
+	existing.Channel = strings.ToUpper(existing.Channel)
 	existing.Status = updates.Status
 	existing.RateLimitPerMinute = updates.RateLimitPerMinute
 	istOffset := 5*time.Hour + 30*time.Minute

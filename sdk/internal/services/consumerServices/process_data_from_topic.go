@@ -36,8 +36,6 @@ func ConsumerService(workerCount int, queueURL string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fmt.Println("Data", queue.SNSClient, queueURL)
-
 	msgChan := make(chan MessageWrapper, workerCount)
 	var wg sync.WaitGroup
 
@@ -125,8 +123,6 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		log.Printf("Failed to unmarshal inner message: %v", err)
 		return
 	}
-
-	fmt.Println("dataPauload:", data)
 
 	data.Client = strings.ToLower(data.Client)
 	data.Channel = strings.ToUpper(data.Channel)
