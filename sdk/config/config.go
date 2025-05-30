@@ -46,15 +46,15 @@ func LoadConfigs() error {
 		}
 	}
 
-	// Connect Analytics DB
-	err := database.ConnectDB(database.Analytics, Configs)
-	if err != nil {
-		return fmt.Errorf("failed to initialize Analytics database: %v", err)
-	}
-	utils.Info("Analytics Database connection pool initialized successfully.")
+	// // Connect Analytics DB
+	// err := database.ConnectDB(database.Analytics, Configs)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to initialize Analytics database: %v", err)
+	// }
+	// utils.Info("Analytics Database connection pool initialized successfully.")
 
 	// Connect Tech DB
-	err = database.ConnectDB(database.Tech, Configs)
+	err := database.ConnectDB(database.Tech, Configs)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Tech database: %v", err)
 	}

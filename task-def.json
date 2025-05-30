@@ -1,0 +1,332 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:ap-south-1:717840664658:task-definition/wc-prod-comm-sdk",
+    "containerDefinitions": [
+        {
+            "name": "communication-sdk",
+            "image": "717840664658.dkr.ecr.ap-south-1.amazonaws.com/communication-sdk:latest",
+            "cpu": 512,
+            "memory": 1024,
+            "memoryReservation": 512,
+            "portMappings": [
+                {
+                    "name": "http",
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "DB_SERVER_ANALYTICS",
+                    "value": "13.127.10.86"
+                },
+                {
+                    "name": "DB_PORT_ANALYTICS",
+                    "value": "1433"
+                },
+                {
+                    "name": "DB_USER_ANALYTICS",
+                    "value": "Amartya"
+                },
+                {
+                    "name": "DB_PASSWORD_ANALYTICS",
+                    "value": "WeCred!T@2302$"
+                },
+                {
+                    "name": "DB_NAME_ANALYTICS",
+                    "value": "master"
+                },
+                {
+                    "name": "DB_SERVER_TECH",
+                    "value": "13.127.97.26"
+                },
+                {
+                    "name": "DB_PORT_TECH",
+                    "value": "1433"
+                },
+                {
+                    "name": "DB_USER_TECH",
+                    "value": "WCAppUser"
+                },
+                {
+                    "name": "DB_PASSWORD_TECH",
+                    "value": "WeCred!TaPP@2025"
+                },
+                {
+                    "name": "DB_NAME_TECH",
+                    "value": "communication"
+                },
+                {
+                    "name": "CONSUMER_SERVER_PORT",
+                    "value": "8080"
+                },
+                {
+                    "name": "AWS_ACCESS_KEY_ID",
+                    "value": "AKIA2OIVDJBJKJQ5IZU4"
+                },
+                {
+                    "name": "AWS_SECRET_ACCESS_KEY",
+                    "value": "WjqWMGUhSfrg7YqvM8arELPf4lOmmQROlzKs6sIJ"
+                },
+                {
+                    "name": "AWS_REGION",
+                    "value": "ap-south-1"
+                },
+                {
+                    "name": "AWS_COMM_TOPIC_ARN",
+                    "value": "arn:aws:sns:ap-south-1:717840664658:comm-sdk"
+                },
+                {
+                    "name": "AWS_QUEUE_URL",
+                    "value": "https://sqs.ap-south-1.amazonaws.com/717840664658/comm-non-priority-queue"
+                },
+                {
+                    "name": "AZURE_SERVICEBUS_CONNECTION_STRING",
+                    "value": "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
+                },
+                {
+                    "name": "AZURE_TOPIC_NAME",
+                    "value": "communication-uat"
+                },
+                {
+                    "name": "AZURE_DB_SUBSCRIPTION",
+                    "value": "priority"
+                },
+                {
+                    "name": "SDK_WHATSAPP_INPUT_TABLE",
+                    "value": "dbo.WhatsappInputAuditTable"
+                },
+                {
+                    "name": "WHATSAPP_OUTPUT_TABLE",
+                    "value": "dbo.WhatsappOutputTable"
+                },
+                {
+                    "name": "SDK_SMS_INPUT_TABLE",
+                    "value": "dbo.SmsInputAuditTable"
+                },
+                {
+                    "name": "SMS_OUTPUT_TABLE",
+                    "value": "dbo.SmsOutputTable"
+                },
+                {
+                    "name": "RCS_TEMPLATE_APP_ID_TABLE",
+                    "value": "dbo.RcsTemplateAppId"
+                },
+                {
+                    "name": "SDK_RCS_INPUT_TABLE",
+                    "value": "dbo.RcsInputAuditTable"
+                },
+                {
+                    "name": "RCS_OUTPUT_TABLE",
+                    "value": "dbo.RcsOutputTable"
+                },
+                {
+                    "name": "BASIC_AUTH_TABLE",
+                    "value": "dbo.userBasicAuths"
+                },
+                {
+                    "name": "VENDORS_TABLE",
+                    "value": "dbo.Vendors"
+                },
+                {
+                    "name": "CLIENTS_TABLE",
+                    "value": "dbo.Clients"
+                },
+                {
+                    "name": "TEMPLATE_TABLE",
+                    "value": "dbo.TemplateDetails"
+                },
+                {
+                    "name": "TIMES_WP_API_URL",
+                    "value": "https://wecredit1.timespanel.in/wa/v2/messages/send"
+                },
+                {
+                    "name": "TIMES_WP_API_TOKEN",
+                    "value": "9a0ca0c782680cc6348da75f6fe97f060ee0c52ec742be2186"
+                },
+                {
+                    "name": "SINCH_GENERATE_TOKEN_API_URL",
+                    "value": "https://auth.aclwhatsapp.com/realms/ipmessaging/protocol/openid-connect/token"
+                },
+                {
+                    "name": "SINCH_SEND_MESSAGE_API_URL",
+                    "value": "https://api.aclwhatsapp.com/pull-platform-receiver/v2/wa/messages"
+                },
+                {
+                    "name": "SINCH_API_GRANT_TYPE",
+                    "value": "password"
+                },
+                {
+                    "name": "SINCH_API_CLIENT_ID",
+                    "value": "ipmessaging-client"
+                },
+                {
+                    "name": "SINCH_API_USERNAME",
+                    "value": "wecreditpd"
+                },
+                {
+                    "name": "SINCH_API_PASSWORD",
+                    "value": "Sinch@8655685383"
+                },
+                {
+                    "name": "SINCH_WP_CALLBACK_URL",
+                    "value": "https://sinch-whatsapp-callback-api-h0a0hjafgvbjb7cb.centralindia-01.azurewebsites.net/api/v1/sinch-whatsapp/callback"
+                },
+                {
+                    "name": "SINCH_RCS_API_URL",
+                    "value": "https://convapi.aclwhatsapp.com/v1/projects/"
+                },
+                {
+                    "name": "LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "SINCH_SMS_API_SENDER",
+                    "value": "WECRPL"
+                },
+                {
+                    "name": "SINCH_SMS_API_APP_ID",
+                    "value": "wecrdalt"
+                },
+                {
+                    "name": "SINCH_SMS_API_USERNAME",
+                    "value": "wecrdalt"
+                },
+                {
+                    "name": "SINCH_SMS_API_PASSWORD",
+                    "value": "wecrd_02"
+                },
+                {
+                    "name": "SINCH_SMS_API_URL",
+                    "value": "https://push3.aclgateway.com/v1/enterprises/messages.json"
+                },
+                {
+                    "name": "TIMES_SMS_API_USERNAME",
+                    "value": "spiraeatrans.trans"
+                },
+                {
+                    "name": "TIMES_SMS_API_PASSWORD",
+                    "value": "sVAki"
+                },
+                {
+                    "name": "TIMES_SMS_API_DLTCONTENTID",
+                    "value": "1707174082106982395"
+                },
+                {
+                    "name": "TIMES_SMS_API_SENDER",
+                    "value": "WECRPL"
+                },
+                {
+                    "name": "TIMES_SMS_API_URL",
+                    "value": "https://sms.timesapi.in/api/v1/message"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/wc-prod-agent-bankend",
+                    "mode": "non-blocking",
+                    "awslogs-create-group": "true",
+                    "max-buffer-size": "25m",
+                    "awslogs-region": "ap-south-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "healthCheck": {
+                "command": [
+                    "/health"
+                ],
+                "interval": 300,
+                "timeout": 60,
+                "retries": 3,
+                "startPeriod": 60
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "wc-prod-comm-sdk",
+    "taskRoleArn": "arn:aws:iam::717840664658:role/ecsTaskExecutionRole",
+    "executionRoleArn": "arn:aws:iam::717840664658:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "revision": 10,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.28"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.21"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.container-health-check"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "ecs.capability.env-files.s3"
+        },
+        {
+            "name": "ecs.capability.extensible-ephemeral-storage"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "2048",
+    "memory": "4096",
+    "ephemeralStorage": {
+        "sizeInGiB": 21
+    },
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    },
+    "registeredAt": "2025-05-30T10:31:38.322Z",
+    "registeredBy": "arn:aws:iam::717840664658:user/prashant.rewar@wecredit.co.in",
+    "enableFaultInjection": false,
+    "tags": [
+        {
+            "key": "Env",
+            "value": "Prod"
+        },
+        {
+            "key": "Name",
+            "value": "wc-prod-agent-task"
+        }
+    ]
+}
