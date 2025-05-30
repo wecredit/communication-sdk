@@ -3,43 +3,41 @@
 # Stage 1: Build Stage
 FROM golang:1.23.2 AS builder
 
-# Set the working directory inside the builder container
+# Set working directory inside the builder container
 WORKDIR /go/src/communication-sdk
-# Copy the entire Go project into the builder container
-COPY . .
 
-# # Copy go.mod and go.sum files to the working directory
-# COPY go.mod go.sum ./
+# Copy go.mod and go.sum first to leverage Docker layer caching
+COPY go.mod go.sum ./
 
-RUN ls -l
-
-# Download all Go dependencies
+# Download Go module dependencies
 RUN go mod download
 
-# Build the Go application (main.go located in /cmd/api/main.go)
-RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main /go/src/communication-sdk/cmd/consumerLayer/main.go
+# Copy the rest of the source code
+COPY . .
+
+# Optional: Debugging help - check the presence of main.go
+RUN ls -alh /go/src/communication-sdk/cmd/consumerLayer/
+
+# Build the Go binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main ./cmd/consumerLayer/main.go
 
 # Stage 2: Run Stage
 FROM alpine:latest
 
-# Install necessary certificates for HTTPS (if required by your application)
+# Install certificates and timezone info
 RUN apk add --no-cache ca-certificates tzdata
 
-# Set timezone to Asia/Kolkata
+# Set timezone
 ENV TZ=Asia/Kolkata
 
-# Verify the timezone file exists
-RUN ls -l /usr/share/zoneinfo/Asia/Kolkata
-
-# Set the working directory in the final container
+# Set the working directory
 WORKDIR /app
 
-# Copy the compiled Go binary from the builder stage
+# Copy compiled binary from builder stage
 COPY --from=builder /go/bin/main .
 
-# Expose the port your application uses
+# Expose the application port
 EXPOSE 8080
 
-# Command to run the Go application
+# Run the application
 CMD ["./main"]
- 
