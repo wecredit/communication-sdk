@@ -1,7 +1,7 @@
 # ------------ Multi-Stage Dockerfile for API Build ------------
 
 # Stage 1: Build Stage
-FROM golang:1.23.2 AS builder
+FROM golang:1.23.4 AS builder
 
 # Set working directory inside the builder container
 WORKDIR /go/src/communication-sdk
