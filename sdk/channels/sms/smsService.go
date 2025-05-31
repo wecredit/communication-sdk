@@ -50,13 +50,30 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 					vendorPart := strings.TrimPrefix(parts[3], "Vendor:")
 					matchedVendor = vendorPart
 				}
+
+				fmt.Println("Matched Vendor:", matchedVendor)
+				vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
+				if !found {
+					utils.Error(fmt.Errorf("vendor data not found in cache"))
+				} else {
+					key := fmt.Sprintf("Name:%s|Channel:%s", matchedVendor, msg.Channel)
+					if vendorData, ok := vendorDetails[key]; ok {
+						if vendorData["Status"].(int64) == variables.Inactive {
+							utils.Error(fmt.Errorf("vendor %s is not active for channel %s", matchedVendor, msg.Channel))
+							fallbackTemplatefound = false
+						}
+					}
+				}
+
 				msg.Vendor = matchedVendor
+
 				break
 			}
 		}
 		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
-			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
+			// TODO: Handle the case where no template is found, insert a record in the database with error status
+			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
 		}
 	}
 
