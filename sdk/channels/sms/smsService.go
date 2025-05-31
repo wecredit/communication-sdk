@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	sinchSms "github.com/wecredit/communication-sdk/sdk/channels/sms/sinch"
 	timesSms "github.com/wecredit/communication-sdk/sdk/channels/sms/times"
@@ -34,10 +35,29 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 
 	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
 	var data map[string]interface{}
-	var ok bool
+	var ok, fallbackTemplatefound bool
+	var matchedVendor string
 	if data, ok = templateDetails[key]; !ok {
 		fmt.Println("No template found for the given key:", key)
-		return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given key: %s", key)
+		fallbackTemplatefound = false
+		for otherKey, val := range templateDetails {
+			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Channel)) {
+				fmt.Printf("Found fallback template with key: %s\n", otherKey)
+				fallbackTemplatefound = true
+				data = val
+				parts := strings.Split(otherKey, "|")
+				if len(parts) == 4 {
+					vendorPart := strings.TrimPrefix(parts[3], "Vendor:")
+					matchedVendor = vendorPart
+				}
+				msg.Vendor = matchedVendor
+				break
+			}
+		}
+		if !fallbackTemplatefound {
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
+			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
+		}
 	}
 
 	if dltTemplateId, exists := data["DltTemplateId"]; exists && dltTemplateId != nil {

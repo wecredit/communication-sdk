@@ -40,23 +40,28 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 
 	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
 	var data map[string]interface{}
-	var ok bool
+	var ok, fallbackTemplatefound bool
 	var matchedVendor string
 	if data, ok = templateDetails[key]; !ok {
 		fmt.Println("No template found for the given key:", key)
+		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
 			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Channel)) {
 				fmt.Printf("Found fallback template with key: %s\n", otherKey)
+				fallbackTemplatefound = true
 				data = val
 				parts := strings.Split(otherKey, "|")
 				if len(parts) == 4 {
 					vendorPart := strings.TrimPrefix(parts[3], "Vendor:")
 					matchedVendor = vendorPart
 				}
-				fmt.Println("matchedVendor:", matchedVendor)
 				msg.Vendor = matchedVendor
 				break
 			}
+		}
+		if !fallbackTemplatefound {
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
+			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
 		}
 	}
 
