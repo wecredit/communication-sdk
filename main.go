@@ -19,7 +19,7 @@ func main() {
 
 	request := &sdkModels.CommApiRequestBody{
 		// DsnAnalytics: "sqlserver://Amartya:WeCred!T@2302$@10.1.0.21:1433?database=master",
-		Mobile:              "757087034", //"7579214351",
+		Mobile:              "9123359755", //"7579214351",
 		Email:               "",
 		Channel:             "WHATSAPP",
 		ProcessName:         "OLYV",
