@@ -2,6 +2,7 @@ package server
 
 import (
 	"log"
+	"net"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/sdk/config"
@@ -10,15 +11,43 @@ import (
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/consumerServices"
 )
 
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Printf("Error getting IP address: %v", err)
+		return "unknown"
+	}
+
+	for _, addr := range addrs {
+		// Skip loopback and check for IPNet type
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			// Return the first non-loopback IPv4 address
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP.String()
+			}
+		}
+	}
+	return "not found"
+}
+
 func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
 
 	// Set up Gin router
 	r := gin.Default()
 
+	containerIP := getLocalIP()
+	
+	log.Printf("[Health Check] Container IP: %s", containerIP)
+
 	r.GET("/health", func(c *gin.Context) {
+		ip := c.ClientIP() // This gives the client IP
+		log.Printf("[Health Check] Hit received from IP: %s", ip)
+
 		c.JSON(200, gin.H{
-			"status": "consumer API is running good",
+			"status":      "consumer API is running good",
+			"client_ip":   ip,
+			"server_port": port,
 		})
 	})
 
