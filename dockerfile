@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main ./cmd/consumerLayer/main.g
 FROM alpine:latest
 
 # Install certificates and timezone info
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata curl
 
 # Set timezone
 ENV TZ=Asia/Kolkata
