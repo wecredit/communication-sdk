@@ -33,11 +33,13 @@ func getLocalIP() string {
 func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
 
+	log.Printf("Starting Consumer Server on port")
+
 	// Set up Gin router
 	r := gin.Default()
 
 	containerIP := getLocalIP()
-	
+
 	log.Printf("[Health Check] Container IP: %s", containerIP)
 
 	r.GET("/health", func(c *gin.Context) {
