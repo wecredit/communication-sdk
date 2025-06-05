@@ -23,6 +23,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
+		Client : msg.Client,
 	}
 
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)

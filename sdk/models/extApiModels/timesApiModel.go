@@ -37,6 +37,7 @@ type WhatsappRequestBody struct {
 	ImageID      string
 	ButtonLink   string
 	AccessToken  string
+	Client       string
 }
 
 type WhatsappResponse struct {

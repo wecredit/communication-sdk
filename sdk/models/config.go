@@ -25,10 +25,9 @@ type Config struct {
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// AWS Credentials
-	AWSRegion string `envconfig:"AWS_REGION"`
-	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
+	AWSRegion   string `envconfig:"AWS_REGION"`
+	AwsSnsArn   string `envconfig:"AWS_COMM_TOPIC_ARN"`
 	AwsQueueUrl string `envconfig:"AWS_QUEUE_URL"`
-
 
 	// Auth Table Variables
 	BasicAuthTableName string `envconfig:"BASIC_AUTH_TABLE"`
@@ -59,6 +58,10 @@ type Config struct {
 	SinchPassword      string `envconfig:"SINCH_API_PASSWORD"`
 	SinchCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
 	SinchRcsApiUrl     string `envconfig:"SINCH_RCS_API_URL"`
+
+	// Sinch CreditSea  Variables
+	CreditSeaSinchUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
+	CreditSeaSinchPassword string `envconfig:"SINCH_CREDITSEA_API_PASSWORD"`
 
 	// Times API Details
 	TimesWpApiUrl   string `envconfig:"TIMES_WP_API_URL"`

@@ -24,13 +24,22 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		return responseBody
 	}
 
-	tokenPayload := map[string]string{
-		"grant_type": config.Configs.SinchGrantType,
-		"client_id":  config.Configs.SinchClientId,
-		"username":   config.Configs.SinchUserName,
-		"password":   config.Configs.SinchPassword,
+	var tokenPayload map[string]string
+	if sinchApiModel.Client == variables.CreditSea { // For CreditSea, use the specific credentials
+		tokenPayload = map[string]string{
+			"grant_type": config.Configs.SinchGrantType,
+			"client_id":  config.Configs.SinchClientId,
+			"username":   config.Configs.CreditSeaSinchUsername,
+			"password":   config.Configs.CreditSeaSinchPassword,
+		}
+	} else {
+		tokenPayload = map[string]string{
+			"grant_type": config.Configs.SinchGrantType,
+			"client_id":  config.Configs.SinchClientId,
+			"username":   config.Configs.SinchUserName,
+			"password":   config.Configs.SinchPassword,
+		}
 	}
-
 	tokenResponse, err := utils.ApiHit("POST", generateTokenURL, headers, "", "", tokenPayload, variables.ContentTypeFormEncoded)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Generate Token API: %v", err))

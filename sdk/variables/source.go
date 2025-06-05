@@ -9,3 +9,7 @@ const (
 	Active   int64 = 1
 	Inactive int64 = 0
 )
+
+const (
+	CreditSea string = "creditsea"
+)
