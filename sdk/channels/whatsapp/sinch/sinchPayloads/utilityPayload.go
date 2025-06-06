@@ -45,7 +45,7 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 			"trackingCta": map[string]interface{}{
 				"target": buttonURL,
 				"tags": map[string]interface{}{
-					"appID":    "wecreditpd",
+					"appID":    sinchApiModel.AppId,
 					"template": sinchApiModel.TemplateName,
 					"campaign": strings.ToUpper(sinchApiModel.Process),
 					"MSISDN":   sinchApiModel.Mobile,

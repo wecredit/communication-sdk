@@ -127,8 +127,6 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	data.Client = strings.ToLower(data.Client)
 	data.Channel = strings.ToUpper(data.Channel)
 	data.ProcessName = strings.ToUpper(data.ProcessName)
-	data.Vendor = strings.ToUpper(data.Vendor)
-	// data.Client = strings.ToUpper(data.Client)
 
 	dbMappedData, err := services.MapIntoDbModel(data)
 	if err != nil {

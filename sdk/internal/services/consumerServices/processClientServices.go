@@ -155,11 +155,12 @@ func (s *ClientService) DeleteClient(id int) error {
 	return nil
 }
 
-func (s *ClientService) ValidateCredentials(username, password string) (*apiModels.Userbasicauth, error) {
-	var user apiModels.Userbasicauth
-
+func (s *ClientService) ValidateCredentials(username, password, channel string) (string, string, error) {
 	// Collecting BasicAuthData
 	authDetails, _ := cache.GetCache().Get("authDetails")
+
+	username = strings.ToLower(username)
+	channel = strings.ToUpper(channel)
 
 	// Validate the credentials
 	isValid := false
@@ -177,17 +178,23 @@ func (s *ClientService) ValidateCredentials(username, password string) (*apiMode
 	}
 
 	if !isValid {
-		return nil, errors.New("invalid Username and Password")
+		return "", "", errors.New("invalid Username and Password")
 	}
 
-	// err := s.DB.Where("username = ? AND password = ?", username, password).First(&user).Error
-	// if err != nil {
-	// 	if errors.Is(err, gorm.ErrRecordNotFound) {
-	// 		return nil, gorm.ErrRecordNotFound
-	// 	}
-	// 	return nil, err
-	// }
-	return &user, nil
+	clientDetails, found := cache.GetCache().GetMappedData(cache.ClientsData)
+	if !found {
+		utils.Error(fmt.Errorf("client data not found in cache"))
+		return "", "", errors.New("client not found for particular channel")
+	}
+
+	// Case 1: Both name and channel provided -> direct key lookup
+	key := fmt.Sprintf("Name:%s|Channel:%s", username, channel)
+	if client, exists := clientDetails[key]; !exists || client["Status"].(int64) != 1 {
+		utils.Error(fmt.Errorf("client not found for channel %s and username %s", channel, username))
+		return "", "", errors.New("client not found for particular channel")
+	}
+
+	return username, channel, nil
 }
 
 // Helper function to convert map to Client struct

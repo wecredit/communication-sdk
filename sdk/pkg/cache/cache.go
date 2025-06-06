@@ -118,7 +118,7 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		}
 
 		if tableName == config.Configs.TemplateDetailsTable {
-			keyStr = fmt.Sprintf("%s|Channel:%v|Vendor:%v", keyStr, row["Channel"], row["Vendor"])
+			keyStr = fmt.Sprintf("%s|Client:%v|Channel:%v|Vendor:%v", keyStr, row["Client"], row["Channel"], row["Vendor"])
 		}
 
 		mappedData[keyStr] = row

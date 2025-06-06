@@ -32,6 +32,8 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 			"username":   config.Configs.CreditSeaSinchUsername,
 			"password":   config.Configs.CreditSeaSinchPassword,
 		}
+		fmt.Println("TokenPayload:", tokenPayload)
+		sinchApiModel.AppId = "creditseapd"
 	} else {
 		tokenPayload = map[string]string{
 			"grant_type": config.Configs.SinchGrantType,
@@ -39,6 +41,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 			"username":   config.Configs.SinchUserName,
 			"password":   config.Configs.SinchPassword,
 		}
+		sinchApiModel.AppId = "wecreditpd"
 	}
 	tokenResponse, err := utils.ApiHit("POST", generateTokenURL, headers, "", "", tokenPayload, variables.ContentTypeFormEncoded)
 	if err != nil {

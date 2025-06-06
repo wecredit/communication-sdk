@@ -130,7 +130,14 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 		return
 	}
 
-	user, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password)
+	// Extract the "Channel" header
+	channel := c.GetHeader("Channel")
+	if channel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing Channel header"})
+		return
+	}
+
+	user, channel, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 		return
@@ -139,5 +146,6 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "authentication successful",
 		"user":    user,
+		"channel": channel,
 	})
 }

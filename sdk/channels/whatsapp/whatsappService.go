@@ -23,7 +23,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
-		Client : msg.Client,
+		Client:  msg.Client,
 	}
 
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
@@ -32,7 +32,9 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
 	}
 
-	key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel, msg.Vendor)
+	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
+	fmt.Println("Heyssasas", key)
+
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
 	var matchedVendor string
@@ -40,13 +42,13 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 		fmt.Println("No template found for the given key:", key)
 		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
-			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Channel)) {
+			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
 				fmt.Printf("Found fallback template with key: %s\n", otherKey)
 				fallbackTemplatefound = true
 				data = val
 				parts := strings.Split(otherKey, "|")
-				if len(parts) == 4 {
-					vendorPart := strings.TrimPrefix(parts[3], "Vendor:")
+				if len(parts) == 5 {
+					vendorPart := strings.TrimPrefix(parts[4], "Vendor:")
 					matchedVendor = vendorPart
 				}
 

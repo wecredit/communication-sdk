@@ -52,4 +52,5 @@ type Templatedetails struct {
 	Link          string     `gorm:"column:Link" json:"link,omitempty"`
 	CreatedOn     time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn     *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
+	Client        string     `gorm:"column:Client" json:"client,omitempty"`
 }

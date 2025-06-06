@@ -21,7 +21,7 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 	return &TemplateService{DB: db}
 }
 
-func (s *TemplateService) GetTemplates(process, stage, channel, vendor string) ([]apiModels.Templatedetails, error) {
+func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
@@ -33,8 +33,8 @@ func (s *TemplateService) GetTemplates(process, stage, channel, vendor string) (
 	var templates []apiModels.Templatedetails
 
 	// Case 1: both process and stage and channel and vendor provided -> direct key lookup
-	if process != "" && stage != "" && channel != "" && vendor != "" {
-		key := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s", process, stage, channel, vendor)
+	if process != "" && stage != "" && client != "" && channel != "" && vendor != "" {
+		key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
 		if data, ok := templateDetails[key]; ok {
 			template, err := mapToTemplate(data)
 			if err != nil {
@@ -100,6 +100,7 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	template.Process = strings.ToUpper(template.Process)
 	template.Channel = strings.ToUpper(template.Channel)
 	template.Vendor = strings.ToUpper(template.Vendor)
+	template.Client = strings.ToLower(template.Client)
 
 	err := s.DB.Create(template).Error
 	if err != nil {
@@ -111,9 +112,9 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	return nil
 }
 
-func (s *TemplateService) UpdateTemplateByNameAndChannel(name, channel string, updates apiModels.Templatedetails) error {
+func (s *TemplateService) UpdateTemplateByNameAndChannel(process, stage, channel, vendor, client string, updates apiModels.Templatedetails) error {
 	var existing apiModels.Templatedetails
-	if err := s.DB.Where("TemplateName = ? AND Channel = ?", name, channel).First(&existing).Error; err != nil {
+	if err := s.DB.Where("Process = ? AND Stage = ? AND Channel = ? AND Vendor = ? AND Client = ?", process, stage, channel, vendor, client).First(&existing).Error; err != nil {
 		return errors.New("template not found")
 	}
 

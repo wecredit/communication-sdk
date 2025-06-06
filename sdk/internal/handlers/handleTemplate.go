@@ -25,8 +25,9 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 	stage := c.Query("stage")
 	channel := c.Query("channel")
 	vendor := c.Query("vendor")
+	client := c.Query("client")
 
-	templates, err := h.Service.GetTemplates(process, stage, channel, vendor)
+	templates, err := h.Service.GetTemplates(process, stage, client, channel, vendor)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -78,8 +79,13 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 }
 
 func (h *TemplateHandler) UpdateTemplateByNameAndChannel(c *gin.Context) {
-	name := c.Param("name")
+	process := c.Param("process")
+	stage := c.Param("stage")
 	channel := c.Param("channel")
+	vendor := c.Param("vendor")
+	client := c.Param("client")
+
+	stageInt, _ := strconv.Atoi(stage)
 
 	var template apiModels.Templatedetails
 
@@ -88,16 +94,18 @@ func (h *TemplateHandler) UpdateTemplateByNameAndChannel(c *gin.Context) {
 		return
 	}
 
-	if name != template.TemplateName || channel != template.Channel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "TemplateName and Channel doesn't match with URL Params"})
+	if process != template.Process || stageInt != template.Stage || channel != template.Channel || vendor != template.Vendor || client != template.Client {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "process, stage, channel, vendor or client in URL does not match with the template data"})
 		return
 	}
 
 	// Fill name & channel from URL
-	template.TemplateName = name
+	template.Process = process
 	template.Channel = channel
+	template.Vendor = vendor
+	template.Client = client
 
-	if err := h.Service.UpdateTemplateByNameAndChannel(name, channel, template); err != nil {
+	if err := h.Service.UpdateTemplateByNameAndChannel(process, stage ,channel, vendor, client, template); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
