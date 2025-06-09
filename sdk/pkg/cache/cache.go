@@ -52,7 +52,8 @@ func InitializeCache() {
 // GetCache returns the global cache instance
 func GetCache() *Cache {
 	if appCache == nil {
-		log.Fatal("Cache not initialized. Please call InitializeCache first.")
+		log.Println("Cache not initialized. Please call InitializeCache first.")
+		return nil
 	}
 	return appCache
 }

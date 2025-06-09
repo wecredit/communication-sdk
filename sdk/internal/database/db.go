@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/sdk/models"
@@ -70,4 +71,15 @@ func ConnectDB(dbType string, config models.Config) error {
 	}
 
 	return nil
+}
+
+func PingTechDB() error {
+	if DBtech == nil {
+		return errors.New("tech DB is not initialized")
+	}
+	sqlDB, err := DBtech.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/sdk/config"
+	"github.com/wecredit/communication-sdk/sdk/health"
 	"github.com/wecredit/communication-sdk/sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/internal/handlers"
 	services "github.com/wecredit/communication-sdk/sdk/internal/services/consumerServices"
@@ -42,16 +43,7 @@ func StartConsumer(port string) {
 
 	log.Printf("[Health Check] Container IP: %s", containerIP)
 
-	r.GET("/health", func(c *gin.Context) {
-		ip := c.ClientIP() // This gives the client IP
-		log.Printf("[Health Check] Hit received from IP: %s", ip)
-
-		c.JSON(200, gin.H{
-			"status":      "consumer API is running good",
-			"client_ip":   ip,
-			"server_port": port,
-		})
-	})
+	r.GET("/health", health.HealthCheckHandler(port))
 
 	vendorHandler := handlers.NewVendorHandler(services.NewVendorService(database.DBtech)) // Create handler for vendors passing them database object
 	vendors := r.Group("/vendors")
