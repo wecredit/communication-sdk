@@ -1,4 +1,4 @@
-package config
+package sdkConfig
 
 import (
 	"fmt"
@@ -6,8 +6,8 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/sns"
 	env "github.com/wecredit/communication-sdk/sdk/constant"
-	"github.com/wecredit/communication-sdk/sdk/internal/queue"
 	"github.com/wecredit/communication-sdk/sdk/models"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 )
 
 // Create an instance of Config

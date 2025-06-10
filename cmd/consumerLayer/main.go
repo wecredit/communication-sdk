@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"github.com/wecredit/communication-sdk/sdk/config"
-	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
-	"github.com/wecredit/communication-sdk/sdk/server"
+	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/server"
+	"github.com/wecredit/communication-sdk/pkg/cache"
 )
 
 func init() {

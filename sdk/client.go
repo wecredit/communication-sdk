@@ -17,7 +17,7 @@ type CommSdkClient struct {
 }
 
 func NewSdkClient(username, password, channel string) (*CommSdkClient, error) {
-	snsClient, err := config.LoadSDKConfigs()
+	snsClient, err := sdkConfig.LoadSDKConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize SDK Client: failed to load configs: %v", err)
 	}
@@ -38,7 +38,7 @@ func NewSdkClient(username, password, channel string) (*CommSdkClient, error) {
 
 func ValidateClient(username, password, channel string) (bool, string, string) {
 
-	apiUrl := config.SdkConfigs.BasicAuthApiUrl
+	apiUrl := sdkConfig.SdkConfigs.BasicAuthApiUrl
 
 	apiHeaders := map[string]string{
 		"Content-Type": "application/json",
