@@ -45,5 +45,8 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		"alert":       "1",
 		"s":           "1", // Enable URL Shortening
 	}
+
+	fmt.Println("Sinch SMS Template Payload:", templatePayload)
+
 	return templatePayload, nil
 }
