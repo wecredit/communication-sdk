@@ -78,7 +78,7 @@ func StartConsumer(port string) {
 
 	log.Printf("Server running on port %s", port)
 	// if err := r.Run(":" + port); err != nil {
-	if err := r.Run("0.0.0.0:8080"); err != nil {
+	if err := r.Run("0.0.0.0:8089"); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

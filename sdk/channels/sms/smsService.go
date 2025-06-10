@@ -24,6 +24,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	requestBody := extapimodels.SmsRequestBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
+		Client:  msg.Client,
 	}
 
 	utils.Debug("Fetching SMS process data from cache")

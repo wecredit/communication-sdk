@@ -14,6 +14,7 @@ type TimesAPIModel struct {
 }
 
 type SmsRequestBody struct {
+	Client        string
 	Process       string
 	DltTemplateId int64
 	TemplateText  string

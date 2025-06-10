@@ -146,7 +146,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		} else {
 			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 		}
-		
+
 		response, err := whatsapp.SendWpByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
@@ -158,7 +158,13 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+
+		if data.Client == variables.CreditSea {
+			data.Vendor = variables.SINCH
+		} else {
+			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		}
+
 		response, err := rcs.SendRcsByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))
@@ -172,7 +178,11 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		if data.Client == variables.CreditSea {
+			data.Vendor = variables.SINCH
+		} else {
+			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		}
 		response, err := sms.SendSmsByProcess(data)
 		if err == nil {
 			utils.Debug(fmt.Sprintf("%v", response))

@@ -59,7 +59,7 @@ type Config struct {
 	SinchCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
 	SinchRcsApiUrl     string `envconfig:"SINCH_RCS_API_URL"`
 
-	// Sinch CreditSea  Variables
+	// Sinch Whatsapp CreditSea  Variables
 	CreditSeaSinchUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
 	CreditSeaSinchPassword string `envconfig:"SINCH_CREDITSEA_API_PASSWORD"`
 
@@ -78,7 +78,13 @@ type Config struct {
 	SinchSmsApiAppID     string `envconfig:"SINCH_SMS_API_APP_ID"`
 	SinchSmsApiUserName  string `envconfig:"SINCH_SMS_API_USERNAME"`
 	SinchSmsApiPassword  string `envconfig:"SINCH_SMS_API_PASSWORD"`
-	SinchSmsDltContentId string `envconfig:"SINCH_SMS_API_DLTCONTENTID"`
 	SinchSmsApiSender    string `envconfig:"SINCH_SMS_API_SENDER"`
+	SinchSmsDltContentId string `envconfig:"SINCH_SMS_API_DLTCONTENTID"`
 	SinchSmsApiUrl       string `envconfig:"SINCH_SMS_API_URL"`
+
+	// CreditSea Sinch SMS API Variables
+	CreditSeaSinchSmsApiAppID    string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
+	CreditSeaSinchSmsApiUserName string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
+	CreditSeaSinchSmsApiPassword string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
+	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
 }

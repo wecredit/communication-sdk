@@ -19,7 +19,7 @@ func main() {
 	fmt.Println("\nClient Created:", client)
 
 	request := &sdkModels.CommApiRequestBody{
-		Mobile:      "8003366950", //"7579214351",
+		Mobile:      "7570897034", //"7579214351",
 		Email:       "",
 		Channel:     "WHATSAPP",
 		ProcessName: "CREDITSEA",

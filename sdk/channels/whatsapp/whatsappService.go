@@ -33,7 +33,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	}
 
 	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
-	fmt.Println("Heyssasas", key)
 
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
