@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/service/sns"
-	"github.com/wecredit/communication-sdk/sdk/config"
+	sdkConfig "github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -25,7 +25,7 @@ func NewSdkClient(username, password, channel string) (*CommSdkClient, error) {
 	var userName string
 	var ok bool
 	if ok, userName, channel = ValidateClient(username, password, channel); !ok {
-		return nil, fmt.Errorf("client is not authenticated with us. Wrong Username or password")
+		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
 
 	return &CommSdkClient{

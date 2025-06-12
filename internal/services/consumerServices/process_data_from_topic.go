@@ -10,19 +10,18 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/wecredit/communication-sdk/config"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
-	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
-	"github.com/wecredit/communication-sdk/sdk/queue"
-	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/internal/models/awsModels"
+	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -61,11 +60,10 @@ func ConsumerService(workerCount int, queueURL string) {
 				QueueUrl:            aws.String(queueURL),
 				MaxNumberOfMessages: aws.Int64(int64(workerCount)),
 				WaitTimeSeconds:     aws.Int64(10),
-				VisibilityTimeout:   aws.Int64(30),
+				VisibilityTimeout:   aws.Int64(15),
 			})
 			if err != nil {
 				log.Printf("Error receiving messages: %v", err)
-				time.Sleep(2 * time.Second)
 				continue
 			}
 

@@ -16,10 +16,10 @@ RUN go mod download
 COPY . .
 
 # Optional: Debugging help - check the presence of main.go
-RUN ls -alh /go/src/communication-sdk/cmd/consumerLayer/
+RUN ls -alh /go/src/communication-sdk/cmd/
 
 # Build the Go binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main ./cmd/consumerLayer/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main ./cmd/main.go
 
 # Stage 2: Run Stage
 FROM alpine:latest

@@ -17,7 +17,7 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 
 	// Check if channel is provided
 	if data.Channel == "" {
-		return false, "channel is required"
+		return false, "Channel is required"
 	}
 
 	if data.ProcessName == "" {
@@ -37,7 +37,7 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 		}
 	case variables.WhatsApp:
 		if data.Mobile == "" {
-			return false, "Mobile and ProcessName are required for WhatsApp Communication"
+			return false, "Mobile is required for WhatsApp Communication"
 		}
 
 	case variables.Email:

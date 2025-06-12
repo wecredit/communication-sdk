@@ -5,9 +5,9 @@ import (
 	"hash/fnv"
 	"time"
 
-	"github.com/wecredit/communication-sdk/sdk/config"
-	services "github.com/wecredit/communication-sdk/sdk/internal/services/apiServices"
-	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
+	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/pkg/cache"
+	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
 )
 
 // getVendor returns the vendor name based on hash of idempotency key
@@ -63,7 +63,7 @@ func main() {
 
 	// Generate 1000 test keys (you can change this number as needed)
 	for i := 1; i <= 100; i++ {
-		testKeys = append(testKeys, services.GenerateCommID())
+		testKeys = append(testKeys, sdkServices.GenerateCommID())
 	}
 
 	sinchCount := 0

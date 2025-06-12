@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/wecredit/communication-sdk/sdk/pkg/cache"
+	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 

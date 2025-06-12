@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
-	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
+	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 
 	"gorm.io/gorm"
 )
