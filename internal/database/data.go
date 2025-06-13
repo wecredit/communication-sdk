@@ -66,8 +66,7 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 func GetRcsAppId(db *gorm.DB, AppId string) (map[string]interface{}, error) {
 	var result map[string]interface{}
-	var query *gorm.DB
-	query = db.Table("RcsTemplateAppId").
+	query := db.Table("RcsTemplateAppId").
 		Where("AppId LIKE ?", AppId)
 
 	if err := query.Find(&result).Error; err != nil {
@@ -202,5 +201,30 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 
 	// Log success
 	utils.Info(fmt.Sprintf("Successfully inserted data into table '%s'", tableName))
+	return nil
+}
+
+func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) error {
+	if tableName == "" {
+		return fmt.Errorf("table name cannot be empty")
+	}
+	commID, ok := data["CommId"]
+	if !ok {
+		return fmt.Errorf("CommId is required to identify the row")
+	}
+
+	delete(data, "CommId") // Don't allow updating the CommId itself
+	if len(data) == 0 {
+		return fmt.Errorf("no fields to update after excluding CommId")
+	}
+
+	tx := db.Table(tableName).Where("CommId = ?", commID).Updates(data)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return fmt.Errorf("no rows found for CommId: %v", commID)
+	}
+
 	return nil
 }

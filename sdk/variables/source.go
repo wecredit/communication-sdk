@@ -11,5 +11,6 @@ const (
 )
 
 const (
-	CreditSea string = "creditsea"
+	NurtureEngine string = "nurtureengine"
+	CreditSea     string = "creditsea"
 )

@@ -22,9 +22,14 @@ import (
 func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
 
 	requestBody := extapimodels.SmsRequestBody{
-		Mobile:  msg.Mobile,
-		Process: msg.ProcessName,
-		Client:  msg.Client,
+		Mobile:            msg.Mobile,
+		Process:           msg.ProcessName,
+		Client:            msg.Client,
+		EmiAmount:         msg.EmiAmount,
+		CustomerName:      msg.CustomerName,
+		LoanId:            msg.LoanId,
+		ApplicationNumber: msg.ApplicationNumber,
+		DueDate:           msg.DueDate,
 	}
 
 	utils.Debug("Fetching SMS process data from cache")
@@ -38,7 +43,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
 	var matchedVendor string
-	if data, ok = templateDetails[key]; !ok {
+	if data, ok = templateDetails[key]; !ok && msg.Client != variables.CreditSea {
 		fmt.Println("No template found for the given key:", key)
 		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
@@ -76,6 +81,10 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 			// TODO: Handle the case where no template is found, insert a record in the database with error status
 			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
 		}
+	}
+
+	if templateVariables, exists := data["TemplateVariables"]; exists && templateVariables != nil {
+		requestBody.TemplateVariables = templateVariables.(string)
 	}
 
 	if dltTemplateId, exists := data["DltTemplateId"]; exists && dltTemplateId != nil {

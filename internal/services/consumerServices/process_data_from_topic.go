@@ -122,6 +122,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return
 	}
 
+	fmt.Println("Payload:", data)
+
 	data.Client = strings.ToLower(data.Client)
 	data.Channel = strings.ToUpper(data.Channel)
 	data.ProcessName = strings.ToUpper(data.ProcessName)
@@ -193,6 +195,17 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		utils.Error(fmt.Errorf("invalid channel: %s", data.Channel))
 		return
 	}
+
+	// if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
+	// 	if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
+	// 		"CommId":            data.CommId,
+	// 		"Vendor":            data.Vendor,
+	// 		"CommDelivered":     1,
+	// 		"CommDeliveredTime": time.Now(),
+	// 	}); err != nil {
+	// 		utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
+	// 	}
+	// }
 
 	// After successful processing, delete the message from the queue
 	_, err = sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{

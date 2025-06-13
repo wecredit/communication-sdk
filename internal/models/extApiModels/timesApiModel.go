@@ -14,12 +14,18 @@ type TimesAPIModel struct {
 }
 
 type SmsRequestBody struct {
-	Client           string
-	Process          string
-	DltTemplateId    int64
-	TemplateText     string
-	TemplateCategory string
-	Mobile           string
+	Client            string
+	Process           string
+	DltTemplateId     int64
+	TemplateText      string
+	TemplateCategory  string
+	TemplateVariables string
+	Mobile            string
+	EmiAmount         string
+	CustomerName      string
+	LoanId            string
+	ApplicationNumber string
+	DueDate           string
 }
 
 type SmsResponse struct {

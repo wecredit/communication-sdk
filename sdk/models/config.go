@@ -46,6 +46,8 @@ type Config struct {
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
 	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
 
+	CommAuditTable string `envconfig:"COMM_AUDIT_TABLE"`
+
 	// RCS Tables
 	RcsTemplateAppIdTable string `envconfig:"RCS_TEMPLATE_APP_ID_TABLE"`
 
