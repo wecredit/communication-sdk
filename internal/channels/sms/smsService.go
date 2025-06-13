@@ -19,7 +19,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 
 	requestBody := extapimodels.SmsRequestBody{
 		Mobile:            msg.Mobile,
@@ -36,7 +36,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
+		return false, errors.New("template data not found in cache")
 	}
 
 	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
@@ -77,10 +77,30 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 			}
 		}
 		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
-			// TODO: Handle the case where no template is found, insert a record in the database with error status
-			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel))
+			if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
+				"CommId":          msg.CommId,
+				"Vendor":          msg.Vendor,
+				"IsSent":          false,
+				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel),
+			}); err != nil {
+				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+				return false, nil // TODO: Handle the case where insertion fails
+			}
+			return false, nil
 		}
+	} else if data, ok = templateDetails[key]; !ok && msg.Client == variables.CreditSea {
+		utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor))
+		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
+			"CommId":          msg.CommId,
+			"Vendor":          msg.Vendor,
+			"IsSent":          false,
+			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor),
+		}); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+			return false, nil
+		}
+		return false, nil
 	}
 
 	if templateVariables, exists := data["TemplateVariables"]; exists && templateVariables != nil {
@@ -123,10 +143,8 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	utils.Debug(fmt.Sprintf("SmsResponse: %s", string(jsonBytes)))
 	if response.IsSent {
 		utils.Info(fmt.Sprintf("SMS sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		return sdkModels.CommApiResponseBody{
-			CommId:  msg.CommId,
-			Success: true,
-		}, nil
+		return true, nil
 	}
-	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for process: %s", msg.ProcessName)
+
+	return false, fmt.Errorf("failed to send message for process: %s", msg.ProcessName)
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
@@ -135,6 +136,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 
 	utils.Debug(fmt.Sprintf("Data: %v", data))
 
+	var isSent bool
+
 	switch data.Channel {
 	case variables.WhatsApp:
 		if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtech, dbMappedData); err != nil {
@@ -183,10 +186,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		} else {
 			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 		}
-		response, err := sms.SendSmsByProcess(data)
-		if err == nil {
-			utils.Debug(fmt.Sprintf("%v", response))
-		} else {
+		isSent, err = sms.SendSmsByProcess(data)
+		if err != nil {
 			utils.Error(fmt.Errorf("error in sending SMS: %v", err))
 			return
 		}
@@ -196,16 +197,18 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return
 	}
 
-	// if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
-	// 	if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
-	// 		"CommId":            data.CommId,
-	// 		"Vendor":            data.Vendor,
-	// 		"CommDelivered":     1,
-	// 		"CommDeliveredTime": time.Now(),
-	// 	}); err != nil {
-	// 		utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
-	// 	}
-	// }
+	if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
+		if isSent {
+			if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
+				"CommId":            data.CommId,
+				"Vendor":            data.Vendor,
+				"CommDelivered":     variables.Delivered, //1
+				"CommDeliveredTime": time.Now(),
+			}); err != nil {
+				utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
+			}
+		}
+	}
 
 	// After successful processing, delete the message from the queue
 	_, err = sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{

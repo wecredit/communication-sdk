@@ -11,6 +11,11 @@ const (
 )
 
 const (
+	Delivered int64 = 1
+	Failed    int64 = 0
+)
+
+const (
 	NurtureEngine string = "nurtureengine"
 	CreditSea     string = "creditsea"
 )
