@@ -17,9 +17,9 @@ const (
 	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
 	AZURE_TOPIC_NAME                   = "communication-uat"
 	AZURE_DB_SUBSCRIPTION              = "priority"
-	// BASIC_AUTH_API_URL                 = "http://172.16.42.179:8080/clients/validate-client"
-	BASIC_AUTH_API_URL                 = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
-	// BASIC_AUTH_API_URL                 = "http://localhost:8080/clients/validate-client"
+	// BASIC_AUTH_API_URL                 = "http://172.16.19.14:8080/clients/validate-client"
+	BASIC_AUTH_API_URL = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
+	// BASIC_AUTH_API_URL                 = "http://localhost:8080/clients/validate-client"s
 
 	AWS_REGION         = "ap-south-1"
 	AWS_COMM_TOPIC_ARN = "arn:aws:sns:ap-south-1:717840664658:comm-sdk"

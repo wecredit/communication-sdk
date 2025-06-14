@@ -10,8 +10,8 @@ import (
 
 func main() {
 
-	// client, err := sdk.NewSdkClient("creditsea", "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9", "SMS")
-	client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
+	client, err := sdk.NewSdkClient("creditsea", "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9", "SMS")
+	// client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
 	}
@@ -22,13 +22,13 @@ func main() {
 		Mobile:            "9220146969", //"7579214351",
 		Email:             "",
 		Channel:           "SMS",
-		ProcessName:       "RAMFINCORP",
-		Stage:             2,
+		ProcessName:       "CREDITSEA",
+		Stage:             1,
 		IsPriority:        true,
 		EmiAmount:         "10002",
 		CustomerName:      "Arvind",
-		LoanId:            "9978785",
-		ApplicationNumber: "9978785",
+		LoanId:            "",
+		ApplicationNumber: "",
 		DueDate:           "2024-10-31",
 	}
 

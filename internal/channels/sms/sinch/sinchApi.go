@@ -26,7 +26,7 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	apiPayload, err := sinchpayloads.GetTemplatePayload(data, config.Configs)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
-		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured while getting Sinch SMS payload: %v", err)
+		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured in Sinch SMS payload: %v", err)
 		return sinchSmsResponse
 	}
 

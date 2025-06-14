@@ -146,5 +146,5 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		return true, nil
 	}
 
-	return false, fmt.Errorf("failed to send message for process: %s", msg.ProcessName)
+	return false, nil
 }

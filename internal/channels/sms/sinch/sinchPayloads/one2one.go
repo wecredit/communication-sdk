@@ -28,15 +28,24 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		if strings.Contains(data.TemplateText, "{#var#}") {
 			// Prepare a fast lookup map once
 			variableMap := map[string]string{
-				"EmiAmount":       data.EmiAmount,
-				"DueDate":         data.DueDate,
-				"ApplicationName": data.ApplicationNumber,
-				"CustomerName":    data.CustomerName,
-				"LoanId":          data.LoanId,
+				"EmiAmount":         data.EmiAmount,
+				"DueDate":           data.DueDate,
+				"ApplicationNumber": data.ApplicationNumber,
+				"CustomerName":      data.CustomerName,
+				"LoanId":            data.LoanId,
 			}
 
 			// Replace {#var#} in order using a single regex loop
 			var keys = strings.Split(data.TemplateVariables, ",")
+
+			// Only check for missing values if those variables are used
+			for _, key := range keys {
+				trimmedKey := strings.TrimSpace(key)
+				if (trimmedKey == "EmiAmount" || trimmedKey == "DueDate") && strings.TrimSpace(variableMap[trimmedKey]) == "" {
+					return nil, fmt.Errorf("missing value for required variable: %s", trimmedKey)
+				}
+			}
+
 			keyIndex := 0
 
 			re := regexp.MustCompile(`\{#var#\}`)
