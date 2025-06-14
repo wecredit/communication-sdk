@@ -2,9 +2,10 @@ package sdk
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
-	"github.com/wecredit/communication-sdk/sdk/services"
+	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
@@ -15,6 +16,12 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	if !c.isAuthed {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
 	}
+
+	c.Channel = strings.ToUpper(c.Channel)
+	msg.Channel = strings.ToUpper(msg.Channel)
+	msg.ProcessName = strings.ToUpper(msg.ProcessName)
+	c.ClientName = strings.ToLower(c.ClientName)
+
 	if c.Channel != msg.Channel {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("channel mismatch: expected %s, got %s", c.Channel, msg.Channel)
 	}
