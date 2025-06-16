@@ -19,3 +19,8 @@ const (
 	NurtureEngine string = "nurtureengine"
 	CreditSea     string = "creditsea"
 )
+
+const (
+	UtilityTemplateCategory   string = "1"
+	MarketingTemplateCategory string = "2"
+)

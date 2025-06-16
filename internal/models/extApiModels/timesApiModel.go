@@ -38,15 +38,22 @@ type SmsResponse struct {
 }
 
 type WhatsappRequestBody struct {
-	AppId        string
-	Mobile       string
-	Process      string
-	TemplateName string
-	ImageUrl     string
-	ImageID      string
-	ButtonLink   string
-	AccessToken  string
-	Client       string
+	AppId             string
+	Mobile            string
+	Process           string
+	TemplateName      string
+	ImageUrl          string
+	ImageID           string
+	ButtonLink        string
+	TemplateVariables string
+	TemplateCategory  string
+	AccessToken       string
+	Client            string
+	EmiAmount         string
+	CustomerName      string
+	LoanId            string
+	ApplicationNumber string
+	DueDate           string
 }
 
 type WhatsappResponse struct {

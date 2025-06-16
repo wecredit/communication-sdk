@@ -52,18 +52,18 @@ type Config struct {
 	RcsTemplateAppIdTable string `envconfig:"RCS_TEMPLATE_APP_ID_TABLE"`
 
 	// Sinch API Variables
-	SinchTokenApiUrl   string `envconfig:"SINCH_GENERATE_TOKEN_API_URL"`
-	SinchMessageApiUrl string `envconfig:"SINCH_SEND_MESSAGE_API_URL"`
-	SinchGrantType     string `envconfig:"SINCH_API_GRANT_TYPE"`
-	SinchClientId      string `envconfig:"SINCH_API_CLIENT_ID"`
-	SinchUserName      string `envconfig:"SINCH_API_USERNAME"`
-	SinchPassword      string `envconfig:"SINCH_API_PASSWORD"`
-	SinchCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
-	SinchRcsApiUrl     string `envconfig:"SINCH_RCS_API_URL"`
+	SinchWhatsappTokenApiUrl   string `envconfig:"SINCH_GENERATE_TOKEN_API_URL"`
+	SinchWhatsappMessageApiUrl string `envconfig:"SINCH_SEND_WHATSAPP_MESSAGE_API_URL"`
+	SinchWhatsappGrantType     string `envconfig:"SINCH_API_GRANT_TYPE"`
+	SinchWhatsappClientId      string `envconfig:"SINCH_API_CLIENT_ID"`
+	SinchWhatsappUserName      string `envconfig:"SINCH_API_USERNAME"`
+	SinchWhatsappPassword      string `envconfig:"SINCH_API_PASSWORD"`
+	SinchWhatsappCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
+	SinchRcsApiUrl             string `envconfig:"SINCH_RCS_API_URL"`
 
 	// Sinch Whatsapp CreditSea  Variables
-	CreditSeaSinchUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
-	CreditSeaSinchPassword string `envconfig:"SINCH_CREDITSEA_API_PASSWORD"`
+	CreditSeaSinchWhatsappUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
+	CreditSeaSinchWhatsappPassword string `envconfig:"SINCH_CREDITSEA_API_PASSWORD"`
 
 	// Times API Details
 	TimesWpApiUrl   string `envconfig:"TIMES_WP_API_URL"`

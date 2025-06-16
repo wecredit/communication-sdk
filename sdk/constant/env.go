@@ -17,12 +17,13 @@ const (
 	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
 	AZURE_TOPIC_NAME                   = "communication-uat"
 	AZURE_DB_SUBSCRIPTION              = "priority"
-	// BASIC_AUTH_API_URL                 = "http://172.16.32.75:8080/clients/validate-client"
-	BASIC_AUTH_API_URL = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
-	// BASIC_AUTH_API_URL                 = "http://localhost:8080/clients/validate-client"s
+	BASIC_AUTH_API_URL                 = "http://172.16.32.202:8080/clients/validate-client"
+	// BASIC_AUTH_API_URL = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
+	// BASIC_AUTH_API_URL = "http://localhost:8080/clients/validate-client"
 
-	AWS_REGION         = "ap-south-1"
+	AWS_REGION = "ap-south-1"
 	AWS_COMM_TOPIC_ARN = "arn:aws:sns:ap-south-1:717840664658:comm-sdk"
+	// AWS_COMM_TOPIC_ARN = "arn:aws:sns:ap-south-1:717840664658:comm-uat-sdk"
 
 	// Times API Details
 	TIMES_WP_API_URL   = "https://wecredit1.timespanel.in/wa/v2/messages/send"

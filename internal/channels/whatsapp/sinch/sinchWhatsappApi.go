@@ -2,11 +2,10 @@ package sinchWhatsapp
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch/sinchPayloads"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -17,7 +16,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	responseBody.IsSent = false
 
 	headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
-	generateTokenURL := config.Configs.SinchTokenApiUrl
+	generateTokenURL := config.Configs.SinchWhatsappTokenApiUrl
 	if generateTokenURL == "" {
 		utils.Error(fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set"))
 		responseBody.ResponseMessage = "SINCH_GENERATE_TOKEN_API_URL is not set"
@@ -27,19 +26,19 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	var tokenPayload map[string]string
 	if sinchApiModel.Client == variables.CreditSea { // For CreditSea, use the specific credentials
 		tokenPayload = map[string]string{
-			"grant_type": config.Configs.SinchGrantType,
-			"client_id":  config.Configs.SinchClientId,
-			"username":   config.Configs.CreditSeaSinchUsername,
-			"password":   config.Configs.CreditSeaSinchPassword,
+			"grant_type": config.Configs.SinchWhatsappGrantType,
+			"client_id":  config.Configs.SinchWhatsappClientId,
+			"username":   config.Configs.CreditSeaSinchWhatsappUsername,
+			"password":   config.Configs.CreditSeaSinchWhatsappPassword,
 		}
 		fmt.Println("TokenPayload:", tokenPayload)
 		sinchApiModel.AppId = "creditseapd"
 	} else {
 		tokenPayload = map[string]string{
-			"grant_type": config.Configs.SinchGrantType,
-			"client_id":  config.Configs.SinchClientId,
-			"username":   config.Configs.SinchUserName,
-			"password":   config.Configs.SinchPassword,
+			"grant_type": config.Configs.SinchWhatsappGrantType,
+			"client_id":  config.Configs.SinchWhatsappClientId,
+			"username":   config.Configs.SinchWhatsappUserName,
+			"password":   config.Configs.SinchWhatsappPassword,
 		}
 		sinchApiModel.AppId = "wecreditpd"
 	}
@@ -55,7 +54,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		return responseBody
 	}
 
-	sendMessageURL := config.Configs.SinchMessageApiUrl
+	sendMessageURL := config.Configs.SinchWhatsappMessageApiUrl
 
 	// Getting the API URL
 	apiUrl := sendMessageURL
@@ -106,8 +105,9 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(sinchApiModel.Process, "utility") {
+	if sinchApiModel.TemplateCategory == variables.UtilityTemplateCategory {
 		// For Utility Payload
+		fmt.Println("Generating Utility Payload for Sinch WhatsApp API")
 		return sinchpayloads.GetSinchUtilityPayload(sinchApiModel), nil
 	} else {
 		return sinchpayloads.GetSinchMediaPayload(sinchApiModel), nil

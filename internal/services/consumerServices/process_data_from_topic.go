@@ -207,6 +207,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			}); err != nil {
 				utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
 			}
+			utils.Info(fmt.Sprintf("Message with CommId %s updated successfully in CommAuditData", data.CommId))
 		}
 	}
 
