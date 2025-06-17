@@ -13,12 +13,8 @@ const (
 	DB_PASSWORD_TECH = "WeCred!TaPP@2025"
 	DB_NAME_TECH     = "communication"
 
-	// Azure Queue Details
-	AZURE_SERVICEBUS_CONNECTION_STRING = "Endpoint=sb://communication-service-engine.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=Zogu1EUScN51b9nd8clFiRijdxdspIiFd+ASbED8jkY="
-	AZURE_TOPIC_NAME                   = "communication-uat"
-	AZURE_DB_SUBSCRIPTION              = "priority"
-	BASIC_AUTH_API_URL                 = "http://172.16.32.202:8080/clients/validate-client"
-	// BASIC_AUTH_API_URL = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
+	// BASIC_AUTH_API_URL = "http://172.16.32.202:8080/clients/validate-client"
+	BASIC_AUTH_API_URL = "http://communication-sdk.wc-prod-services:8080/clients/validate-client"
 	// BASIC_AUTH_API_URL = "http://localhost:8080/clients/validate-client"
 
 	AWS_REGION = "ap-south-1"

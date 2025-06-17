@@ -23,13 +23,13 @@ func main() {
 		Email:             "",
 		Channel:           "SMS",
 		ProcessName:       "CREDITSEA",
-		Stage:             4,
+		Stage:             3,
 		IsPriority:        true,
-		EmiAmount:         "0",
+		EmiAmount:         "2",
 		CustomerName:      "Arvind",
 		LoanId:            "",
-		ApplicationNumber: "",
-		DueDate:           "0101",
+		ApplicationNumber: "10021",
+		DueDate:           "2025",
 	}
 
 	// Call your SDK's Send function

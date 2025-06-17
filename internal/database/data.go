@@ -210,14 +210,20 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	}
 	commID, ok := data["CommId"]
 	if !ok {
-		return fmt.Errorf("CommId is required to identify the row")
+		return fmt.Errorf("commId is required to identify the row")
+	}
+
+	stage, ok := data["Stage"]
+	if !ok {
+		return fmt.Errorf("stage is required to identify the row")
 	}
 
 	delete(data, "CommId") // Don't allow updating the CommId itself
+	delete(data, "Stage")  // Don't allow updating the Stage itself
 	if len(data) == 0 {
 		return fmt.Errorf("no fields to update after excluding CommId")
 	}
-	
+
 	// Struct to capture the latest ID for the CommId
 	var result struct {
 		ID uint
@@ -226,7 +232,7 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	// Find the latest row (highest ID) for the given CommId
 	err := db.Table(tableName).
 		Select("id").
-		Where("CommId = ?", commID).
+		Where("CommId = ? AND Stage = ?", commID, stage).
 		Order("id DESC").
 		Limit(1).
 		Scan(&result).Error
