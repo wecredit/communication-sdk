@@ -19,17 +19,23 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
+func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
-		Mobile:  msg.Mobile,
-		Process: msg.ProcessName,
-		Client:  msg.Client,
+		Mobile:            msg.Mobile,
+		Process:           msg.ProcessName,
+		Client:            msg.Client,
+		EmiAmount:         msg.EmiAmount,
+		CustomerName:      msg.CustomerName,
+		LoanId:            msg.LoanId,
+		ApplicationNumber: msg.ApplicationNumber,
+		DueDate:           msg.DueDate,
 	}
 
+	utils.Debug("Fetching WHATSAPP process data from cache")
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
+		return false, errors.New("template data not found in cache")
 	}
 
 	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
@@ -37,7 +43,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
 	var matchedVendor string
-	if data, ok = templateDetails[key]; !ok {
+	if data, ok = templateDetails[key]; !ok && msg.Client != variables.CreditSea {
 		fmt.Println("No template found for the given key:", key)
 		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
@@ -72,9 +78,29 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 		}
 		if !fallbackTemplatefound {
 			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
-			// TODO: Handle the case where no template is found, insert a record in the database with error status
-			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
+			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+				"CommId":          msg.CommId,
+				"Vendor":          msg.Vendor,
+				"IsSent":          false,
+				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel),
+			}); err != nil {
+				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+				return false, nil // TODO: Handle the case where insertion fails
+			}
+			return false, nil
 		}
+	} else if data, ok = templateDetails[key]; !ok && msg.Client == variables.CreditSea {
+		utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor))
+		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+			"CommId":          msg.CommId,
+			"Vendor":          msg.Vendor,
+			"IsSent":          false,
+			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor),
+		}); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+			return false, nil
+		}
+		return false, nil
 	}
 
 	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
@@ -88,6 +114,14 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	}
 	if buttonLink, exists := data["Link"]; exists && buttonLink != nil {
 		requestBody.ButtonLink = buttonLink.(string)
+	}
+
+	if templateVariables, exists := data["TemplateVariables"]; exists && templateVariables != nil {
+		requestBody.TemplateVariables = templateVariables.(string)
+	}
+
+	if templateCategory, exists := data["TemplateCategory"]; exists && templateCategory != nil {
+		requestBody.TemplateCategory = strconv.Itoa(int(templateCategory.(int64)))
 	}
 
 	var response extapimodels.WhatsappResponse
@@ -116,11 +150,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespons
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if response.IsSent {
 		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		return sdkModels.CommApiResponseBody{
-			CommId:  msg.CommId,
-			Success: true,
-		}, nil
+		return true, nil
 	}
-
-	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for source: %s", msg.Vendor)
+	return false, nil
 }

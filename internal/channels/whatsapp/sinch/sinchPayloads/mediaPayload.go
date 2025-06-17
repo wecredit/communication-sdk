@@ -66,7 +66,7 @@ func GetSinchMediaPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[st
 				},
 			},
 			"transactionId":  strconv.Itoa(helper.GenerateRandomID(100, 999)),
-			"callbackDlrUrl": config.Configs.SinchCallbackURL,
+			"callbackDlrUrl": config.Configs.SinchWhatsappCallbackURL,
 			"media": map[string]interface{}{
 				"mimeType": "image/jpeg",
 			},

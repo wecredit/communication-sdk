@@ -210,18 +210,45 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	}
 	commID, ok := data["CommId"]
 	if !ok {
-		return fmt.Errorf("CommId is required to identify the row")
+		return fmt.Errorf("commId is required to identify the row")
+	}
+
+	stage, ok := data["Stage"]
+	if !ok {
+		return fmt.Errorf("stage is required to identify the row")
 	}
 
 	delete(data, "CommId") // Don't allow updating the CommId itself
+	delete(data, "Stage")  // Don't allow updating the Stage itself
 	if len(data) == 0 {
 		return fmt.Errorf("no fields to update after excluding CommId")
 	}
 
-	tx := db.Table(tableName).Where("CommId = ?", commID).Updates(data)
+	// Struct to capture the latest ID for the CommId
+	var result struct {
+		ID uint
+	}
+
+	// Find the latest row (highest ID) for the given CommId
+	err := db.Table(tableName).
+		Select("id").
+		Where("CommId = ? AND Stage = ?", commID, stage).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+
+	if err != nil {
+		return fmt.Errorf("error finding latest row: %w", err)
+	}
+	if result.ID == 0 {
+		return fmt.Errorf("no row found for CommId: %v", commID)
+	}
+
+	tx := db.Table(tableName).Where("id = ?", result.ID).Updates(data)
 	if tx.Error != nil {
 		return tx.Error
 	}
+
 	if tx.RowsAffected == 0 {
 		return fmt.Errorf("no rows found for CommId: %v", commID)
 	}

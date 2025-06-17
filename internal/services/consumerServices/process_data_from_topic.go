@@ -177,7 +177,6 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		}
 
 	case variables.SMS:
-		// return false
 		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
@@ -201,12 +200,14 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		if isSent {
 			if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
 				"CommId":            data.CommId,
+				"Stage":             data.Stage,
 				"Vendor":            data.Vendor,
 				"CommDelivered":     variables.Delivered, //1
 				"CommDeliveredTime": time.Now(),
 			}); err != nil {
 				utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
 			}
+			utils.Info(fmt.Sprintf("Message with CommId %s updated successfully in CommAuditData", data.CommId))
 		}
 	}
 

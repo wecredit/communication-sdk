@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	models "github.com/wecredit/communication-sdk/sdk/models"
@@ -25,38 +26,134 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		appId = config.CreditSeaSinchSmsApiAppID
 		sender = config.CreditSeaSinchSmsApiSender
 
+		// if strings.Contains(data.TemplateText, "{#var#}") {
+		// 	// Prepare a fast lookup map once
+		// 	variableMap := map[string]string{
+		// 		"EmiAmount":         data.EmiAmount,
+		// 		"DueDate":           data.DueDate,
+		// 		"ApplicationNumber": data.ApplicationNumber,
+		// 		"CustomerName":      data.CustomerName,
+		// 		"LoanId":            data.LoanId,
+		// 	}
+
+		// 	// Replace {#var#} in order using a single regex loop
+		// 	var keys = strings.Split(data.TemplateVariables, ",")
+
+		// 	fmt.Println("Keys for template variables:", keys)
+
+		// 	var dueDateFormatted string
+		// 	parsed := false
+
+		// 	// Try RFC3339 first
+		// 	if t, err := time.Parse(time.RFC3339, data.DueDate); err == nil {
+		// 		dueDateFormatted = t.Format("2006-01-02")
+		// 		parsed = true
+		// 	} else if t, err := time.Parse("2006-01-02 15:04:05 -0700 MST", data.DueDate); err == nil {
+		// 		// Fallback for Go's default string format
+		// 		dueDateFormatted = t.Format("2006-01-02")
+		// 		parsed = true
+		// 	}
+
+		// 	if parsed {
+		// 		variableMap["DueDate"] = dueDateFormatted
+		// 	} else {
+		// 		return nil, fmt.Errorf("invalid DueDate format: %s", data.DueDate)
+		// 	}
+
+		// 	// Only check for missing values if those variables are used
+		// 	for _, key := range keys {
+		// 		trimmedKey := strings.TrimSpace(key)
+		// 		if (trimmedKey == "EmiAmount" || trimmedKey == "DueDate") && strings.TrimSpace(variableMap[trimmedKey]) == "" {
+		// 			return nil, fmt.Errorf("missing value for required variable: %s", trimmedKey)
+		// 		}
+		// 	}
+
+		// 	keyIndex := 0
+
+		// 	re := regexp.MustCompile(`\{#var#\}`)
+		// 	data.TemplateText = re.ReplaceAllStringFunc(data.TemplateText, func(_ string) string {
+		// 		if keyIndex < len(keys) {
+		// 			key := strings.TrimSpace(keys[keyIndex])
+		// 			keyIndex++
+		// 			return variableMap[key] // returns empty string if key doesn't exist
+		// 		}
+		// 		return ""
+		// 	})
+		// }
 		if strings.Contains(data.TemplateText, "{#var#}") {
-			// Prepare a fast lookup map once
+			var keys = strings.Split(data.TemplateVariables, ",")
+			fmt.Println("Keys for template variables:", keys)
+
+			// Lookup map with only non-derived values first
 			variableMap := map[string]string{
 				"EmiAmount":         data.EmiAmount,
-				"DueDate":           data.DueDate,
 				"ApplicationNumber": data.ApplicationNumber,
 				"CustomerName":      data.CustomerName,
 				"LoanId":            data.LoanId,
 			}
 
-			// Replace {#var#} in order using a single regex loop
-			var keys = strings.Split(data.TemplateVariables, ",")
-
-			// Only check for missing values if those variables are used
-			for _, key := range keys {
-				trimmedKey := strings.TrimSpace(key)
-				if (trimmedKey == "EmiAmount" || trimmedKey == "DueDate") && strings.TrimSpace(variableMap[trimmedKey]) == "" {
-					return nil, fmt.Errorf("missing value for required variable: %s", trimmedKey)
-				}
-			}
-
 			keyIndex := 0
-
 			re := regexp.MustCompile(`\{#var#\}`)
+
+			var replacementErr error // capture error to return after ReplaceAllStringFunc
+
 			data.TemplateText = re.ReplaceAllStringFunc(data.TemplateText, func(_ string) string {
-				if keyIndex < len(keys) {
-					key := strings.TrimSpace(keys[keyIndex])
-					keyIndex++
-					return variableMap[key] // returns empty string if key doesn't exist
+				if keyIndex >= len(keys) || replacementErr != nil {
+					return ""
 				}
-				return ""
+
+				key := strings.TrimSpace(keys[keyIndex])
+				keyIndex++
+
+				switch key {
+				case "DueDate":
+					// Only process if not already formatted
+					if _, ok := variableMap["DueDate"]; !ok {
+						dueDateStr := data.DueDate
+						var formatted string
+						var parsed bool
+
+						var layouts = []string{
+							time.RFC3339,                    // "2025-06-08T00:00:00Z"
+							"2006-01-02 15:04:05 -0700 MST", // Go's full time format with timezone
+							"2006-01-02 15:04:05",           // Datetime without timezone
+							"2006-01-02",                    // 🆕 Date-only
+						}
+
+						for _, layout := range layouts {
+							if t, err := time.Parse(layout, dueDateStr); err == nil {
+								formatted = t.Format("2006-01-02")
+								parsed = true
+								break
+							}
+						}
+						
+						if !parsed || strings.TrimSpace(formatted) == "" {
+							replacementErr = fmt.Errorf("invalid DueDate format: %s", dueDateStr)
+							return ""
+						}
+
+						variableMap["DueDate"] = formatted
+					}
+
+					return variableMap["DueDate"]
+
+				case "EmiAmount":
+					value := strings.TrimSpace(variableMap["EmiAmount"])
+					if value == "" || value == "0" || value == "0.0" {
+						replacementErr = fmt.Errorf("missing value for required variable: %s", key)
+						return ""
+					}
+					return value
+
+				default:
+					return strings.TrimSpace(variableMap[key])
+				}
 			})
+			// If error occurred during replacement, return early
+			if replacementErr != nil {
+				return nil, replacementErr
+			}
 		}
 	} else {
 		username = config.SinchSmsApiUserName

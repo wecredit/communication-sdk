@@ -30,12 +30,12 @@ func GetNewToken() (*extapimodels.SinchTokenResponse, error) {
 
 	tokenRequestBody := map[string]string{
 		"grant_type": "password",
-		"client_id":  config.Configs.SinchClientId,
-		"username":   config.Configs.SinchUserName,
-		"password":   config.Configs.SinchPassword,
+		"client_id":  config.Configs.SinchWhatsappClientId,
+		"username":   config.Configs.SinchWhatsappUserName,
+		"password":   config.Configs.SinchWhatsappPassword,
 	}
 
-	tokenUrl := config.Configs.SinchTokenApiUrl
+	tokenUrl := config.Configs.SinchWhatsappTokenApiUrl
 
 	apiHeaders := map[string]string{
 		"Cache-Control": "no-cache",
@@ -64,7 +64,7 @@ func GetNewToken() (*extapimodels.SinchTokenResponse, error) {
 func RefreshAccessToken(refreshToken string) (*extapimodels.SinchTokenResponse, error) {
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
-	data.Set("client_id", config.Configs.SinchClientId)
+	data.Set("client_id", config.Configs.SinchWhatsappClientId)
 	data.Set("refresh_token", refreshToken)
 
 	req, _ := http.NewRequest("POST", authURL, bytes.NewBufferString(data.Encode()))
