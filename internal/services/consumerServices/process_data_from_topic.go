@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
@@ -190,26 +189,27 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			utils.Error(fmt.Errorf("error in sending SMS: %v", err))
 			return
 		}
+		utils.Debug(fmt.Sprintf("SMS sent successfully: %v", isSent))
 
 	default:
 		utils.Error(fmt.Errorf("invalid channel: %s", data.Channel))
 		return
 	}
 
-	if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
-		if isSent {
-			if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
-				"CommId":            data.CommId,
-				"Stage":             data.Stage,
-				"Vendor":            data.Vendor,
-				"CommDelivered":     variables.Delivered, //1
-				"CommDeliveredTime": time.Now(),
-			}); err != nil {
-				utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
-			}
-			utils.Info(fmt.Sprintf("Message with CommId %s updated successfully in CommAuditData", data.CommId))
-		}
-	}
+	// if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
+	// 	if isSent {
+	// 		if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
+	// 			"CommId":            data.CommId,
+	// 			"Stage":             data.Stage,
+	// 			"Vendor":            data.Vendor,
+	// 			"CommDelivered":     variables.Delivered, //1
+	// 			"CommDeliveredTime": time.Now(),
+	// 		}); err != nil {
+	// 			utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
+	// 		}
+	// 		utils.Info(fmt.Sprintf("Message with CommId %s updated successfully in CommAuditData", data.CommId))
+	// 	}
+	// }
 
 	// After successful processing, delete the message from the queue
 	_, err = sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{

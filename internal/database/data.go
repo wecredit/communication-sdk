@@ -210,6 +210,8 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	return nil
 }
 
+/*
+// UpdateData updates a row in the specified table based on CommId and Stage
 func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) error {
 	if tableName == "" {
 		return fmt.Errorf("table name cannot be empty")
@@ -235,17 +237,28 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 		ID uint
 	}
 
-	// Find the latest row (highest ID) for the given CommId
-	err := db.Table(tableName).
-		Select("id").
-		Where("CommId = ? AND Stage = ?", commID, stage).
-		Order("id DESC").
-		Limit(1).
-		Scan(&result).Error
+	const maxRetries = 3
+	const retryDelay = 500 * time.Millisecond
 
-	if err != nil {
-		return fmt.Errorf("error finding latest row: %w", err)
+	for i := 0; i < maxRetries; i++ {
+		err := db.Table(tableName).
+			Select("id").
+			Where("CommId = ? AND Stage = ?", commID, stage).
+			Order("id DESC").
+			Limit(1).
+			Scan(&result).Error
+
+		if err != nil {
+			return fmt.Errorf("error finding latest row: %w", err)
+		}
+
+		if result.ID != 0 {
+			break
+		}
+
+		time.Sleep(retryDelay)
 	}
+
 	if result.ID == 0 {
 		return fmt.Errorf("no row found for CommId: %v", commID)
 	}
@@ -256,8 +269,9 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	}
 
 	if tx.RowsAffected == 0 {
-		return fmt.Errorf("no rows found for CommId: %v", commID)
+		return fmt.Errorf("no rows found for Id: %v", result.ID)
 	}
 
 	return nil
 }
+*/
