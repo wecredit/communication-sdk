@@ -35,6 +35,7 @@ type SmsResponse struct {
 	Vendor          string `json:"Vendor" gorm:"Vendor"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
 }
 
 type WhatsappRequestBody struct {
