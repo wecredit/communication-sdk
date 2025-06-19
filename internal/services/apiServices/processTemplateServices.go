@@ -28,8 +28,6 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 		return nil, errors.New("template data not found in cache")
 	}
 
-	fmt.Println("Template DEtails", templateDetails)
-
 	var templates []apiModels.Templatedetails
 
 	// Case 1: both process and stage and channel and vendor provided -> direct key lookup
@@ -144,42 +142,68 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
 	return nil
 }
-
-// Helper: Convert map to Templatedetails struct
 func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, error) {
-	template := &apiModels.Templatedetails{
-		Id:            int(data["Id"].(int64)),
-		TemplateName:  data["TemplateName"].(string),
-		ImageId:       data["ImageId"].(string),
-		Process:       data["Process"].(string),
-		Stage:         int(data["Stage"].(int64)),
-		ImageUrl:      data["ImageUrl"].(string),
-		DltTemplateId: int64(data["DltTemplateId"].(int64)),
-		Channel:       data["Channel"].(string),
-		Vendor:        data["Vendor"].(string),
-		IsActive: func() bool {
-			return data["IsActive"].(int64) == 1
-		}(),
-		TemplateText: data["TemplateText"].(string),
-		Link:         data["Link"].(string),
+	if data == nil {
+		return nil, fmt.Errorf("input data is nil")
 	}
 
+	getStr := func(key string) string {
+		if val, ok := data[key].(string); ok {
+			return val
+		}
+		return ""
+	}
+
+	getInt := func(key string) int {
+		if val, ok := data[key].(int64); ok {
+			return int(val)
+		}
+		return 0
+	}
+
+	getBool := func(key string) bool {
+		if val, ok := data[key].(int64); ok {
+			return val == 1
+		}
+		return false
+	}
+
+	template := &apiModels.Templatedetails{
+		Id:                getInt("Id"),
+		TemplateName:      getStr("TemplateName"),
+		ImageId:           getStr("ImageId"),
+		Process:           getStr("Process"),
+		Stage:             getInt("Stage"),
+		ImageUrl:          getStr("ImageUrl"),
+		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
+		Channel:           getStr("Channel"),
+		Vendor:            getStr("Vendor"),
+		IsActive:          getBool("IsActive"),
+		TemplateText:      getStr("TemplateText"),
+		Client:            getStr("Client"),
+		TemplateVariables: getStr("TemplateVariables"),
+		Link:              getStr("Link"),
+	}
+
+	// CreatedOn
 	if createdOn, ok := data["CreatedOn"].(time.Time); ok {
 		template.CreatedOn = createdOn
 	}
 
-	if updatedOn, ok := data["UpdatedOn"]; ok && updatedOn != nil {
-		switch v := updatedOn.(type) {
+	// UpdatedOn
+	if raw, ok := data["UpdatedOn"]; ok && raw != nil {
+		switch v := raw.(type) {
 		case time.Time:
 			template.UpdatedOn = &v
 		case string:
-			parsed, err := time.Parse("2006-01-02 15:04:05.999 +0000 UTC", v)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse UpdatedOn string: %v", err)
+			layout := "2006-01-02 15:04:05.999 +0000 UTC"
+			if parsed, err := time.Parse(layout, v); err == nil {
+				template.UpdatedOn = &parsed
+			} else {
+				return nil, fmt.Errorf("invalid UpdatedOn time format: %v", err)
 			}
-			template.UpdatedOn = &parsed
 		default:
-			return nil, fmt.Errorf("unsupported type for UpdatedOn: %T", updatedOn)
+			return nil, fmt.Errorf("unsupported type for UpdatedOn: %T", raw)
 		}
 	}
 
