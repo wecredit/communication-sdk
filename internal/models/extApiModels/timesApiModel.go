@@ -50,11 +50,11 @@ type WhatsappRequestBody struct {
 	TemplateCategory  string
 	AccessToken       string
 	Client            string
-	EmiAmount         string
-	CustomerName      string
-	LoanId            string
-	ApplicationNumber string
-	DueDate           string
+	EmiAmount         string // Variables
+	CustomerName      string // Variables
+	LoanId            string // Variables
+	ApplicationNumber string // Variables
+	DueDate           string // Variables
 }
 
 type WhatsappResponse struct {
@@ -62,6 +62,7 @@ type WhatsappResponse struct {
 	IsSent          bool   `json:"isSent" gorm:"IsSent"`
 	CommId          string `json:"CommId" gorm:"CommId"`
 	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
