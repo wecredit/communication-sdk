@@ -13,7 +13,7 @@ import (
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 )
 
-func getLocalIP() string {
+func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		log.Printf("Error getting IP address: %v", err)
@@ -39,10 +39,6 @@ func StartConsumer(port string) {
 
 	// Set up Gin router
 	r := gin.Default()
-
-	containerIP := getLocalIP()
-
-	log.Printf("[Health Check] Container IP: %s", containerIP)
 
 	r.GET("/health", health.HealthCheckHandler(port))
 
