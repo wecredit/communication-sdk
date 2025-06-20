@@ -2,6 +2,7 @@ package sinchWhatsapp
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch/sinchPayloads"
@@ -31,7 +32,6 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 			"username":   config.Configs.CreditSeaSinchWhatsappUsername,
 			"password":   config.Configs.CreditSeaSinchWhatsappPassword,
 		}
-		fmt.Println("TokenPayload:", tokenPayload)
 		sinchApiModel.AppId = "creditseapd"
 	} else {
 		tokenPayload = map[string]string{
@@ -105,7 +105,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if sinchApiModel.TemplateCategory == variables.UtilityTemplateCategory {
+	if strings.Contains(sinchApiModel.TemplateName, "utility") {
 		// For Utility Payload
 		fmt.Println("Generating Utility Payload for Sinch WhatsApp API")
 		return sinchpayloads.GetSinchUtilityPayload(sinchApiModel), nil

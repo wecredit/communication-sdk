@@ -38,19 +38,20 @@ type Userbasicauth struct {
 }
 
 type Templatedetails struct {
-	Id            int        `json:"id"`
-	TemplateName  string     `gorm:"column:TemplateName" json:"templateName" binding:"required"`
-	ImageId       string     `gorm:"column:ImageId" json:"imageId,omitempty"`
-	Process       string     `gorm:"column:Process" json:"process"`
-	Stage         int        `gorm:"column:Stage" json:"stage"`
-	ImageUrl      string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
-	DltTemplateId int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
-	Channel       string     `gorm:"column:Channel" json:"channel"`
-	Vendor        string     `gorm:"column:Vendor" json:"vendor"`
-	IsActive      bool       `gorm:"column:IsActive" json:"isActive"`
-	TemplateText  string     `gorm:"column:TemplateText" json:"templateText,omitempty"`
-	Link          string     `gorm:"column:Link" json:"link,omitempty"`
-	CreatedOn     time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
-	UpdatedOn     *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
-	Client        string     `gorm:"column:Client" json:"client,omitempty"`
+	Id                int        `json:"id"`
+	TemplateName      string     `gorm:"column:TemplateName" json:"templateName" binding:"required"`
+	ImageId           string     `gorm:"column:ImageId" json:"imageId,omitempty"`
+	Process           string     `gorm:"column:Process" json:"process"`
+	Stage             int        `gorm:"column:Stage" json:"stage"`
+	ImageUrl          string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
+	DltTemplateId     int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
+	Channel           string     `gorm:"column:Channel" json:"channel"`
+	Vendor            string     `gorm:"column:Vendor" json:"vendor"`
+	IsActive          bool       `gorm:"column:IsActive" json:"isActive"`
+	TemplateText      string     `gorm:"column:TemplateText" json:"templateText,omitempty"`
+	Link              string     `gorm:"column:Link" json:"link,omitempty"`
+	CreatedOn         time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
+	UpdatedOn         *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
+	Client            string     `gorm:"column:Client" json:"client,omitempty"`
+	TemplateVariables string     `gorm:"column:TemplateVariables" json:"templateVariables,omitempty"`
 }

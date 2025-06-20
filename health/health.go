@@ -1,7 +1,6 @@
 package health
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -51,8 +50,6 @@ func HealthCheckHandler(port string) gin.HandlerFunc {
 		} else {
 			resp.CacheStatus = "healthy"
 		}
-
-		log.Printf("[Health Check] Hit received from IP: %s", resp.ClientIP)
 
 		statusCode := http.StatusOK
 		if resp.Status != "ok" {

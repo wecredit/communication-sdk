@@ -81,6 +81,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
 				"CommId":          msg.CommId,
 				"Vendor":          msg.Vendor,
+				"MobileNumber":    msg.Mobile,
 				"IsSent":          false,
 				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel),
 			}); err != nil {
@@ -94,6 +95,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
+			"MobileNumber":    msg.Mobile,
 			"IsSent":          false,
 			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor),
 		}); err != nil {
@@ -137,6 +139,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	response.CommId = msg.CommId
 	response.TemplateName = requestBody.TemplateName
 	response.Vendor = msg.Vendor
+	response.MobileNumber = msg.Mobile
 
 	dbMappedData, err := services.MapIntoDbModel(response)
 	if err != nil {
