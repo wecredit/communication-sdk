@@ -16,6 +16,7 @@ import (
 func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
 	var buttonURL string
 
+	// Customize the mobile number for poonawalla if required
 	if strings.Contains(sinchApiModel.Process, "poonawalla") {
 		buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", sinchApiModel.Mobile[len(sinchApiModel.Mobile)-5:]+sinchApiModel.Mobile[:5], 1)
 	} else {
@@ -23,8 +24,9 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 	}
 
 	var components []map[string]interface{}
+	var bodyParams []map[string]interface{}
 
-	// Add dynamic body parameters based on known struct fields
+	// Add dynamic text values to a single body component
 	if sinchApiModel.Client == variables.CreditSea && sinchApiModel.TemplateVariables != "" {
 		keys := strings.Split(sinchApiModel.TemplateVariables, ",")
 		for _, key := range keys {
@@ -34,18 +36,17 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 			switch key {
 			case "CustomerName":
 				textValue = sinchApiModel.CustomerName
+
 			case "DueDate":
 				dueDateStr := sinchApiModel.DueDate
-				var formatted string
+				formatted := dueDateStr // fallback
 				var parsed bool
 
-				formatted = dueDateStr // Default to the original string if parsing fails
-
-				var layouts = []string{
-					time.RFC3339,                    // "2025-06-08T00:00:00Z"
-					"2006-01-02 15:04:05 -0700 MST", // Go's full time format with timezone
-					"2006-01-02 15:04:05",           // Datetime without timezone
-					"2006-01-02",                    // 🆕 Date-only
+				layouts := []string{
+					time.RFC3339,
+					"2006-01-02 15:04:05 -0700 MST",
+					"2006-01-02 15:04:05",
+					"2006-01-02",
 				}
 
 				for _, layout := range layouts {
@@ -56,32 +57,40 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 					}
 				}
 
-				if !parsed || strings.TrimSpace(formatted) == "" {
+				if !parsed {
 					utils.Error(fmt.Errorf("invalid DueDate format: %s", dueDateStr))
 				}
+
 				textValue = formatted
+
 			case "LoanId":
 				textValue = sinchApiModel.LoanId
+
 			case "ApplicationNumber":
 				textValue = sinchApiModel.ApplicationNumber
+
 			case "EmiAmount":
 				textValue = sinchApiModel.EmiAmount
+
 			default:
-				textValue = "" // skip unknown fields
+				textValue = "" // ignore unknown fields
 			}
 
 			if textValue != "" {
-				components = append(components, map[string]interface{}{
-					"type": "body",
-					"parameters": []map[string]interface{}{
-						{
-							"type": "text",
-							"text": textValue,
-						},
-					},
+				bodyParams = append(bodyParams, map[string]interface{}{
+					"type": "text",
+					"text": textValue,
 				})
 			}
 		}
+	}
+
+	// Add body component only once with all parameters
+	if len(bodyParams) > 0 {
+		components = append(components, map[string]interface{}{
+			"type":       "body",
+			"parameters": bodyParams,
+		})
 	}
 
 	// Add the button component
@@ -90,11 +99,14 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 		"index":    "0",
 		"sub_type": "url",
 		"parameters": []map[string]interface{}{
-			{"type": "text", "text": buttonURL},
+			{
+				"type": "text",
+				"text": buttonURL,
+			},
 		},
 	})
 
-	// Final payload
+	// Build the full payload
 	templatePayload := map[string]interface{}{
 		"recipient_type": "individual",
 		"to":             sinchApiModel.Mobile,
