@@ -75,10 +75,18 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
+		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
+		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
+		return responseBody
 	}
 
-	success := apiResponse["success"].(string)
+	success, ok := apiResponse["success"].(string)
+	if !ok {
+		utils.Error(fmt.Errorf("success field is missing or not a string in API response"))
+		responseBody.IsSent = false
+		responseBody.ResponseMessage = "failed to send message due to missing success field"
+		return responseBody
+	}
 
 	if success == "true" {
 		responseBody.IsSent = true

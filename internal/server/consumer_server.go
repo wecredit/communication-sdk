@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/cron"
 	"github.com/wecredit/communication-sdk/health"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
@@ -34,6 +35,7 @@ func GetLocalIP() string {
 
 func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
+	go cron.StartMidnightResetCron()
 
 	log.Printf("Starting Consumer Server on port")
 
