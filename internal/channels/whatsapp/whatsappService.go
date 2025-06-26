@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -153,6 +155,9 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if response.IsSent {
 		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		if msg.Client == variables.CreditSea {
+			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
+		}
 		return true, nil
 	}
 	return false, nil

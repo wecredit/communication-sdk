@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/models/awsModels"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
@@ -143,8 +145,32 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 		}
 
+		maxCountInt, _ := strconv.Atoi(config.Configs.CreditSeaWhatsappMaxCount)
+
 		if data.Client == variables.CreditSea {
+			// add a counter, make a check for count to be less than 1000, Handle the case when count gets more than 1000. Use redis cache
+			count, err := redis.GetCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
+			if err != nil {
+				log.Printf("Redis error: %v. Falling back to default vendor.", err)
+			}
+
 			data.Vendor = variables.SINCH
+
+			if count > maxCountInt {
+				utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
+				if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+					"CommId":          data.CommId,
+					"Vendor":          data.Vendor,
+					"MobileNumber":    data.Mobile,
+					"IsSent":          false,
+					"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeeded. Message not sent for commid: %s", data.CommId),
+				}); err != nil {
+					utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+				}
+				break
+			} else {
+				data.Vendor = variables.SINCH
+			}
 		} else {
 			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 		}

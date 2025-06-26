@@ -1,13 +1,16 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 
 	"github.com/joho/godotenv"
 
 	"github.com/wecredit/communication-sdk/internal/database"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -47,6 +50,14 @@ func LoadConfigs() error {
 		}
 	}
 
+	// Initialize Redis Connection
+	_, err := redis.GetRedisClient(Configs.RedisAddress, Configs.RedisPassword)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to initialize redis connection"))
+	}
+
+	currentCountInt, _ := strconv.Atoi(Configs.CreditSeaWhatsappCurrentCount)
+	redis.InitCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount, currentCountInt) // Initialize the creditsea count on redis
 	// // Connect Analytics DB
 	// err := database.ConnectDB(database.Analytics, Configs)
 	// if err != nil {
@@ -55,7 +66,7 @@ func LoadConfigs() error {
 	// utils.Info("Analytics Database connection pool initialized successfully.")
 
 	// Connect Tech DB
-	err := database.ConnectDB(database.Tech, Configs)
+	err = database.ConnectDB(database.Tech, Configs)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Tech database: %v", err)
 	}

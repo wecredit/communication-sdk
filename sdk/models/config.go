@@ -29,6 +29,14 @@ type Config struct {
 	AwsSnsArn   string `envconfig:"AWS_COMM_TOPIC_ARN"`
 	AwsQueueUrl string `envconfig:"AWS_QUEUE_URL"`
 
+	// Redis Credentials
+	RedisAddress  string `envconfig:"REDIS_ADDRESS"`
+	RedisPassword string `envconfig:"REDIS_PASSWORD"`
+	RedisMapKey   string `envconfig:"REDIS_MAP_KEY"`
+
+	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
+	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
+
 	// Auth Table Variables
 	BasicAuthTableName string `envconfig:"BASIC_AUTH_TABLE"`
 
