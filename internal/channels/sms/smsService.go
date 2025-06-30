@@ -30,6 +30,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		LoanId:            msg.LoanId,
 		ApplicationNumber: msg.ApplicationNumber,
 		DueDate:           msg.DueDate,
+		Description:       msg.Description,
 	}
 
 	utils.Debug("Fetching SMS process data from cache")

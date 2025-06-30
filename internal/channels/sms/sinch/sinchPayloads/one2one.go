@@ -26,60 +26,6 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		appId = config.CreditSeaSinchSmsApiAppID
 		sender = config.CreditSeaSinchSmsApiSender
 
-		// if strings.Contains(data.TemplateText, "{#var#}") {
-		// 	// Prepare a fast lookup map once
-		// 	variableMap := map[string]string{
-		// 		"EmiAmount":         data.EmiAmount,
-		// 		"DueDate":           data.DueDate,
-		// 		"ApplicationNumber": data.ApplicationNumber,
-		// 		"CustomerName":      data.CustomerName,
-		// 		"LoanId":            data.LoanId,
-		// 	}
-
-		// 	// Replace {#var#} in order using a single regex loop
-		// 	var keys = strings.Split(data.TemplateVariables, ",")
-
-		// 	fmt.Println("Keys for template variables:", keys)
-
-		// 	var dueDateFormatted string
-		// 	parsed := false
-
-		// 	// Try RFC3339 first
-		// 	if t, err := time.Parse(time.RFC3339, data.DueDate); err == nil {
-		// 		dueDateFormatted = t.Format("2006-01-02")
-		// 		parsed = true
-		// 	} else if t, err := time.Parse("2006-01-02 15:04:05 -0700 MST", data.DueDate); err == nil {
-		// 		// Fallback for Go's default string format
-		// 		dueDateFormatted = t.Format("2006-01-02")
-		// 		parsed = true
-		// 	}
-
-		// 	if parsed {
-		// 		variableMap["DueDate"] = dueDateFormatted
-		// 	} else {
-		// 		return nil, fmt.Errorf("invalid DueDate format: %s", data.DueDate)
-		// 	}
-
-		// 	// Only check for missing values if those variables are used
-		// 	for _, key := range keys {
-		// 		trimmedKey := strings.TrimSpace(key)
-		// 		if (trimmedKey == "EmiAmount" || trimmedKey == "DueDate") && strings.TrimSpace(variableMap[trimmedKey]) == "" {
-		// 			return nil, fmt.Errorf("missing value for required variable: %s", trimmedKey)
-		// 		}
-		// 	}
-
-		// 	keyIndex := 0
-
-		// 	re := regexp.MustCompile(`\{#var#\}`)
-		// 	data.TemplateText = re.ReplaceAllStringFunc(data.TemplateText, func(_ string) string {
-		// 		if keyIndex < len(keys) {
-		// 			key := strings.TrimSpace(keys[keyIndex])
-		// 			keyIndex++
-		// 			return variableMap[key] // returns empty string if key doesn't exist
-		// 		}
-		// 		return ""
-		// 	})
-		// }
 		if strings.Contains(data.TemplateText, "{#var#}") {
 			var keys = strings.Split(data.TemplateVariables, ",")
 			fmt.Println("Keys for template variables:", keys)
@@ -127,7 +73,7 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 								break
 							}
 						}
-						
+
 						if !parsed || strings.TrimSpace(formatted) == "" {
 							replacementErr = fmt.Errorf("invalid DueDate format: %s", dueDateStr)
 							return ""
@@ -171,9 +117,9 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		"contenttype": "1",
 		"selfid":      "true",
 		"text":        data.TemplateText,
-		"brd":         data.Process,                          // campaignName
-		"dtm":         fmt.Sprintf("%d", data.DltTemplateId), // DLT Template ID
-		"tc":          data.TemplateCategory,                 // Template Category : Service Explicit (4) or Implicit (3)
+		"brd":         fmt.Sprintf("%s_%s", data.Process, data.Description), // campaignName
+		"dtm":         fmt.Sprintf("%d", data.DltTemplateId),                // DLT Template ID
+		"tc":          data.TemplateCategory,                                // Template Category : Service Explicit (4) or Implicit (3)
 		"intflag":     "false",
 		"alert":       "1",
 	}
