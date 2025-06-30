@@ -26,6 +26,7 @@ type SmsRequestBody struct {
 	LoanId            string
 	ApplicationNumber string
 	DueDate           string
+	Description       string
 }
 
 type SmsResponse struct {

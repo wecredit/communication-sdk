@@ -21,6 +21,7 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	msg.Channel = strings.ToUpper(msg.Channel)
 	msg.ProcessName = strings.ToUpper(msg.ProcessName)
 	c.ClientName = strings.ToLower(c.ClientName)
+	msg.Description = strings.ToUpper(msg.Description)
 
 	if c.Channel != msg.Channel {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("channel mismatch: expected %s, got %s", c.Channel, msg.Channel)

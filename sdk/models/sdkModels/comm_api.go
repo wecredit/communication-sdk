@@ -16,7 +16,8 @@ type CommApiRequestBody struct {
 	CustomerName      string `json:"customerName,omitempty" gorm:-`      // variables used in creditsea Template
 	LoanId            string `json:"loanId,omitempty" gorm:-`            // variables used in creditsea Template
 	ApplicationNumber string `json:"applicationNumber,omitempty" gorm:-` // variables used in creditsea Template
-	DueDate           string `json:"dueDate,omitempty" gorm:-`           // variables used in creditsea Template
+	DueDate           string `json:"dueDate,omitempty" gorm:-`
+	Description       string `json:"description,omitempty" gorm:-` // variables used in creditsea Template
 }
 
 type CommApiResponseBody struct {
