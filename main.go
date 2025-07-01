@@ -19,17 +19,18 @@ func main() {
 	fmt.Println("\nClient Created:", client)
 
 	request := &sdkModels.CommApiRequestBody{
-		Mobile:            "6200807541", //"7579214351",
+		Mobile:            "9220146969", //"7579214351",
 		Email:             "",
 		Channel:           "SMS",
-		ProcessName:       "CREDITSEA_TEST",
-		Stage:             2,
+		ProcessName:       "CREDITSEA",
+		Stage:             5.03,
 		IsPriority:        true,
 		EmiAmount:         "2",
 		CustomerName:      "Brajendra",
-		LoanId:            "",
+		LoanId:            "123833",
 		ApplicationNumber: "10021",
 		DueDate:           "2025-06-08",
+		Description:       "TEST",
 	}
 
 	// Call your SDK's Send function

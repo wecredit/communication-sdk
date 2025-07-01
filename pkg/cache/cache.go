@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 
 	"github.com/dgraph-io/ristretto"
@@ -112,7 +113,10 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 
 		keyStr := fmt.Sprintf("%s:%v", columnNameToBeUsedAsKey, keyVal)
 		if suffixColumnName != "" {
-			if suffixVal, ok := row[suffixColumnName]; ok {
+			if suffixVal, ok := row[suffixColumnName]; ok && tableName == config.Configs.TemplateDetailsTable {
+				stageFloat, _ := strconv.ParseFloat(string(suffixVal.([]uint8)), 64)
+				keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
+			} else if suffixVal, ok := row[suffixColumnName]; ok {
 				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)
 			} else {
 				utils.Warn(fmt.Sprintf("suffix column '%s' missing for a row", suffixColumnName))
