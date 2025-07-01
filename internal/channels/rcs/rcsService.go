@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -32,7 +31,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
 	}
 
-	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
+	key := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
 	var matchedVendor string
@@ -40,7 +39,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 		fmt.Println("No template found for the given key:", key)
 		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
-			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
+			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
 				fmt.Printf("Found fallback template with key: %s\n", otherKey)
 				fallbackTemplatefound = true
 				data = val
@@ -70,9 +69,9 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 			}
 		}
 		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel))
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f and Channel: %s and Active Lender", msg.ProcessName, msg.Stage, msg.Channel))
 			// TODO: Handle the case where no template is found, insert a record in the database with error status
-			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %s and Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Channel)
+			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %.2f and Channel: %s and active lender", msg.ProcessName, msg.Stage, msg.Channel)
 		}
 	}
 
