@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
@@ -216,7 +217,21 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			return
 		}
 		utils.Debug(fmt.Sprintf("SMS sent successfully: %v", isSent))
-
+	case variables.Email:
+		if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtech, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		}
+		if data.Client == variables.CreditSea {
+			data.Vendor = variables.SINCH
+		} else {
+			data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		}
+		isSent, err = email.SendEmailByProcess(data)
+		if err != nil {
+			utils.Error(fmt.Errorf("error in sending Email: %v", err))
+			return
+		}
+		utils.Debug(fmt.Sprintf("Email sent successfully: %v", isSent))
 	default:
 		utils.Error(fmt.Errorf("invalid channel: %s", data.Channel))
 		return
