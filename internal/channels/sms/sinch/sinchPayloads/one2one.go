@@ -52,6 +52,13 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 				keyIndex++
 
 				switch key {
+				case "CustomerName":
+					textValue := data.CustomerName
+					if textValue == "" {
+						textValue = "Dear Customer"
+					}
+					return textValue
+
 				case "DueDate":
 					// Only process if not already formatted
 					if _, ok := variableMap["DueDate"]; !ok {
@@ -122,11 +129,12 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		"tc":          data.TemplateCategory,                                // Template Category : Service Explicit (4) or Implicit (3)
 		"intflag":     "false",
 		"alert":       "1",
+		"s":           "1", // Enable URL Shortening
 	}
 
-	if data.Client != variables.CreditSea {
-		templatePayload["s"] = "1" // Enable URL Shortening for wecredit account
-	}
+	// if data.Client != variables.CreditSea {
+	// 	templatePayload["s"] = "1"
+	// }
 
 	fmt.Println("Sinch SMS Template Payload:", templatePayload)
 
