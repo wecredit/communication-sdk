@@ -222,21 +222,6 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return
 	}
 
-	// if data.Client == variables.CreditSea || data.Client == variables.NurtureEngine {
-	// 	if isSent {
-	// 		if err := database.UpdateData(config.Configs.CommAuditTable, database.DBtech, map[string]interface{}{
-	// 			"CommId":            data.CommId,
-	// 			"Stage":             data.Stage,
-	// 			"Vendor":            data.Vendor,
-	// 			"CommDelivered":     variables.Delivered, //1
-	// 			"CommDeliveredTime": time.Now(),
-	// 		}); err != nil {
-	// 			utils.Error(fmt.Errorf("error updating data into table for commid: %s : %v", data.CommId, err))
-	// 		}
-	// 		utils.Info(fmt.Sprintf("Message with CommId %s updated successfully in CommAuditData", data.CommId))
-	// 	}
-	// }
-
 	// After successful processing, delete the message from the queue
 	_, err = sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(queueURL),
