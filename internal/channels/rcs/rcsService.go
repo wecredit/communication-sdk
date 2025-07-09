@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/sinch"
 	timesRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
-	services "github.com/wecredit/communication-sdk/internal/services/dbService"
+	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -19,117 +19,61 @@ import (
 )
 
 func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiResponseBody, error) {
-	requestBody := extapimodels.RcsRequesBody{
+	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+	if !found {
+		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
+	}
+	templateData, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
+	if err != nil {
+		channelHelper.LogTemplateNotFound(msg, err)
+		return sdkModels.CommApiResponseBody{Success: false}, err
+	}
+	msg.Vendor = matchedVendor
+
+	req := extapimodels.RcsRequestBody{
 		Mobile:  msg.Mobile,
 		Process: msg.ProcessName,
 	}
-	utils.Debug("Fetching rcs template data from cache")
+	channelHelper.PopulateRcsFields(&req, templateData)
 
-	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
-	if !found {
-		utils.Error(fmt.Errorf("template data not found in cache"))
-		return sdkModels.CommApiResponseBody{}, errors.New("template data not found in cache")
-	}
-
-	key := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
-	var data map[string]interface{}
-	var ok, fallbackTemplatefound bool
-	var matchedVendor string
-	if data, ok = templateDetails[key]; !ok {
-		fmt.Println("No template found for the given key:", key)
-		fallbackTemplatefound = false
-		for otherKey, val := range templateDetails {
-			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
-				fmt.Printf("Found fallback template with key: %s\n", otherKey)
-				fallbackTemplatefound = true
-				data = val
-				parts := strings.Split(otherKey, "|")
-				if len(parts) == 5 {
-					vendorPart := strings.TrimPrefix(parts[4], "Vendor:")
-					matchedVendor = vendorPart
-				}
-
-				fmt.Println("Matched Vendor:", matchedVendor)
-				vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
-				if !found {
-					utils.Error(fmt.Errorf("vendor data not found in cache"))
-				} else {
-					key := fmt.Sprintf("Name:%s|Channel:%s", matchedVendor, msg.Channel)
-					if vendorData, ok := vendorDetails[key]; ok {
-						if vendorData["Status"].(int64) == variables.Inactive {
-							utils.Error(fmt.Errorf("vendor %s is not active for channel %s", matchedVendor, msg.Channel))
-							fallbackTemplatefound = false
-						}
-					}
-				}
-
-				msg.Vendor = matchedVendor
-
-				break
-			}
-		}
-		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f and Channel: %s and Active Lender", msg.ProcessName, msg.Stage, msg.Channel))
-			// TODO: Handle the case where no template is found, insert a record in the database with error status
-			return sdkModels.CommApiResponseBody{}, fmt.Errorf("no template found for the given Process: %s, Stage: %.2f and Channel: %s and active lender", msg.ProcessName, msg.Stage, msg.Channel)
-		}
-	}
-
-	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
-		requestBody.TemplateName = templateName.(string)
-	}
-	if imageId, exists := data["ImageId"]; exists && imageId != nil {
-		requestBody.AppId = imageId.(string)
-	}
-
-	utils.Debug("Fetching AppId data")
-	rcsAppIdData, err := database.GetRcsAppId(database.DBtech, requestBody.AppId)
+	rcsAppIdData, err := database.GetRcsAppId(database.DBtech, req.AppId)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while fetching RCS APP Id data for app Id '%s': %v", requestBody.AppId, err))
-		return sdkModels.CommApiResponseBody{}, fmt.Errorf("error occurred while fetching RCS APP Id data for app Id '%s': %v", requestBody.AppId, err)
+		utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
+		return sdkModels.CommApiResponseBody{Success: false}, err
 	}
 
-	if appIdKey, exists := rcsAppIdData["AppIdKey"]; exists && appIdKey != nil {
-		requestBody.AppIdKey = appIdKey.(string)
+	if val, ok := rcsAppIdData["AppIdKey"].(string); ok {
+		req.AppIdKey = val
 	}
-	if projectId, exists := rcsAppIdData["ProjectId"]; exists && projectId != nil {
-		requestBody.ProjectId = projectId.(string)
-	}
-	if apikey, exists := rcsAppIdData["ProjectId"]; exists && apikey != nil {
-		requestBody.ApiKey = apikey.(string)
+	if val, ok := rcsAppIdData["ProjectId"].(string); ok {
+		req.ProjectId = val
+		req.ApiKey = val
 	}
 
 	var response extapimodels.RcsResponse
-
-	// Hit Into WP
 	switch msg.Vendor {
 	case variables.TIMES:
-		response = timesRcs.HitTimesRcsApi(requestBody)
+		response = timesRcs.HitTimesRcsApi(req)
 	case variables.SINCH:
-		response = sinchRcs.HitSinchRcsApi(requestBody)
+		response = sinchRcs.HitSinchRcsApi(req)
 	}
 
 	response.CommId = msg.CommId
-	response.TemplateName = requestBody.TemplateName
+	response.TemplateName = req.TemplateName
 	response.Vendor = msg.Vendor
 
-	dbMappedData, err := services.MapIntoDbModel(response)
+	dbMappedData, err := dbservices.MapIntoDbModel(response)
 	if err != nil {
-		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
+		utils.Error(fmt.Errorf("mapping error: %v", err))
 	}
+	database.InsertData(config.Configs.RcsOutputTable, database.DBtech, dbMappedData)
 
-	if err := database.InsertData(config.Configs.RcsOutputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	}
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("RCS Response: %s", string(jsonBytes)))
-	if response.IsSent {
-		utils.Info(fmt.Sprintf("RCS sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		return sdkModels.CommApiResponseBody{
-			CommId:  msg.CommId,
-			Success: true,
-		}, nil
-	}
 
-	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send message for source: %s", msg.Vendor)
+	if response.IsSent {
+		utils.Info(fmt.Sprintf("RCS sent successfully for Process: %s on %s via %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		return sdkModels.CommApiResponseBody{CommId: msg.CommId, Success: true}, nil
+	}
+	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to send RCS for vendor %s", msg.Vendor)
 }

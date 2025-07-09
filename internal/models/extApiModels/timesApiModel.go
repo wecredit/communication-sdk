@@ -68,7 +68,7 @@ type WhatsappResponse struct {
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
 
-type RcsRequesBody struct {
+type RcsRequestBody struct {
 	Mobile       string
 	Process      string
 	TemplateName string

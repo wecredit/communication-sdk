@@ -216,7 +216,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	if data.Client == variables.CreditSea {
 		count, err := redis.GetCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
 		if err != nil {
-			utils.Error(fmt.Errorf("Redis error: %v. Falling back to default vendor."))
+			utils.Error(fmt.Errorf("redis error: %v", err))
 		}
 		data.Vendor = variables.SINCH
 		if count > maxCountInt {

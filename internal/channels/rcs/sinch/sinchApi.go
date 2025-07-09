@@ -12,7 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchRcsApi(data extapimodels.RcsRequesBody) extapimodels.RcsResponse {
+func HitSinchRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsResponse {
 	var responseBody extapimodels.RcsResponse
 	responseBody.IsSent = false
 	// rcsApiUrl := config.Configs.SinchRcsApiUrl
