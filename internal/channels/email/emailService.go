@@ -39,7 +39,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		return false, errors.New("template data not found in cache")
 	}
 
-	key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor)
+	key := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
 	var data map[string]interface{}
 	var ok, fallbackTemplatefound bool
 	var matchedVendor string
@@ -47,7 +47,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		fmt.Println("No template found for the given key:", key)
 		fallbackTemplatefound = false
 		for otherKey, val := range templateDetails {
-			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%d|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
+			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
 				fmt.Printf("Found fallback template with key: %s\n", otherKey)
 				fallbackTemplatefound = true
 				data = val
@@ -77,13 +77,13 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			}
 		}
 		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Active Lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel))
+			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Active Lender", msg.ProcessName, msg.Stage, msg.Client, msg.Channel))
 			if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
 				"CommId":          msg.CommId,
 				"Vendor":          msg.Vendor,
 				"Email":           msg.Email,
 				"IsSent":          false,
-				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and active lender", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel),
+				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and active lender", msg.ProcessName, msg.Stage, msg.Client, msg.Channel),
 			}); err != nil {
 				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 				return false, nil // TODO: Handle the case where insertion fails
@@ -91,13 +91,13 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			return false, nil
 		}
 	} else if data, ok = templateDetails[key]; !ok && msg.Client == variables.CreditSea {
-		utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor))
+		utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor))
 		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
 			"Email":           msg.Email,
 			"IsSent":          false,
-			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %s, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, strconv.Itoa(msg.Stage), msg.Client, msg.Channel, msg.Vendor),
+			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
 		}); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 			return false, nil
@@ -112,7 +112,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
 		requestBody.TemplateName = templateName.(string)
 	}
-	
+
 	if templateText, exists := data["TemplateText"]; exists && templateText != nil {
 		requestBody.TemplateText = templateText.(string)
 	}

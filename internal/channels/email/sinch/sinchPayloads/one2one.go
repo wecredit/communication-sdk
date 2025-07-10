@@ -26,7 +26,7 @@ func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config
 					},
 				},
 				"attributes": map[string]interface{}{
-					":fiedl1": "Mr. John",
+					":fiedl1": "Mr.John",
 					":field2": "Delhi",
 					":field3": "Planted",
 				},
@@ -40,6 +40,6 @@ func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config
 			"X-EXAMPLE": "SL-1234",
 		},
 	}
-	
+
 	return templatePayload, nil
 }
