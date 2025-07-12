@@ -112,3 +112,18 @@ func PopulateRcsFields(req *extapimodels.RcsRequestBody, data map[string]interfa
 		req.AppId = val
 	}
 }
+
+func PopulateEmailFields(req *extapimodels.EmailRequestBody, data map[string]interface{}) {
+	if val, ok := data["TemplateName"].(string); ok {
+		req.TemplateName = val
+	}
+	if val, ok := data["TemplateText"].(string); ok {
+		req.TemplateText = val
+	}
+	if val, ok := data["TemplateVariables"].(string); ok {
+		req.TemplateVariables = val
+	}
+	if val, ok := data["TemplateCategory"].(int64); ok {
+		req.TemplateCategory = fmt.Sprintf("%d", val)
+	}
+}

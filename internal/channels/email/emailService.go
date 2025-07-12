@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchEmail "github.com/wecredit/communication-sdk/internal/channels/email/sinch"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -38,64 +37,13 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		utils.Error(fmt.Errorf("template data not found in cache"))
 		return false, errors.New("template data not found in cache")
 	}
-
-	key := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:%s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
-	var data map[string]interface{}
-	var ok, fallbackTemplatefound bool
-	var matchedVendor string
-	if data, ok = templateDetails[key]; !ok && msg.Client != variables.CreditSea {
-		fmt.Println("No template found for the given key:", key)
-		fallbackTemplatefound = false
-		for otherKey, val := range templateDetails {
-			if strings.HasPrefix(otherKey, fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:", msg.ProcessName, msg.Stage, msg.Client, msg.Channel)) {
-				fmt.Printf("Found fallback template with key: %s\n", otherKey)
-				fallbackTemplatefound = true
-				data = val
-				parts := strings.Split(otherKey, "|")
-				if len(parts) == 5 {
-					vendorPart := strings.TrimPrefix(parts[4], "Vendor:")
-					matchedVendor = vendorPart
-				}
-
-				fmt.Println("Matched Vendor:", matchedVendor)
-				vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
-				if !found {
-					utils.Error(fmt.Errorf("vendor data not found in cache"))
-				} else {
-					key := fmt.Sprintf("Name:%s|Channel:%s", matchedVendor, msg.Channel)
-					if vendorData, ok := vendorDetails[key]; ok {
-						if vendorData["Status"].(int64) == variables.Inactive {
-							utils.Error(fmt.Errorf("vendor %s is not active for channel %s", matchedVendor, msg.Channel))
-							fallbackTemplatefound = false
-						}
-					}
-				}
-
-				msg.Vendor = matchedVendor
-
-				break
-			}
-		}
-		if !fallbackTemplatefound {
-			utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Active Lender", msg.ProcessName, msg.Stage, msg.Client, msg.Channel))
-			if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
-				"CommId":          msg.CommId,
-				"Vendor":          msg.Vendor,
-				"Email":           msg.Email,
-				"IsSent":          false,
-				"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and active lender", msg.ProcessName, msg.Stage, msg.Client, msg.Channel),
-			}); err != nil {
-				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-				return false, nil // TODO: Handle the case where insertion fails
-			}
-			return false, nil
-		}
-	} else if data, ok = templateDetails[key]; !ok && msg.Client == variables.CreditSea {
-		utils.Error(fmt.Errorf("no template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor))
-		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, map[string]interface{}{
+	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
+	if err != nil {
+		channelHelper.LogTemplateNotFound(msg, err)
+		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
-			"Email":           msg.Email,
+			"MobileNumber":    msg.Mobile,
 			"IsSent":          false,
 			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
 		}); err != nil {
@@ -104,31 +52,20 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		}
 		return false, nil
 	}
+	msg.Vendor = matchedVendor
 
-	if templateVariables, exists := data["TemplateVariables"]; exists && templateVariables != nil {
-		requestBody.TemplateVariables = templateVariables.(string)
-	}
-
-	if templateName, exists := data["TemplateName"]; exists && templateName != nil {
-		requestBody.TemplateName = templateName.(string)
-	}
-
-	if templateText, exists := data["TemplateText"]; exists && templateText != nil {
-		requestBody.TemplateText = templateText.(string)
-	}
-
-	if templateCategory, exists := data["TemplateCategory"]; exists && templateCategory != nil {
-		requestBody.TemplateCategory = strconv.Itoa(int(templateCategory.(int64)))
-	}
+	channelHelper.PopulateEmailFields(&requestBody, data)
 
 	var response extapimodels.EmailResponse
-	// Hit Into WP
+
+	// Hit Into Email
 	switch msg.Vendor {
 	case variables.TIMES:
-		// response = timesSms.HitTimesSmsApi(requestBody)
+		return false, errors.New("times email is not supported yet")
 	case variables.SINCH:
 		response = sinchEmail.HitSinchEmailApi(requestBody)
 	}
+	
 	response.TemplateName = requestBody.TemplateName
 	response.CommId = msg.CommId
 	response.Vendor = msg.Vendor

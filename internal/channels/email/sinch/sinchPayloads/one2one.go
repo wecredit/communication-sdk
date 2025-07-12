@@ -8,21 +8,21 @@ import (
 func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config) (map[string]interface{}, error) {
 
 	templatePayload := map[string]interface{}{
-		"subject": "One to one Emails",
+		"subject": "One to one Emails", // subject of email
 		"from": map[string]interface{}{
-			"email": "mail@sinch.com",
-			"name":  "Sinch India",
+			"email": "mail@sinch.com", // from email
+			"name":  "Sinch India",    // name to be shown in email
 		},
 		"reply_to": map[string]interface{}{
-			"email": "noreply@example.com",
-			"name":  "Reply To",
+			"email": "noreply@example.com", // reply to email
+			"name":  "Reply To",            // reply to name
 		},
 		"recipients": []map[string]interface{}{
 			{
 				"to": []map[string]interface{}{
 					{
-						"email": "success@simulator.example.com",
-						"name":  "John Doe",
+						"email": data.Email,
+						"name":  data.CustomerName,
 					},
 				},
 				"attributes": map[string]interface{}{
@@ -35,7 +35,7 @@ func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config
 				},
 			},
 		},
-		"template_id": "twig_tmpl_20210519_unicode_large",
+		"template_id": data.TemplateName,
 		"headers": map[string]interface{}{
 			"X-EXAMPLE": "SL-1234",
 		},
