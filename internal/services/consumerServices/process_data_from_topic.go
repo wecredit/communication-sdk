@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	email "github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
@@ -202,6 +203,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		handleRCS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 	case variables.SMS:
 		handleSMS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+	case variables.Email:
+		handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
 	}
@@ -266,6 +269,19 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 	AssignVendor(&data)
 	_, err := sms.SendSmsByProcess(data)
+	if err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
+		return
+	}
+	deleteMessage(ctx, sqsClient, queueURL, msg, data)
+}
+
+func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
+	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtech, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	}
+	AssignVendor(&data)
+	_, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		return

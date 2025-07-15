@@ -86,3 +86,29 @@ type RcsResponse struct {
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
+
+type EmailRequestBody struct {
+	Client            string
+	Process           string
+	TemplateName      string
+	TemplateText      string
+	TemplateCategory  string
+	TemplateVariables string
+	Email             string
+	EmiAmount         string
+	CustomerName      string
+	LoanId            string
+	ApplicationNumber string
+	DueDate           string
+	Description       string
+}
+
+type EmailResponse struct {
+	TemplateName    string `json:"templateName" gorm:"TemplateName"`
+	CommId          string `json:"CommId" gorm:"CommId"`
+	IsSent          bool   `json:"isSent" gorm:"IsSent"`
+	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
+	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+	Email           string `json:"email" gorm:"email"`
+}

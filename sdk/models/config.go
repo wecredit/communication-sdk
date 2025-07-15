@@ -50,6 +50,9 @@ type Config struct {
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
 	SmsOutputTable   string `envconfig:"SMS_OUTPUT_TABLE"`
 
+	SdkEmailInputTable string `envconfig:"SDK_EMAIL_INPUT_TABLE"`
+	EmailOutputTable   string `envconfig:"EMAIL_OUTPUT_TABLE"`
+
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
 	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
@@ -97,4 +100,8 @@ type Config struct {
 	CreditSeaSinchSmsApiUserName string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
 	CreditSeaSinchSmsApiPassword string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
 	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+
+	// Sinch Email API Variables
+	SinchEmailApiUrl string `envconfig:"SINCH_Email_API_URL"`
+	SinchEmailApiToken string `envconfig:"SINCH_Email_API_TOKEN"`
 }
