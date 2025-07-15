@@ -21,7 +21,7 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 	apiHeader := map[string]string{
 		"Cache-Control": "no-cache",
 		"Authorization": fmt.Sprintf("Bearer %s", config.Configs.SinchEmailApiToken),
-		"Content-Type": "application/json",
+		"Content-Type":  "application/json",
 	}
 
 	// Get api payload
@@ -33,6 +33,7 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
+	fmt.Println("Sinch Email API Response: ", apiResponse)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Email API: %v", err))
 		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch Email payload: %v", err)

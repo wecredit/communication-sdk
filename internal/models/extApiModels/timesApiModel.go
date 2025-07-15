@@ -90,11 +90,11 @@ type RcsResponse struct {
 type EmailRequestBody struct {
 	Client            string
 	Process           string
-	TemplateName      string
-	TemplateText      string
-	TemplateCategory  string
+	TemplateId        string
+	EmailSubject      string
 	TemplateVariables string
-	Email             string
+	FromEmail         string
+	ToEmail           string
 	EmiAmount         string
 	CustomerName      string
 	LoanId            string

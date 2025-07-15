@@ -20,7 +20,7 @@ import (
 func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 
 	requestBody := extapimodels.EmailRequestBody{
-		Email:             msg.Email,
+		ToEmail:           msg.Email,
 		Process:           msg.ProcessName,
 		Client:            msg.Client,
 		EmiAmount:         msg.EmiAmount,
@@ -65,8 +65,8 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	case variables.SINCH:
 		response = sinchEmail.HitSinchEmailApi(requestBody)
 	}
-	
-	response.TemplateName = requestBody.TemplateName
+
+	response.TemplateName = requestBody.TemplateId
 	response.CommId = msg.CommId
 	response.Vendor = msg.Vendor
 	response.Email = msg.Email

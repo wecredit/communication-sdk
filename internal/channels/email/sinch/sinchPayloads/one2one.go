@@ -1,6 +1,10 @@
 package sinchEmailPayload
 
 import (
+	"fmt"
+	"strconv"
+
+	"github.com/wecredit/communication-sdk/helper"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models"
 )
@@ -8,38 +12,35 @@ import (
 func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config) (map[string]interface{}, error) {
 
 	templatePayload := map[string]interface{}{
-		"subject": "One to one Emails", // subject of email
+		"subject": data.EmailSubject, // subject of email
 		"from": map[string]interface{}{
-			"email": "mail@sinch.com", // from email
-			"name":  "Sinch India",    // name to be shown in email
+			"email": data.FromEmail, // from email
+			"name":  "CreditSea",    // name to be shown in email
 		},
 		"reply_to": map[string]interface{}{
-			"email": "noreply@example.com", // reply to email
-			"name":  "Reply To",            // reply to name
+			"email": "help@creditsea.com", // reply to email
+			"name":  "CreditSea",          // reply to name
 		},
 		"recipients": []map[string]interface{}{
 			{
 				"to": []map[string]interface{}{
 					{
-						"email": data.Email,
+						"email": data.ToEmail,
 						"name":  data.CustomerName,
 					},
 				},
 				"attributes": map[string]interface{}{
-					":fiedl1": "Mr.John",
-					":field2": "Delhi",
-					":field3": "Planted",
+					"first_name": data.CustomerName,
 				},
 				"unique_arguments": map[string]interface{}{
-					"x-apiheader": "SL1589999999999",
+					"x-apiheader": strconv.Itoa(helper.GenerateRandomID(100000, 999999)),
 				},
 			},
 		},
-		"template_id": data.TemplateName,
-		"headers": map[string]interface{}{
-			"X-EXAMPLE": "SL-1234",
-		},
+		"template_id": data.TemplateId,
 	}
+
+	fmt.Println("Template Payload: ", templatePayload)
 
 	return templatePayload, nil
 }

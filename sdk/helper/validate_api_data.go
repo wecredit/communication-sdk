@@ -46,8 +46,9 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 			return false, "Email is required for Email communication"
 		}
 		// Email validation regex (covers most valid email formats)
-		emailRegex := `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`
-		isValid := regexp.MustCompile(emailRegex).MatchString(variables.Email)
+		// Updated regex to allow dots in the domain part (e.g., wecredit.co.in)
+		emailRegex := `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})*$`
+		isValid := regexp.MustCompile(emailRegex).MatchString(data.Email)
 		if !isValid {
 			return false, "Invalid email address format"
 		}
