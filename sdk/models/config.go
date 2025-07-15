@@ -102,6 +102,6 @@ type Config struct {
 	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
 
 	// Sinch Email API Variables
-	SinchEmailApiUrl string `envconfig:"SINCH_Email_API_URL"`
-	SinchEmailApiToken string `envconfig:"SINCH_Email_API_TOKEN"`
+	SinchEmailApiUrl string `envconfig:"SINCH_EMAIL_API_URL"`
+	SinchEmailApiToken string `envconfig:"SINCH_EMAIL_API_TOKEN"`
 }
