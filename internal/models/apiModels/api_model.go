@@ -22,10 +22,10 @@ type Vendor struct {
 
 type Client struct {
 	Id                 int        `json:"id"`
-	Name               string     `gorm:"column:Name" json:"name" binding:"required"`
-	Channel            string     `gorm:"column:Channel" json:"channel" binding:"required"`
+	Name               string     `gorm:"column:Name" json:"name"`
+	Channel            string     `gorm:"column:Channel" json:"channel"`
 	Status             int        `gorm:"column:Status" json:"status"` // 1 = active, 0 = inactive
-	RateLimitPerMinute int        `gorm:"column:RateLimitPerMinute" json:"rateLimitPerMinute" binding:"required"`
+	RateLimitPerMinute int        `gorm:"column:RateLimitPerMinute" json:"rateLimitPerMinute"`
 	CreatedOn          time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn          *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
 }
@@ -42,7 +42,7 @@ type Templatedetails struct {
 	TemplateName      string     `gorm:"column:TemplateName" json:"templateName" binding:"required"`
 	ImageId           string     `gorm:"column:ImageId" json:"imageId,omitempty"`
 	Process           string     `gorm:"column:Process" json:"process"`
-	Stage             int        `gorm:"column:Stage" json:"stage"`
+	Stage             float64    `gorm:"column:Stage" json:"stage"`
 	ImageUrl          string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
 	DltTemplateId     int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
 	Channel           string     `gorm:"column:Channel" json:"channel"`
@@ -53,5 +53,6 @@ type Templatedetails struct {
 	CreatedOn         time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn         *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
 	Client            string     `gorm:"column:Client" json:"client,omitempty"`
+	TemplateCategory  int64      `gorm:"column:TemplateCategory" json:"templateCategory,omitempty"`
 	TemplateVariables string     `gorm:"column:TemplateVariables" json:"templateVariables,omitempty"`
 }

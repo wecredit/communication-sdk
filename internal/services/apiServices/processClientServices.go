@@ -127,8 +127,8 @@ func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updat
 		return errors.New("client not found")
 	}
 
-	existing.Name = strings.ToLower(existing.Name)
-	existing.Channel = strings.ToUpper(existing.Channel)
+	// existing.Name = strings.ToLower(existing.Name)
+	// existing.Channel = strings.ToUpper(existing.Channel)
 	existing.Status = updates.Status
 	existing.RateLimitPerMinute = updates.RateLimitPerMinute
 	istOffset := 5*time.Hour + 30*time.Minute

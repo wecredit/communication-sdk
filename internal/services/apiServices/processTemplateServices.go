@@ -3,6 +3,7 @@ package apiServices
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	var templates []apiModels.Templatedetails
 
-	// Case 1: both process and stage and channel and vendor provided -> direct key lookup
+	// Case 1: all process and stage and channel and vendor provided -> direct key lookup
 	if process != "" && stage != "" && client != "" && channel != "" && vendor != "" {
 		key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
 		if data, ok := templateDetails[key]; ok {
@@ -162,6 +163,24 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		return 0
 	}
 
+	getFloat := func(key string) float64 {
+		switch val := data[key].(type) {
+		case float64:
+			return val
+		case []byte:
+			f, err := strconv.ParseFloat(string(val), 64)
+			if err == nil {
+				return f
+			}
+		case string:
+			f, err := strconv.ParseFloat(val, 64)
+			if err == nil {
+				return f
+			}
+		}
+		return 0
+	}
+
 	getBool := func(key string) bool {
 		if val, ok := data[key].(int64); ok {
 			return val == 1
@@ -174,7 +193,7 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		TemplateName:      getStr("TemplateName"),
 		ImageId:           getStr("ImageId"),
 		Process:           getStr("Process"),
-		Stage:             getInt("Stage"),
+		Stage:             getFloat("Stage"),
 		ImageUrl:          getStr("ImageUrl"),
 		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
 		Channel:           getStr("Channel"),
@@ -182,6 +201,7 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		IsActive:          getBool("IsActive"),
 		TemplateText:      getStr("TemplateText"),
 		Client:            getStr("Client"),
+		TemplateCategory:  int64(getInt("TemplateCategory")),
 		TemplateVariables: getStr("TemplateVariables"),
 		Link:              getStr("Link"),
 	}

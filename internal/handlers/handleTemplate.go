@@ -86,7 +86,7 @@ func (h *TemplateHandler) UpdateTemplateByNameAndChannel(c *gin.Context) {
 	vendor := c.Param("vendor")
 	client := c.Param("client")
 
-	stageInt, _ := strconv.Atoi(stage)
+	stageFloat, _ := strconv.ParseFloat(stage, 64)
 
 	var template apiModels.Templatedetails
 
@@ -95,7 +95,7 @@ func (h *TemplateHandler) UpdateTemplateByNameAndChannel(c *gin.Context) {
 		return
 	}
 
-	if process != template.Process || stageInt != template.Stage || channel != template.Channel || vendor != template.Vendor || client != template.Client {
+	if process != template.Process || stageFloat != template.Stage || channel != template.Channel || vendor != template.Vendor || client != template.Client {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "process, stage, channel, vendor or client in URL does not match with the template data"})
 		return
 	}
