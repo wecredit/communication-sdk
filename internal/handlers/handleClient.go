@@ -148,15 +148,16 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 		return
 	}
 
-	user, channel, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
+	user, channel, topicArn, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "authentication successful",
-		"user":    user,
-		"channel": channel,
+		"message":  "authentication successful",
+		"user":     user,
+		"channel":  channel,
+		"topicArn": topicArn,
 	})
 }

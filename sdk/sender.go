@@ -26,13 +26,13 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	if c.Channel != msg.Channel {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("channel mismatch: expected %s, got %s", c.Channel, msg.Channel)
 	}
-	if c.AwsSnsClient == nil {
-		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("aws sns client not initialized")
+	if c.AwsSnsClient == nil || c.TopicArn == "" {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("aws sns client or topic arn not initialized")
 	}
 
 	msg.Client = c.ClientName
 
-	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient)
+	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err

@@ -7,7 +7,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/google/uuid"
-	sdkConfig "github.com/wecredit/communication-sdk/sdk/config"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
@@ -29,7 +28,7 @@ func GenerateCommID() string {
 	return commID
 }
 
-func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS) (sdkModels.CommApiResponseBody, error) {
+func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn string) (sdkModels.CommApiResponseBody, error) {
 	isValidate, message := sdkHelper.ValidateCommRequest(*data)
 
 	if !isValidate {
@@ -63,7 +62,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS) 
 	}
 
 	// Send the map to AWS Queue
-	err = queue.SendMessageToAwsQueue(snsClient, dataMap, sdkConfig.SdkConfigs.AwsSnsArn, subject)
+	err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))
 		return sdkModels.CommApiResponseBody{

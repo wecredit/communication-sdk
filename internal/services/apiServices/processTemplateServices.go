@@ -23,7 +23,7 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 }
 
 func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
+	// cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
