@@ -9,8 +9,25 @@ import (
 )
 
 func main() {
+	// For Creditsea local testing
+	// username := "creditsea"
+	// password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	// channel := "EMAIL"
+	// baseUrl := "http://localhost:8080"
 
-	client, err := sdk.NewSdkClient("creditsea", "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9", "WHATSAPP", "http://localhost:8080")
+	// For Creditsea UAT testing
+	username := "creditsea"
+	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	channel := "EMAIL"
+	baseUrl := "http://172.16.34.155:8080"
+
+	// For Nurture Engine local testing
+	// username := "nurtureengine"
+	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
+	// channel := "SMS"
+	// baseUrl := "http://localhost:8080"
+
+	client, err := sdk.NewSdkClient(username, password, channel, baseUrl)
 	// client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
@@ -21,9 +38,9 @@ func main() {
 	request := &sdkModels.CommApiRequestBody{
 		Mobile:            "7570897034", //"7579214351",
 		Email:             "nikhil.srivastava@wecredit.co.in",
-		Channel:           "WHATSAPP",
+		Channel:           "EMAIL",
 		ProcessName:       "CREDITSEA",
-		Stage:             2.02,
+		Stage:             2.01,
 		IsPriority:        true,
 		EmiAmount:         "2",
 		CustomerName:      "Brajendra",
