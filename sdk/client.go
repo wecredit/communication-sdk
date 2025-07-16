@@ -33,7 +33,7 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
 
-	fmt.Println("TopicArn: ", topicArn)
+	// fmt.Println("TopicArn: ", topicArn)
 
 	return &CommSdkClient{
 		ClientName:   userName,
