@@ -19,7 +19,7 @@ func main() {
 	username := "creditsea"
 	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
 	channel := "EMAIL"
-	baseUrl := "http://172.16.34.155:8080"
+	baseUrl := "http://172.16.18.217:8080"
 
 	// For Nurture Engine local testing
 	// username := "nurtureengine"

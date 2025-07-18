@@ -239,12 +239,11 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	} else {
 		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 	}
-	response, err := whatsapp.SendWpByProcess(data)
+	_, err := whatsapp.SendWpByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
 		return
 	}
-	utils.Debug(fmt.Sprintf("%v", response))
 
 	deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }

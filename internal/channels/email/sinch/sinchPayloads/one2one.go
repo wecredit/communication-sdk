@@ -31,6 +31,7 @@ func GetTemplatePayload(data extapimodels.EmailRequestBody, config models.Config
 				},
 				"attributes": map[string]interface{}{
 					"first_name": data.CustomerName,
+					"loan_id":    data.LoanId,
 				},
 				"unique_arguments": map[string]interface{}{
 					"x-apiheader": strconv.Itoa(helper.GenerateRandomID(100000, 999999)),
