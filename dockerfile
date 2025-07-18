@@ -1,7 +1,7 @@
 # ------------ Multi-Stage Dockerfile for API Build ------------
 
 # Stage 1: Build Stage
-FROM golang:1.23.4 AS builder
+FROM public.ecr.aws/docker/library/golang:1.23.4 AS builder
 
 # Set working directory inside the builder container
 WORKDIR /go/src/communication-sdk
@@ -22,7 +22,7 @@ RUN ls -alh /go/src/communication-sdk/cmd/
 RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/main ./cmd/main.go
 
 # Stage 2: Run Stage
-FROM alpine:latest
+FROM public.ecr.aws/docker/library/alpine:latest
 
 # Install certificates and timezone info
 RUN apk add --no-cache ca-certificates tzdata curl
