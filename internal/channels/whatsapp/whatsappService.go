@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
-	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
-	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
@@ -133,9 +131,9 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	// Hit Into WP
 	switch msg.Vendor {
 	case variables.TIMES:
-		response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+		// response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
 	case variables.SINCH:
-		response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+		// response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
 	}
 
 	response.CommId = msg.CommId

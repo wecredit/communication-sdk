@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
-	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
-	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
@@ -125,9 +123,9 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	// Hit Into WP
 	switch msg.Vendor {
 	case variables.TIMES:
-		response = timesSms.HitTimesSmsApi(requestBody)
+		// response = timesSms.HitTimesSmsApi(requestBody)
 	case variables.SINCH:
-		response = sinchSms.HitSinchSmsApi(requestBody)
+		// response = sinchSms.HitSinchSmsApi(requestBody)
 	}
 	response.DltTemplateId = requestBody.DltTemplateId
 	response.CommId = msg.CommId
