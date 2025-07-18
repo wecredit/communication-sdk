@@ -10,7 +10,7 @@ import (
 
 func main() {
 
-	client, err := sdk.NewSdkClient("creditsea", "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9", "SMS")
+	client, err := sdk.NewSdkClient("creditsea", "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9", "WHATSAPP")
 	// client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
@@ -21,15 +21,16 @@ func main() {
 	request := &sdkModels.CommApiRequestBody{
 		Mobile:            "6200807541", //"7579214351",
 		Email:             "",
-		Channel:           "SMS",
-		ProcessName:       "CREDITSEA_TEST",
-		Stage:             2,
+		Channel:           "WHATSAPP",
+		ProcessName:       "CREDITSEA",
+		Stage:             3.02,
 		IsPriority:        true,
 		EmiAmount:         "2",
-		CustomerName:      "Brajendra",
-		LoanId:            "",
-		ApplicationNumber: "10021",
+		// CustomerName:      "Brajendra",
+		LoanId:            "123833",
+		ApplicationNumber: "575676353657",
 		DueDate:           "2025-06-08",
+		Description:       "TEST",
 	}
 
 	// Call your SDK's Send function

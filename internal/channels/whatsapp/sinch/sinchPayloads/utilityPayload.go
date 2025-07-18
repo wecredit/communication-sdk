@@ -36,6 +36,9 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 			switch key {
 			case "CustomerName":
 				textValue = sinchApiModel.CustomerName
+				if textValue == "" {
+					textValue = "Customer"
+				}
 
 			case "DueDate":
 				dueDateStr := sinchApiModel.DueDate
