@@ -1,16 +1,23 @@
 package whatsapp
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
+	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/redis"
+	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
@@ -51,38 +58,42 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 
 	channelHelper.PopulateWhatsappFields(&requestBody, data)
 
-	// var response extapimodels.WhatsappResponse
+	var response extapimodels.WhatsappResponse
 
-	// // Hit Into WP
-	// switch msg.Vendor {
-	// case variables.TIMES:
-	// 	response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
-	// case variables.SINCH:
-	// 	response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
-	// }
+	// Check if the vendor should be hit
+	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
 
-	// response.CommId = msg.CommId
-	// response.TemplateName = requestBody.TemplateName
-	// response.Vendor = msg.Vendor
-	// response.MobileNumber = msg.Mobile
+	if shouldHitVendor {
+		// Hit Into WP
+		switch msg.Vendor {
+		case variables.TIMES:
+			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+		case variables.SINCH:
+			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+		}
+	}
+	response.CommId = msg.CommId
+	response.TemplateName = requestBody.TemplateName
+	response.Vendor = msg.Vendor
+	response.MobileNumber = msg.Mobile
 
-	// dbMappedData, err := services.MapIntoDbModel(response)
-	// if err != nil {
-	// 	utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
-	// }
+	dbMappedData, err := services.MapIntoDbModel(response)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
+	}
 
-	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	// }
-	// jsonBytes, _ := json.Marshal(response)
-	// utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
-	// if response.IsSent {
-	// 	utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-	// 	if msg.Client == variables.CreditSea {
-	// 		redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
-	// 	}
-	// 	return true, nil
-	// }
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	}
+	jsonBytes, _ := json.Marshal(response)
+	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
+	if shouldHitVendor && response.IsSent {
+		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		if msg.Client == variables.CreditSea {
+			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
+		}
+		return true, nil
+	}
 	utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 	return false, nil
 }
