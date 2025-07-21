@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
+	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
@@ -128,12 +130,24 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 
 	var response extapimodels.WhatsappResponse
 
-	// Hit Into WP
-	switch msg.Vendor {
-	case variables.TIMES:
-		// response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
-	case variables.SINCH:
-		// response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+	clientDetails, found := cache.GetCache().GetMappedData(cache.ClientsData)
+	if !found {
+		utils.Error(fmt.Errorf("client details not found in cache"))
+	}
+
+	key = fmt.Sprintf("Name:%s|Channel:%s", msg.Client, msg.Channel)
+
+	shouldHitVendor := clientDetails[key]["ShouldHitVendor"].(int64)
+	utils.Info(fmt.Sprintf("Should Hit Vendor: %v", shouldHitVendor))
+
+	if shouldHitVendor == variables.Active {
+		// Hit Into WP
+		switch msg.Vendor {
+		case variables.TIMES:
+			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+		case variables.SINCH:
+			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+		}
 	}
 
 	response.CommId = msg.CommId
