@@ -276,7 +276,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
-	fmt.Println("dbMappedData: ", dbMappedData)
+	// delete Mobile from dbMappedData and Add Email in it for successful insertion in email input audit database
+	delete(dbMappedData, "Mobile")
+	dbMappedData["Email"] = data.Email
 	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}

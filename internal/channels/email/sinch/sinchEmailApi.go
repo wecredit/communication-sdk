@@ -33,13 +33,19 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
-	fmt.Println("Sinch Email API Response: ", apiResponse)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Email API: %v", err))
 		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch Email payload: %v", err)
+		return sinchEmailResponse
 	}
 
-	accepted := apiResponse["ApistatusCode"].(int) == 200
+	status, ok := apiResponse["ApistatusCode"].(int)
+	if !ok {
+		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch Email payload: %v", err)
+		return sinchEmailResponse
+	}
+
+	accepted := status == 200
 
 	if accepted {
 		sinchEmailResponse.TransactionId = apiResponse["request_id"].(string)
@@ -49,7 +55,7 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 		sinchEmailResponse.ResponseMessage = apiResponse["errors"].(string)
 	}
 
-	fmt.Println("Sinch SMS Final response:", sinchEmailResponse)
+	fmt.Println("Sinch Email Final response:", sinchEmailResponse)
 
 	return sinchEmailResponse
 }

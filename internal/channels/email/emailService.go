@@ -40,7 +40,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+		if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
 			"MobileNumber":    msg.Mobile,
@@ -76,14 +76,14 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("EmailResponse: %s", string(jsonBytes)))
 	if response.IsSent {
-		utils.Info(fmt.Sprintf("Email sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		utils.Info(fmt.Sprintf("Email sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Email, msg.Vendor))
 		return true, nil
 	}
 
