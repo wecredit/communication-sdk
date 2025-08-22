@@ -70,7 +70,7 @@ func StartConsumer(port string) {
 	{
 		templates.GET("/", templateHandler.GetTemplates)
 		templates.POST("/add-template", templateHandler.AddTemplate)
-		templates.PUT("/:name/:channel", templateHandler.UpdateTemplateByNameAndChannel)
+		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)
 		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)
 	}

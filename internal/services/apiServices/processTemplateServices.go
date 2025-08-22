@@ -135,19 +135,17 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	return nil
 }
 
-func (s *TemplateService) UpdateTemplateByNameAndChannel(process, stage, channel, vendor, client string, updates apiModels.Templatedetails) error {
+func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interface{}) error {
 	var existing apiModels.Templatedetails
-	if err := s.DB.Where("Process = ? AND Stage = ? AND Channel = ? AND Vendor = ? AND Client = ?", process, stage, channel, vendor, client).First(&existing).Error; err != nil {
+	if err := s.DB.Where("id = ?", id).First(&existing).Error; err != nil {
 		return errors.New("template not found")
 	}
 
-	existing.IsActive = updates.IsActive
+	// add updatedOn timestamp
 	istOffset := 5*time.Hour + 30*time.Minute
-	now := time.Now().UTC().Add(istOffset)
-	existing.UpdatedOn = &now
+	updates["UpdatedOn"] = time.Now().UTC().Add(istOffset)
 
-	err := s.DB.Save(&existing).Error
-	if err != nil {
+	if err := s.DB.Model(&existing).Updates(updates).Error; err != nil {
 		return err
 	}
 
@@ -213,19 +211,21 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 
 	template := &apiModels.Templatedetails{
 		Id:                getInt("Id"),
-		TemplateName:      getStr("TemplateName"),
-		ImageId:           getStr("ImageId"),
+		Client:            getStr("Client"),
+		Channel:           getStr("Channel"),
 		Process:           getStr("Process"),
 		Stage:             getFloat("Stage"),
+		Vendor:            getStr("Vendor"),
+		TemplateName:      getStr("TemplateName"),
+		ImageId:           getStr("ImageId"),
 		ImageUrl:          getStr("ImageUrl"),
 		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
-		Channel:           getStr("Channel"),
-		Vendor:            getStr("Vendor"),
 		IsActive:          getBool("IsActive"),
 		TemplateText:      getStr("TemplateText"),
-		Client:            getStr("Client"),
 		TemplateCategory:  int64(getInt("TemplateCategory")),
 		TemplateVariables: getStr("TemplateVariables"),
+		FromEmail:         getStr("FromEmail"),
+		Subject:           getStr("Subject"),
 		Link:              getStr("Link"),
 	}
 
