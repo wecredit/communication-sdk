@@ -19,7 +19,7 @@ func ConstructTemplateKey(msg sdkModels.CommApiRequestBody) string {
 // FetchTemplateData attempts exact key match, falls back to wildcard vendor if needed.
 func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[string]map[string]interface{}) (map[string]interface{}, string, error) {
 	key := ConstructTemplateKey(msg)
-	if data, ok := templateDetails[key]; ok {
+	if data, ok := templateDetails[key]; ok && data["IsActive"] == variables.Active {
 		return data, msg.Vendor, nil
 	}
 

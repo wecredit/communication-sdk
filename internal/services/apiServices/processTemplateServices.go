@@ -3,6 +3,7 @@ package apiServices
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	var templates []apiModels.Templatedetails
 
-	// Case 1: all process and stage and channel and vendor provided -> direct key lookup
+	// Case 1: all params provided → direct key lookup
 	if process != "" && stage != "" && client != "" && channel != "" && vendor != "" {
 		key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
 		if data, ok := templateDetails[key]; ok {
@@ -48,7 +49,12 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	// Case 2: filtering
 	for _, data := range templateDetails {
-		if (process != "" && data["Process"] != process) || (stage != "" && data["Stage"] != stage) {
+		stageFloat, _ := strconv.ParseFloat(string(data["Stage"].([]uint8)), 64)
+		if (process != "" && data["Process"] != process) ||
+			(stage != "" && fmt.Sprintf("%.2f", stageFloat) != stage) ||
+			(client != "" && data["Client"] != client) ||
+			(channel != "" && data["Channel"] != channel) ||
+			(vendor != "" && data["Vendor"] != vendor) {
 			continue
 		}
 		template, err := mapToTemplate(data)
@@ -58,6 +64,23 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 		}
 		templates = append(templates, *template)
 	}
+
+	// Sorting in required flow: Client > Channel > Process > Stage > Vendor
+	sort.SliceStable(templates, func(i, j int) bool {
+		if templates[i].Client != templates[j].Client {
+			return templates[i].Client < templates[j].Client
+		}
+		if templates[i].Channel != templates[j].Channel {
+			return templates[i].Channel < templates[j].Channel
+		}
+		if templates[i].Process != templates[j].Process {
+			return templates[i].Process < templates[j].Process
+		}
+		if templates[i].Stage != templates[j].Stage {
+			return templates[i].Stage < templates[j].Stage
+		}
+		return templates[i].Vendor < templates[j].Vendor
+	})
 
 	return templates, nil
 }

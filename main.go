@@ -12,7 +12,7 @@ func main() {
 	// For Creditsea local testing
 	username := "creditsea"
 	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
-	channel := "EMAIL"
+	channel := "WHATSAPP"
 	baseUrl := "http://localhost:8080"
 
 	// For Creditsea UAT testing
@@ -52,23 +52,26 @@ func main() {
 
 	// All stage values
 	stages := []float64{
-		2.01,
+		6.18, //1.02, // 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.10,
+		// 2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08, 2.09, 2.10,
+		// 3.01, 3.02, 3.03, 3.04, 3.05, 3.06,
+		// 7.01, 7.02, 7.03, 7.04, 7.05,
 	}
 
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
 			Mobile:            "7570897034",
-			Email:             "nikhil.srivastava@wecredit.co.in",
-			Channel:           "EMAIL",
+			Email:             "honeydoultani@creditsea.com",
+			Channel:           "WHATSAPP",
 			ProcessName:       "CREDITSEA",
 			Stage:             stage,
 			IsPriority:        true,
-			EmiAmount:         "299928",
-			CustomerName:      "Nikhil",
-			LoanId:            "123833",
-			ApplicationNumber: "575676353657",
-			DueDate:           "2025-08-08",
+			EmiAmount:         "564746",
+			CustomerName:      "Honey",
+			LoanId:            "8727332869",
+			ApplicationNumber: "632563232469",
+			DueDate:           "2025-08-20",
 			Description:       fmt.Sprintf("TEST for stage %.2f", stage),
 		}
 
