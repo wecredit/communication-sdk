@@ -10,10 +10,10 @@ import (
 
 func main() {
 	// For Creditsea local testing
-	username := "creditsea"
-	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
-	channel := "WHATSAPP"
-	baseUrl := "http://localhost:8080"
+	// username := "creditsea"
+	// password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	// channel := "WHATSAPP"
+	// baseUrl := "http://localhost:8080"
 
 	// For Creditsea UAT testing
 	// username := "creditsea"
@@ -22,13 +22,13 @@ func main() {
 	// baseUrl := "http://172.16.18.217:8080"
 
 	// For Nurture Engine local testing
-	// username := "nurtureengine"
-	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
-	// channel := "SMS"
-	// baseUrl := "http://localhost:8080"
+	username := "wecredit"
+	password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
+	channel := "SMS"
+	baseUrl := "http://172.16.24.13:8080"
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseUrl)
-	// client, err := sdk.NewSdkClient("nurtureengine", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
+	// client, err := sdk.NewSdkClient("wecredit", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
 	if err != nil {
 		fmt.Printf("Error in creating SDK Client: %v", err)
 	}
@@ -36,8 +36,8 @@ func main() {
 	fmt.Println("\nClient Created:", client)
 
 	// All stage values
-	// stages := []float64{
-	// 	2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08,
+	stages := []float64{
+		2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08,
 	// 	4.01, 4.02, 4.03, 4.04, 4.05, 4.06,
 	// 	5.01, 5.02, 5.03, 5.04, 5.05, 5.06, 5.07,
 	// 	6.01, 6.02, 6.03, 6.04, 6.05, 6.06, 6.07, 6.08, 6.09, 6.10,
@@ -48,23 +48,23 @@ func main() {
 	// 	6.52, 6.53, 6.54, 6.55, 6.56,
 	// 	7.01, 7.02, 7.03, 7.04, 7.05, 7.06, 7.07, 7.08, 7.09,
 	// 	8.01, 8.02, 8.03, 8.04, 8.05, 8.06, 8.07, 8.08, 8.09,
-	// }
+	}
 
 	// All stage values
-	stages := []float64{
-		6.18, //1.02, // 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.10,
-		// 2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08, 2.09, 2.10,
-		// 3.01, 3.02, 3.03, 3.04, 3.05, 3.06,
-		// 7.01, 7.02, 7.03, 7.04, 7.05,
-	}
+	// stages := []float64{
+	// 	2.01, //1.02, // 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.10,
+	// 	// 2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08, 2.09, 2.10,
+	// 	// 3.01, 3.02, 3.03, 3.04, 3.05, 3.06,
+	// 	// 7.01, 7.02, 7.03, 7.04, 7.05,
+	// }
 
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			Mobile:            "7570897034",
+			Mobile:            "6200807541",
 			Email:             "honeydoultani@creditsea.com",
-			Channel:           "WHATSAPP",
-			ProcessName:       "CREDITSEA",
+			Channel:           "SMS",
+			ProcessName:       "OLYV",
 			Stage:             stage,
 			IsPriority:        true,
 			EmiAmount:         "564746",
