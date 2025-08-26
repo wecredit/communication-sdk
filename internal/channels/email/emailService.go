@@ -57,15 +57,18 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	channelHelper.PopulateEmailFields(&requestBody, data)
 
 	var response extapimodels.EmailResponse
+	// Check if the vendor should be hit
+	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
 
-	// Hit Into Email
-	switch msg.Vendor {
-	case variables.TIMES:
-		return false, errors.New("times email is not supported yet")
-	case variables.SINCH:
-		response = sinchEmail.HitSinchEmailApi(requestBody)
+	if shouldHitVendor {
+		// Hit Into Email
+		switch msg.Vendor {
+		case variables.TIMES:
+			return false, errors.New("times email is not supported yet")
+		case variables.SINCH:
+			response = sinchEmail.HitSinchEmailApi(requestBody)
+		}
 	}
-
 	response.TemplateName = requestBody.TemplateId
 	response.CommId = msg.CommId
 	response.Vendor = msg.Vendor

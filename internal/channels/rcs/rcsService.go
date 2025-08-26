@@ -51,11 +51,16 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (sdkModels.CommApiRespon
 	}
 
 	var response extapimodels.RcsResponse
-	switch msg.Vendor {
-	case variables.TIMES:
-		response = timesRcs.HitTimesRcsApi(req)
-	case variables.SINCH:
-		response = sinchRcs.HitSinchRcsApi(req)
+	// Check if the vendor should be hit
+	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+
+	if shouldHitVendor {
+		switch msg.Vendor {
+		case variables.TIMES:
+			response = timesRcs.HitTimesRcsApi(req)
+		case variables.SINCH:
+			response = sinchRcs.HitSinchRcsApi(req)
+		}
 	}
 
 	response.CommId = msg.CommId
