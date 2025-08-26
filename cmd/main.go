@@ -16,5 +16,9 @@ func init() {
 
 func main() {
 	// Start consumer server
-	server.StartConsumer(os.Getenv("CONSUMER_SERVER_PORT"))
+	port := os.Getenv("CONSUMER_SERVER_PORT")
+	if port == "" {
+		port = "8080" // default port
+	}
+	server.StartConsumer(port)
 }

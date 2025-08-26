@@ -3,6 +3,8 @@ package apiServices
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +24,7 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 }
 
 func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
+	// cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
@@ -31,7 +33,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	var templates []apiModels.Templatedetails
 
-	// Case 1: both process and stage and channel and vendor provided -> direct key lookup
+	// Case 1: all params provided → direct key lookup
 	if process != "" && stage != "" && client != "" && channel != "" && vendor != "" {
 		key := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
 		if data, ok := templateDetails[key]; ok {
@@ -47,7 +49,12 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	// Case 2: filtering
 	for _, data := range templateDetails {
-		if (process != "" && data["Process"] != process) || (stage != "" && data["Stage"] != stage) {
+		stageFloat, _ := strconv.ParseFloat(string(data["Stage"].([]uint8)), 64)
+		if (process != "" && data["Process"] != process) ||
+			(stage != "" && fmt.Sprintf("%.2f", stageFloat) != stage) ||
+			(client != "" && data["Client"] != client) ||
+			(channel != "" && data["Channel"] != channel) ||
+			(vendor != "" && data["Vendor"] != vendor) {
 			continue
 		}
 		template, err := mapToTemplate(data)
@@ -57,6 +64,23 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 		}
 		templates = append(templates, *template)
 	}
+
+	// Sorting in required flow: Client > Channel > Process > Stage > Vendor
+	sort.SliceStable(templates, func(i, j int) bool {
+		if templates[i].Client != templates[j].Client {
+			return templates[i].Client < templates[j].Client
+		}
+		if templates[i].Channel != templates[j].Channel {
+			return templates[i].Channel < templates[j].Channel
+		}
+		if templates[i].Process != templates[j].Process {
+			return templates[i].Process < templates[j].Process
+		}
+		if templates[i].Stage != templates[j].Stage {
+			return templates[i].Stage < templates[j].Stage
+		}
+		return templates[i].Vendor < templates[j].Vendor
+	})
 
 	return templates, nil
 }
@@ -111,19 +135,17 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	return nil
 }
 
-func (s *TemplateService) UpdateTemplateByNameAndChannel(process, stage, channel, vendor, client string, updates apiModels.Templatedetails) error {
+func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interface{}) error {
 	var existing apiModels.Templatedetails
-	if err := s.DB.Where("Process = ? AND Stage = ? AND Channel = ? AND Vendor = ? AND Client = ?", process, stage, channel, vendor, client).First(&existing).Error; err != nil {
+	if err := s.DB.Where("id = ?", id).First(&existing).Error; err != nil {
 		return errors.New("template not found")
 	}
 
-	existing.IsActive = updates.IsActive
+	// add updatedOn timestamp
 	istOffset := 5*time.Hour + 30*time.Minute
-	now := time.Now().UTC().Add(istOffset)
-	existing.UpdatedOn = &now
+	updates["UpdatedOn"] = time.Now().UTC().Add(istOffset)
 
-	err := s.DB.Save(&existing).Error
-	if err != nil {
+	if err := s.DB.Model(&existing).Updates(updates).Error; err != nil {
 		return err
 	}
 
@@ -162,6 +184,24 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		return 0
 	}
 
+	getFloat := func(key string) float64 {
+		switch val := data[key].(type) {
+		case float64:
+			return val
+		case []byte:
+			f, err := strconv.ParseFloat(string(val), 64)
+			if err == nil {
+				return f
+			}
+		case string:
+			f, err := strconv.ParseFloat(val, 64)
+			if err == nil {
+				return f
+			}
+		}
+		return 0
+	}
+
 	getBool := func(key string) bool {
 		if val, ok := data[key].(int64); ok {
 			return val == 1
@@ -171,18 +211,21 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 
 	template := &apiModels.Templatedetails{
 		Id:                getInt("Id"),
+		Client:            getStr("Client"),
+		Channel:           getStr("Channel"),
+		Process:           getStr("Process"),
+		Stage:             getFloat("Stage"),
+		Vendor:            getStr("Vendor"),
 		TemplateName:      getStr("TemplateName"),
 		ImageId:           getStr("ImageId"),
-		Process:           getStr("Process"),
-		Stage:             getInt("Stage"),
 		ImageUrl:          getStr("ImageUrl"),
 		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
-		Channel:           getStr("Channel"),
-		Vendor:            getStr("Vendor"),
 		IsActive:          getBool("IsActive"),
 		TemplateText:      getStr("TemplateText"),
-		Client:            getStr("Client"),
+		TemplateCategory:  int64(getInt("TemplateCategory")),
 		TemplateVariables: getStr("TemplateVariables"),
+		FromEmail:         getStr("FromEmail"),
+		Subject:           getStr("Subject"),
 		Link:              getStr("Link"),
 	}
 

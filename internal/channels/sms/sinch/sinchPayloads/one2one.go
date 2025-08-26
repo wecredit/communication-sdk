@@ -116,25 +116,21 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 	}
 
 	templatePayload := map[string]interface{}{
-		"userId":      username,
-		"pass":        password,
-		"appid":       appId,
-		"to":          fmt.Sprintf("91%s", verifyMobile(data.Mobile)),
-		"from":        sender,
-		"contenttype": "1",
-		"selfid":      "true",
-		"text":        data.TemplateText,
-		"brd":         fmt.Sprintf("%s_%s", data.Process, data.Description), // campaignName
-		"dtm":         fmt.Sprintf("%d", data.DltTemplateId),                // DLT Template ID
-		"tc":          data.TemplateCategory,                                // Template Category : Service Explicit (4) or Implicit (3)
-		"intflag":     "false",
 		"alert":       "1",
+		"appid":       appId,
+		"brd":         fmt.Sprintf("%s_%s", data.Process, data.Description), // campaignName
+		"contenttype": "1",
+		"dtm":         fmt.Sprintf("%d", data.DltTemplateId), // DLT Template ID
+		"from":        sender,
+		"intflag":     "false",
+		"pass":        password,
 		"s":           "1", // Enable URL Shortening
+		"selfid":      "true",
+		"tc":          data.TemplateCategory, // Template Category : Service Explicit (4) or Implicit (3)
+		"text":        data.TemplateText,
+		"to":          fmt.Sprintf("91%s", verifyMobile(data.Mobile)),
+		"userId":      username,
 	}
-
-	// if data.Client != variables.CreditSea {
-	// 	templatePayload["s"] = "1"
-	// }
 
 	fmt.Println("Sinch SMS Template Payload:", templatePayload)
 

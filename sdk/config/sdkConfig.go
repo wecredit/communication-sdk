@@ -20,9 +20,7 @@ func LoadSDKConfigs() (*sns.SNS, error) {
 
 	// Map of envconfig tags to their constant values
 	envVars := map[string]string{
-		"BASIC_AUTH_API_URL": env.BASIC_AUTH_API_URL,
-		"AWS_REGION":         env.AWS_REGION,
-		"AWS_COMM_TOPIC_ARN": env.AWS_COMM_TOPIC_ARN,
+		"AWS_REGION": env.AWS_REGION,
 	}
 
 	for i := 0; i < val.NumField(); i++ {

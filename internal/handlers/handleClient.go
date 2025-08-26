@@ -68,6 +68,11 @@ func (h *ClientHandler) AddClient(c *gin.Context) {
 		return
 	}
 
+	if client.Name == "" || client.Channel == "" || client.Status == 0 || client.RateLimitPerMinute == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name, channel, status and rateLimitPerMinute should not be blank in request body"})
+		return
+	}
+
 	if err := h.Service.AddClient(&client); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -87,21 +92,26 @@ func (h *ClientHandler) UpdateClientByNameAndChannel(c *gin.Context) {
 		return
 	}
 
-	if name != client.Name || channel != client.Channel {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Name and Channel doesn't match with URL Params"})
+	// if name != client.Name || channel != client.Channel {
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": "Name and Channel doesn't match with URL Params"})
+	// 	return
+	// }
+
+	if name == "" || channel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and channel should not be blank in URL Params"})
 		return
 	}
 
-	// Fill name & channel from URL
-	client.Name = name
-	client.Channel = channel
+	// // Fill name & channel from URL
+	// client.Name = name
+	// client.Channel = channel
 
 	if err := h.Service.UpdateClientByNameAndChannel(name, channel, client); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Client %s updated successfully for channel %s", client.Name, client.Channel)})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Client %s updated successfully for channel %s", name, channel)})
 }
 
 func (h *ClientHandler) DeleteClient(c *gin.Context) {
@@ -138,15 +148,16 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 		return
 	}
 
-	user, channel, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
+	user, channel, topicArn, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "authentication successful",
-		"user":    user,
-		"channel": channel,
+		"message":  "authentication successful",
+		"user":     user,
+		"channel":  channel,
+		"topicArn": topicArn,
 	})
 }

@@ -79,39 +79,27 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 	c.JSON(http.StatusCreated, template)
 }
 
-func (h *TemplateHandler) UpdateTemplateByNameAndChannel(c *gin.Context) {
-	process := c.Param("process")
-	stage := c.Param("stage")
-	channel := c.Param("channel")
-	vendor := c.Param("vendor")
-	client := c.Param("client")
+func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.Atoi(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ID"})
+		return
+	}
 
-	stageInt, _ := strconv.Atoi(stage)
-
-	var template apiModels.Templatedetails
-
-	if err := c.ShouldBindJSON(&template); err != nil {
+	// Bind into a map so we only get fields that are present in JSON
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid JSON body: %v", err)})
 		return
 	}
 
-	if process != template.Process || stageInt != template.Stage || channel != template.Channel || vendor != template.Vendor || client != template.Client {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "process, stage, channel, vendor or client in URL does not match with the template data"})
-		return
-	}
-
-	// Fill name & channel from URL
-	template.Process = process
-	template.Channel = channel
-	template.Vendor = vendor
-	template.Client = client
-
-	if err := h.Service.UpdateTemplateByNameAndChannel(process, stage, channel, vendor, client, template); err != nil {
+	if err := h.Service.UpdateTemplateById(id, updates); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Template %s updated successfully for channel %s", template.TemplateName, template.Channel)})
+	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Template %d updated successfully", id)})
 }
 
 func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {

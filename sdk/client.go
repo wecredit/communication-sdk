@@ -13,32 +13,40 @@ type CommSdkClient struct {
 	ClientName   string
 	isAuthed     bool
 	Channel      string
+	TopicArn     string
 	AwsSnsClient *sns.SNS
 }
 
-func NewSdkClient(username, password, channel string) (*CommSdkClient, error) {
+func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, error) {
 	snsClient, err := sdkConfig.LoadSDKConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize SDK Client: failed to load configs: %v", err)
 	}
 
-	var userName string
+	if username == "" || password == "" || channel == "" || baseUrl == "" {
+		return nil, fmt.Errorf("username, password, channel, and baseUrl are required")
+	}
+
+	var userName, topicArn string
 	var ok bool
-	if ok, userName, channel = ValidateClient(username, password, channel); !ok {
+	if ok, userName, channel, topicArn = ValidateClient(username, password, channel, baseUrl); !ok {
 		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
+
+	// fmt.Println("TopicArn: ", topicArn)
 
 	return &CommSdkClient{
 		ClientName:   userName,
 		isAuthed:     ok,
 		Channel:      channel,
+		TopicArn:     topicArn,
 		AwsSnsClient: snsClient,
 	}, nil
 }
 
-func ValidateClient(username, password, channel string) (bool, string, string) {
+func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string) {
 
-	apiUrl := sdkConfig.SdkConfigs.BasicAuthApiUrl
+	apiUrl := baseUrl + "/clients/validate-client"
 
 	apiHeaders := map[string]string{
 		"Content-Type": "application/json",
@@ -52,11 +60,11 @@ func ValidateClient(username, password, channel string) (bool, string, string) {
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeaders, "", "", requestBody, variables.ContentTypeJSON)
 	if err != nil {
-		return false, "", ""
+		return false, "", "", ""
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string)
+		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string)
 	}
-	return false, "", ""
+	return false, "", "", ""
 }

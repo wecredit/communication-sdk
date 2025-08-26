@@ -1,18 +1,15 @@
-package whatsapp
+package email
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
-	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
-	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
-	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	sinchEmail "github.com/wecredit/communication-sdk/internal/channels/email/sinch"
 	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
-	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -20,9 +17,10 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
-	requestBody := extapimodels.WhatsappRequestBody{
-		Mobile:            msg.Mobile,
+func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
+
+	requestBody := extapimodels.EmailRequestBody{
+		ToEmail:           msg.Email,
 		Process:           msg.ProcessName,
 		Client:            msg.Client,
 		EmiAmount:         msg.EmiAmount,
@@ -30,19 +28,19 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		LoanId:            msg.LoanId,
 		ApplicationNumber: msg.ApplicationNumber,
 		DueDate:           msg.DueDate,
+		Description:       msg.Description,
 	}
 
-	utils.Debug("Fetching WHATSAPP process data from cache")
+	utils.Debug("Fetching Email process data from cache")
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
 		return false, errors.New("template data not found in cache")
 	}
-
 	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+		if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
 			"MobileNumber":    msg.Mobile,
@@ -56,44 +54,41 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	}
 	msg.Vendor = matchedVendor
 
-	channelHelper.PopulateWhatsappFields(&requestBody, data)
+	channelHelper.PopulateEmailFields(&requestBody, data)
 
-	var response extapimodels.WhatsappResponse
-
+	var response extapimodels.EmailResponse
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
 
 	if shouldHitVendor {
-		// Hit Into WP
+		// Hit Into Email
 		switch msg.Vendor {
 		case variables.TIMES:
-			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+			return false, errors.New("times email is not supported yet")
 		case variables.SINCH:
-			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+			response = sinchEmail.HitSinchEmailApi(requestBody)
 		}
 	}
+	response.TemplateName = requestBody.TemplateId
 	response.CommId = msg.CommId
-	response.TemplateName = requestBody.TemplateName
 	response.Vendor = msg.Vendor
-	response.MobileNumber = msg.Mobile
+	response.Email = msg.Email
 
 	dbMappedData, err := services.MapIntoDbModel(response)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
+
 	jsonBytes, _ := json.Marshal(response)
-	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
-	if shouldHitVendor && response.IsSent {
-		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		if msg.Client == variables.CreditSea {
-			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
-		}
+	utils.Debug(fmt.Sprintf("EmailResponse: %s", string(jsonBytes)))
+	if response.IsSent {
+		utils.Info(fmt.Sprintf("Email sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Email, msg.Vendor))
 		return true, nil
 	}
-	utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+
 	return false, nil
 }

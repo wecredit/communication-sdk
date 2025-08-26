@@ -68,7 +68,7 @@ type WhatsappResponse struct {
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
 
-type RcsRequesBody struct {
+type RcsRequestBody struct {
 	Mobile       string
 	Process      string
 	TemplateName string
@@ -85,4 +85,30 @@ type RcsResponse struct {
 	Vendor          string `json:"Vendor" gorm:"Vendor"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+}
+
+type EmailRequestBody struct {
+	Client            string
+	Process           string
+	TemplateId        string
+	EmailSubject      string
+	TemplateVariables string
+	FromEmail         string
+	ToEmail           string
+	EmiAmount         string
+	CustomerName      string
+	LoanId            string
+	ApplicationNumber string
+	DueDate           string
+	Description       string
+}
+
+type EmailResponse struct {
+	TemplateName    string `json:"templateName" gorm:"TemplateName"`
+	CommId          string `json:"CommId" gorm:"CommId"`
+	IsSent          bool   `json:"isSent" gorm:"IsSent"`
+	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
+	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+	Email           string `json:"email" gorm:"email"`
 }

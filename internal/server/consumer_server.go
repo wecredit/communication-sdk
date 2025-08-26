@@ -37,7 +37,7 @@ func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
 
-	log.Printf("Starting Consumer Server on port")
+	log.Printf("Starting Consumer Server on port %s", port)
 
 	// Set up Gin router
 	r := gin.Default()
@@ -70,14 +70,13 @@ func StartConsumer(port string) {
 	{
 		templates.GET("/", templateHandler.GetTemplates)
 		templates.POST("/add-template", templateHandler.AddTemplate)
-		templates.PUT("/:name/:channel", templateHandler.UpdateTemplateByNameAndChannel)
+		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)
 		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)
 	}
 
-	log.Printf("Server running on port %s", port)
 	// if err := r.Run(":" + port); err != nil {
-	if err := r.Run("0.0.0.0:8080"); err != nil {
+	if err := r.Run("0.0.0.0:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

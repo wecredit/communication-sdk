@@ -127,8 +127,8 @@ func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updat
 		return errors.New("client not found")
 	}
 
-	existing.Name = strings.ToLower(existing.Name)
-	existing.Channel = strings.ToUpper(existing.Channel)
+	// existing.Name = strings.ToLower(existing.Name)
+	// existing.Channel = strings.ToUpper(existing.Channel)
 	existing.Status = updates.Status
 	existing.RateLimitPerMinute = updates.RateLimitPerMinute
 	istOffset := 5*time.Hour + 30*time.Minute
@@ -155,7 +155,7 @@ func (s *ClientService) DeleteClient(id int) error {
 	return nil
 }
 
-func (s *ClientService) ValidateCredentials(username, password, channel string) (string, string, error) {
+func (s *ClientService) ValidateCredentials(username, password, channel string) (string, string, string, error) {
 	// Collecting BasicAuthData
 	authDetails, _ := cache.GetCache().Get("authDetails")
 
@@ -178,23 +178,25 @@ func (s *ClientService) ValidateCredentials(username, password, channel string) 
 	}
 
 	if !isValid {
-		return "", "", errors.New("invalid Username and Password")
+		return "", "", "", errors.New("invalid Username and Password")
 	}
 
 	clientDetails, found := cache.GetCache().GetMappedData(cache.ClientsData)
 	if !found {
 		utils.Error(fmt.Errorf("client data not found in cache"))
-		return "", "", errors.New("client not found for particular channel")
+		return "", "", "", errors.New("client not found for particular channel")
 	}
 
 	// Case 1: Both name and channel provided -> direct key lookup
 	key := fmt.Sprintf("Name:%s|Channel:%s", username, channel)
 	if client, exists := clientDetails[key]; !exists || client["Status"].(int64) != 1 {
 		utils.Error(fmt.Errorf("client not found for channel %s and username %s", channel, username))
-		return "", "", errors.New("client not found for particular channel")
+		return "", "", "", errors.New("client not found for particular channel")
 	}
 
-	return username, channel, nil
+	topicArn := config.Configs.AwsSnsArn
+
+	return username, channel, topicArn, nil
 }
 
 // Helper function to convert map to Client struct

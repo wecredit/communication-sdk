@@ -21,7 +21,7 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 	var query string
 	if tableName == "dbo.TemplateDetails" {
 		// Execute raw SQL to fetch active template from the table
-		query = fmt.Sprintf("SELECT * FROM %s where IsActive = 1", tableName)
+		query = fmt.Sprintf("SELECT * FROM %s --where IsActive = 1", tableName)
 	} else {
 		// Execute raw SQL to fetch all data from the table
 		query = fmt.Sprintf("SELECT * FROM %s", tableName)
