@@ -188,6 +188,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	data.Client = strings.ToLower(data.Client)
 	data.Channel = strings.ToUpper(data.Channel)
 	data.ProcessName = strings.ToUpper(data.ProcessName)
+	data.AzureIdempotencyKey = fmt.Sprintf("%s_%s", strings.ToLower(data.ProcessName), strings.ToLower(data.Description))
 
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
 	if err != nil {
