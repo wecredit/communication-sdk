@@ -72,12 +72,14 @@ func ConsumerService(workerCount int, queueURL string) {
 				QueueUrl:            aws.String(queueURL),
 				MaxNumberOfMessages: aws.Int64(10),
 				WaitTimeSeconds:     aws.Int64(10),
-				VisibilityTimeout:   aws.Int64(15),
+				VisibilityTimeout:   aws.Int64(300),
 			})
 			if err != nil {
 				utils.Error(fmt.Errorf("error receiving messages: %v", err))
 				continue
 			}
+
+			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
 				go routeMessageToClient(ctx, msg, queueURL)
@@ -155,7 +157,10 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				<-timeout.C
 			}
 			timeout.Reset(time.Hour)
-			processMessage(ctx, sqsClient, queueURL, msgWrapper)
+			isMessageProcessed := processMessage(ctx, sqsClient, queueURL, msgWrapper)
+			if isMessageProcessed {
+				deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
+			}
 		case <-timeout.C:
 			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for client: %s", client))
 			clientMux.Lock()
@@ -179,7 +184,7 @@ func handleShutdown(cancelFunc context.CancelFunc) {
 	cancelFunc()
 }
 
-func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msgWrapper MessageWrapper) {
+func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msgWrapper MessageWrapper) bool {
 	msg := msgWrapper.Message
 	data := msgWrapper.Payload
 
@@ -199,19 +204,24 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 
 	switch data.Channel {
 	case variables.WhatsApp:
-		handleWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		isMessageProcessed := handleWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		return isMessageProcessed
 	case variables.RCS:
-		handleRCS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		isMessageProcessed := handleRCS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		return isMessageProcessed
 	case variables.SMS:
-		handleSMS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		isMessageProcessed := handleSMS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		return isMessageProcessed
 	case variables.Email:
-		handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		isMessageProcessed := handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		return isMessageProcessed
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
+		return false
 	}
 }
 
-func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
+func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
@@ -234,49 +244,51 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			}); err != nil {
 				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 			}
-			deleteMessage(ctx, sqsClient, queueURL, msg, data)
-			return
+			// deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
 		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 	}
-	_, err := whatsapp.SendWpByProcess(data)
+	isMessageProcessed, err := whatsapp.SendWpByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
-		return
+		return isMessageProcessed
 	}
+	return isMessageProcessed
 
-	deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
-func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
+func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
-	response, err := rcs.SendRcsByProcess(data)
+	isMessageProcessed, err := rcs.SendRcsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
-		return
+		return isMessageProcessed
 	}
-	utils.Debug(fmt.Sprintf("%v", response))
-	deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	return isMessageProcessed
+	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
-func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
+func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
-	_, err := sms.SendSmsByProcess(data)
+	isMessageProcessed, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
-		return
+		return isMessageProcessed
 	}
-	deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	return isMessageProcessed
+	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
-func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) {
+func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	// delete Mobile from dbMappedData and Add Email in it for successful insertion in email input audit table
 	delete(dbMappedData, "Mobile")
 	dbMappedData["Email"] = data.Email
@@ -284,24 +296,39 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
-	_, err := email.SendEmailByProcess(data)
+	isMessageProcessed, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
-		return
+		return isMessageProcessed
 	}
-	deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	return isMessageProcessed
+	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, data sdkModels.CommApiRequestBody) {
-	_, err := sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{
-		QueueUrl:      aws.String(queueURL),
-		ReceiptHandle: msg.ReceiptHandle,
-	})
-	if err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to delete SQS message: %v", data.Client, data.CommId, err))
-	} else {
-		utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message processed and deleted from SQS.", data.Client, data.CommId))
+	maxAttempts := 3
+	backoff := time.Second
+
+	for i := 1; i <= maxAttempts; i++ {
+		_, err := sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{
+			QueueUrl:      aws.String(queueURL),
+			ReceiptHandle: msg.ReceiptHandle,
+		})
+		if err == nil {
+			utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message deleted from SQS.", data.Client, data.CommId))
+			return
+		}
+		// Inspect error - if it's an invalid receipt handle, no point retrying
+		if strings.Contains(err.Error(), "InvalidReceiptHandle") {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] InvalidReceiptHandle while deleting message: %v", data.Client, data.CommId, err))
+			return
+		}
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] delete attempt %d failed: %v", data.Client, data.CommId, i, err))
+		time.Sleep(backoff)
+		backoff *= 2
 	}
+	utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to delete SQS message after %d attempts",
+		data.Client, data.CommId, maxAttempts))
 }
 
 func AssignVendor(data *sdkModels.CommApiRequestBody) {

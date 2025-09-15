@@ -50,9 +50,9 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
 		}); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-			return false, nil
+			return false, fmt.Errorf("error inserting data into table: %v", err)
 		}
-		return false, nil
+		return true, nil // message processed but not sent as Template not found
 	}
 	msg.Vendor = matchedVendor
 
@@ -94,6 +94,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		}
 		return true, nil
 	}
-	utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-	return false, nil
+	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
+	return true, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
 }

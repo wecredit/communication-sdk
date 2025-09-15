@@ -33,7 +33,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			"IsSent":          false,
 			"ResponseMessage": err.Error(),
 		})
-		return false, nil
+		return true, nil // message processed but not sent as Template not found
 	}
 	msg.Vendor = matchedVendor
 
@@ -86,5 +86,5 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	}
 
 	utils.Info(fmt.Sprintf("SMS sent successfully for Process: %s on %s via %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-	return false, nil
+	return true, nil
 }
