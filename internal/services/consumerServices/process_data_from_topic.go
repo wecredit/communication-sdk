@@ -306,11 +306,14 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 }
 
 func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, data sdkModels.CommApiRequestBody) {
+	deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+
 	maxAttempts := 3
 	backoff := time.Second
 
 	for i := 1; i <= maxAttempts; i++ {
-		_, err := sqsClient.DeleteMessageWithContext(ctx, &sqs.DeleteMessageInput{
+		_, err := sqsClient.DeleteMessageWithContext(deleteCtx, &sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: msg.ReceiptHandle,
 		})
