@@ -23,8 +23,28 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		return data, msg.Vendor, nil
 	}
 
+	// 2. Stage fallback (same Process, same Client, same Channel, same Vendor, but any sub-stage in same integer part)
+	stageInt := int(msg.Stage)
+	stagePrefix := fmt.Sprintf("Process:%s|Stage:%d.", msg.ProcessName, stageInt)
+
+	utils.Debug(fmt.Sprintf(
+		"No exact template found for Stage %.2f; Trying stage fallback within stage %d for vendor %s, channel %s...",
+		msg.Stage, stageInt, msg.Vendor, msg.Channel))
+
+	for otherKey, val := range templateDetails {
+		if strings.HasPrefix(otherKey, stagePrefix) && val["IsActive"] == variables.Active {
+			parts := strings.Split(otherKey, "|")
+			if len(parts) == 5 &&
+				parts[2] == "Client:"+msg.Client &&
+				parts[3] == "Channel:"+msg.Channel &&
+				parts[4] == "Vendor:"+msg.Vendor {
+				return val, msg.Vendor, nil
+			}
+		}
+	}
+
 	if msg.Client == variables.CreditSea {
-		return nil, msg.Vendor, fmt.Errorf("no template found for Process: %s, Stage: %.2f, Client: %s, Channel: %s, Vendor: %s",
+		return nil, msg.Vendor, fmt.Errorf("no template (and fallback template) found for Process: %s, Stage: %.2f, Client: %s, Channel: %s, Vendor: %s",
 			msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
 	}
 
@@ -34,7 +54,7 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 	prefix := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:",
 		msg.ProcessName, msg.Stage, msg.Client, msg.Channel)
 	for otherKey, val := range templateDetails {
-		if strings.HasPrefix(otherKey, prefix) {
+		if strings.HasPrefix(otherKey, prefix) && val["IsActive"] == variables.Active {
 			parts := strings.Split(otherKey, "|")
 			if len(parts) == 5 {
 				vendor := strings.TrimPrefix(parts[4], "Vendor:")
