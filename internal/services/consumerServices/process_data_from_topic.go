@@ -159,7 +159,8 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 			timeout.Reset(time.Hour)
 			isMessageProcessed := processMessage(ctx, sqsClient, queueURL, msgWrapper)
 			if isMessageProcessed {
-				deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
+				fmt.Println("Message processed")
+				// deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
 			}
 		case <-timeout.C:
 			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for client: %s", client))
@@ -187,6 +188,36 @@ func handleShutdown(cancelFunc context.CancelFunc) {
 func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msgWrapper MessageWrapper) bool {
 	msg := msgWrapper.Message
 	data := msgWrapper.Payload
+
+	// redis check : mobile_channel already exists. no api hit. upsert query.  redis key : mobile_channel -> sinch_responseid -> database insert.
+	// continue
+	// else store key in redis (mobile_channel)
+
+	redisKey := fmt.Sprintf("%s_%s", data.Mobile, strings.ToUpper(data.Channel))
+
+	// check if message already sent for once
+	redisKeyVal, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in checking mobile on redis: %v", err))
+	}
+
+	if exists {
+		// check for redisKeyVal, if exists -> save in database, else -> send message to error queue.
+		if redisKeyVal != "" {
+			fmt.Println("Redis key is not blank", redisKeyVal)
+		} else {
+			fmt.Println("Redis key is blank. send to error queue.")
+		}
+
+		// do not delete the message
+		return false
+	}
+
+	// If not exists, add key with blank value
+	err = redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis add failed: %v", err))
+	}
 
 	utils.Debug(fmt.Sprintf("Payload: %+v", data))
 
@@ -250,14 +281,25 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	} else {
 		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 	}
-	isMessageProcessed, err := whatsapp.SendWpByProcess(data)
+
+	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
 		return isMessageProcessed
 	}
+
+	// if message processed successfully, delete it and then insert it into database
+	if isMessageProcessed {
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	}
+
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
+		// if insertion fails, handle it later
+		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	}
+
 	return isMessageProcessed
 
-	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
@@ -279,13 +321,21 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
-	isMessageProcessed, err := sms.SendSmsByProcess(data)
+	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
+
+	if isMessageProcessed {
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	}
+
+	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	}
+
 	return isMessageProcessed
-	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
@@ -296,24 +346,32 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
-	isMessageProcessed, err := email.SendEmailByProcess(data)
+	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
+
+	if isMessageProcessed {
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	}
+
+	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	}
+
 	return isMessageProcessed
-	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, data sdkModels.CommApiRequestBody) {
-	deleteCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-    defer cancel()
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	maxAttempts := 3
 	backoff := time.Second
 
 	for i := 1; i <= maxAttempts; i++ {
-		_, err := sqsClient.DeleteMessageWithContext(deleteCtx, &sqs.DeleteMessageInput{
+		_, err := sqsClient.DeleteMessage(&sqs.DeleteMessageInput{
 			QueueUrl:      aws.String(queueURL),
 			ReceiptHandle: msg.ReceiptHandle,
 		})
@@ -335,7 +393,7 @@ func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg
 }
 
 func AssignVendor(data *sdkModels.CommApiRequestBody) {
-	if data.Client == variables.CreditSea {
+	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
 	} else {
 		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)

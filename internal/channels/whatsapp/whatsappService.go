@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
-	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
@@ -20,7 +20,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
+func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:            msg.Mobile,
 		Process:           msg.ProcessName,
@@ -36,24 +36,30 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return false, errors.New("template data not found in cache")
+		return false, nil, errors.New("template data not found in cache")
 	}
 
 	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+		// update in redis for no template found
+		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
+		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, "template not found")
+		if err != nil {
+			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		}
+
+		dbResponse := map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
 			"MobileNumber":    msg.Mobile,
 			"IsSent":          false,
 			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
-		}); err != nil {
-			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-			return false, fmt.Errorf("error inserting data into table: %v", err)
 		}
-		return true, nil // message processed but not sent as Template not found
+
+		return true, dbResponse, nil // message processed but not sent as Template not found
 	}
+
 	msg.Vendor = matchedVendor
 
 	channelHelper.PopulateWhatsappFields(&requestBody, data)
@@ -72,6 +78,20 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
 		}
 	}
+
+	// apihit. : successful -> redis
+
+	// unsuccessful -> error
+
+	// delete message then insert in the database.
+
+	// Step 2: Once you have responseId, update the value
+	redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
+	err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis update value failed: %v", err))
+	}
+
 	response.CommId = msg.CommId
 	response.TemplateName = requestBody.TemplateName
 	response.Vendor = msg.Vendor
@@ -82,9 +102,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	}
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
@@ -92,8 +109,23 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		if msg.Client == variables.CreditSea {
 			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
 		}
-		return true, nil
+		return true, dbMappedData, nil
 	}
+
+	if !shouldHitVendor {
+		// Step 2: Once you have responseId, update the value
+		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
+		response.TransactionId = "shouldHitVendor is off"
+		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
+		if err != nil {
+			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		}
+	}
+	
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
-	return true, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
+	return true, dbMappedData, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
+
+	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
+	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	// }
 }

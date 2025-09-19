@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchEmail "github.com/wecredit/communication-sdk/internal/channels/email/sinch"
-	"github.com/wecredit/communication-sdk/internal/database"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -17,7 +18,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
+func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
 
 	requestBody := extapimodels.EmailRequestBody{
 		ToEmail:           msg.Email,
@@ -35,22 +36,24 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return false, errors.New("template data not found in cache")
+		return false, nil, errors.New("template data not found in cache")
 	}
 	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, map[string]interface{}{
+		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
+		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, "template not found")
+		if err != nil {
+			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		}
+		dbResponse := map[string]interface{}{
 			"CommId":          msg.CommId,
 			"Vendor":          msg.Vendor,
 			"MobileNumber":    msg.Mobile,
 			"IsSent":          false,
 			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
-		}); err != nil {
-			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-			return false, fmt.Errorf("error inserting data into table: %v", err)
 		}
-		return true, nil // message processed but not sent as Template not found
+		return true, dbResponse, nil // message processed but not sent as Template not found
 	}
 	msg.Vendor = matchedVendor
 
@@ -64,7 +67,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		// Hit Into Email
 		switch msg.Vendor {
 		case variables.TIMES:
-			return false, errors.New("times email is not supported yet")
+			return false, nil, errors.New("times email is not supported yet")
 		case variables.SINCH:
 			response = sinchEmail.HitSinchEmailApi(requestBody)
 		}
@@ -79,16 +82,26 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
 
-	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	}
+	// if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
+	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	// }
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("EmailResponse: %s", string(jsonBytes)))
-	if response.IsSent {
+	if shouldHitVendor && response.IsSent {
 		utils.Info(fmt.Sprintf("Email sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Email, msg.Vendor))
-		return true, nil
+		return true, dbMappedData, nil
 	}
 
-	return true, nil // message processed but not sent as response.IsSent is false
+	if !shouldHitVendor {
+		// Step 2: Once you have responseId, update the value
+		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
+		response.TransactionId = "shouldHitVendor is off"
+		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
+		if err != nil {
+			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		}
+	}
+
+	return true, dbMappedData, nil // message processed but not sent as response.IsSent is false
 }

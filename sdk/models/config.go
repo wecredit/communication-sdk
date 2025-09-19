@@ -18,7 +18,7 @@ type Config struct {
 	DbPasswordTech string `envconfig:"DB_PASSWORD_TECH"`
 	DbNameTech     string `envconfig:"DB_NAME_TECH"`
 
-	// Azure Queue Details
+	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
 	QueueTopicName        string `envconfig:"AZURE_TOPIC_NAME"`
 	QueueSubscriptionName string `envconfig:"AZURE_DB_SUBSCRIPTION"`
@@ -30,9 +30,10 @@ type Config struct {
 	AwsQueueUrl string `envconfig:"AWS_QUEUE_URL"`
 
 	// Redis Credentials
-	RedisAddress  string `envconfig:"REDIS_ADDRESS"`
-	RedisPassword string `envconfig:"REDIS_PASSWORD"`
-	RedisMapKey   string `envconfig:"REDIS_MAP_KEY"`
+	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
+	RedisPassword     string `envconfig:"REDIS_PASSWORD"`
+	RedisMapKey       string `envconfig:"REDIS_MAP_KEY"`
+	CommIdempotentKey string `envconfig:"COMM_IDEMPOTENT_KEY"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
@@ -102,6 +103,6 @@ type Config struct {
 	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
 
 	// Sinch Email API Variables
-	SinchEmailApiUrl string `envconfig:"SINCH_EMAIL_API_URL"`
+	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
 	SinchEmailApiToken string `envconfig:"SINCH_EMAIL_API_TOKEN"`
 }
