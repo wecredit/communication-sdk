@@ -61,3 +61,41 @@ func GetCreditSeaCounter(ctx context.Context, redisClient *redis.Client, key str
 func ResetCreditSeaCounter(ctx context.Context, redisClient *redis.Client, key string) error {
 	return redisClient.Set(ctx, key, 0, 0).Err()
 }
+
+// Check if mobile_channel exists and return value if present
+func CheckIfMobileExists(CommIdempotentKey string, redisKey string, rdb *redis.Client) (string, bool, error) {
+	ctx := context.Background()
+	val, err := rdb.HGet(ctx, CommIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		utils.Info(fmt.Sprintf("[redis]: %s does not exist Proceed for communication", redisKey))
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// 1. Create a field (mobile_channel) inside CommIdempotentKey with blank value
+func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) error {
+	ctx := context.Background()
+	err := RDB.HSetNX(ctx, commIdempotentKey, redisKey, "").Err()
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to set key %s in redis: %v", redisKey, err))
+		return err
+	}
+	utils.Info(fmt.Sprintf("Key %s created in hash %s with blank value", redisKey, commIdempotentKey))
+	return nil
+}
+
+// 2. Update the value (e.g. responseId) for an existing mobile_channel key
+func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, responseId string) error {
+	ctx := context.Background()
+	err := RDB.HSet(ctx, commIdempotentKey, redisKey, responseId).Err()
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to update value for key %s in redis: %v", redisKey, err))
+		return err
+	}
+	utils.Info(fmt.Sprintf("Key %s in hash %s updated with value %s", redisKey, commIdempotentKey, responseId))
+	return nil
+}

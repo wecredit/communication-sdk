@@ -118,7 +118,7 @@ func ApiHit(method, apiURL string, headers map[string]string, username, password
 	resultChan := make(chan map[string]interface{})
 	errChan := make(chan error)
 	go func() {
-		result, err := RetryApiCall(method, apiURL, headers, username, password, data, reqType, 2, 3*time.Second, 5*time.Second)
+		result, err := RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0*time.Second, 0*time.Second) //TODO: Retry api call is paused for now
 		if err != nil {
 			errChan <- err
 			return

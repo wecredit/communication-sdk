@@ -123,7 +123,7 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 			"components": components,
 		},
 		"metadata": map[string]interface{}{
-			"messageId": strconv.Itoa(helper.GenerateRandomID(100000, 999999)),
+			"messageId": strconv.Itoa(helper.GenerateRandomID(100000, 999999)), //TODO: Idempotency key
 			"trackingCta": map[string]interface{}{
 				"target": buttonURL,
 				"tags": map[string]interface{}{
