@@ -275,3 +275,19 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	return nil
 }
 */
+
+// CheckIfRecordExists checks if a record exists in given table.
+func CheckIfRecordAlreadyExists(tableName, mobile, txnId string) (bool, error) {
+	var exists int
+	query := fmt.Sprintf(`
+		SELECT CASE WHEN EXISTS (
+			SELECT 1 FROM %s WITH (NOLOCK)
+			WHERE Mobile = ? AND transactionId = ?
+		) THEN 1 ELSE 0 END`, tableName)
+
+	err := DBtech.Raw(query, mobile, txnId).Scan(&exists).Error
+	if err != nil {
+		return false, fmt.Errorf("error checking record existence: %w", err)
+	}
+	return exists == 1, nil
+}

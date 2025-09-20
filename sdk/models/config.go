@@ -25,9 +25,10 @@ type Config struct {
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// AWS Credentials
-	AWSRegion   string `envconfig:"AWS_REGION"`
-	AwsSnsArn   string `envconfig:"AWS_COMM_TOPIC_ARN"`
-	AwsQueueUrl string `envconfig:"AWS_QUEUE_URL"`
+	AWSRegion        string `envconfig:"AWS_REGION"`
+	AwsSnsArn        string `envconfig:"AWS_COMM_TOPIC_ARN"`
+	AwsQueueUrl      string `envconfig:"AWS_QUEUE_URL"`
+	AwsErrorQueueUrl string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
