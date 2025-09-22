@@ -6,13 +6,15 @@ import (
 
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 )
 
 var (
 	DBanalytics *gorm.DB
-	DBtech      *gorm.DB
+	DBtechRead  *gorm.DB
+	DBtechWrite *gorm.DB
 )
 
 const (
@@ -23,6 +25,11 @@ const (
 // GetDSN generates the DSN string for the database connection
 func GetDSN(user, password, server, port, database string) string {
 	return fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s", user, password, server, port, database)
+}
+
+func GetMySQLDSN(username, password, server, database string) string {
+	return fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		username, password, server, database)
 }
 
 // ConnectDB initializes the database connection pool for the given database type
@@ -42,29 +49,46 @@ func ConnectDB(dbType string, config models.Config) error {
 			config.DbPortAnalytical,
 			config.DbNameAnalytical,
 		)
-		fmt.Println("Get DSN", dsn)
 		// Connect to Analytical DB
 		DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
 		if err != nil {
 			return fmt.Errorf("failed to connect to Analytical DB: %w", err)
 		}
-		fmt.Println("DBAnal:", DBanalytics)
 		utils.Info("Database connection established for Analytical DB.")
 
 	case Tech:
-		dsn = GetDSN(
+		dsnRead := GetMySQLDSN(
 			config.DbUserTech,
 			config.DbPasswordTech,
-			config.DbServerTech,
-			config.DbPortTech,
+			config.DbServerTechRead,
+			config.DbNameTech,
+		)
+
+		fmt.Println("DSN Read: ", dsnRead)
+
+		// Connect to Tech DB
+		DBtechRead, err = gorm.Open(mysql.Open(dsnRead), &gorm.Config{})
+		if err != nil {
+			utils.Error(err)
+			return fmt.Errorf("failed to connect to Tech Read DB: %w", err)
+		}
+
+		fmt.Println("DBtechRead: ", DBtechRead)
+
+		utils.Info("Database connection established for Tech Read DB.")
+
+		dsnWrite := GetMySQLDSN(
+			config.DbUserTech,
+			config.DbPasswordTech,
+			config.DbServerTechWrite,
 			config.DbNameTech,
 		)
 		// Connect to Tech DB
-		DBtech, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+		DBtechWrite, err = gorm.Open(mysql.Open(dsnWrite), &gorm.Config{})
 		if err != nil {
-			return fmt.Errorf("failed to connect to Tech DB: %w", err)
+			return fmt.Errorf("failed to connect to Tech Write DB: %w", err)
 		}
-		utils.Info("Database connection established for Tech DB.")
+		utils.Info("Database connection established for Tech Write DB.")
 
 	default:
 		return fmt.Errorf("invalid database type: %s", dbType)
@@ -73,11 +97,22 @@ func ConnectDB(dbType string, config models.Config) error {
 	return nil
 }
 
-func PingTechDB() error {
-	if DBtech == nil {
-		return errors.New("tech DB is not initialized")
+func PingTechReadDB() error {
+	if DBtechRead == nil {
+		return errors.New("tech Read DB is not initialized")
 	}
-	sqlDB, err := DBtech.DB()
+	sqlDB, err := DBtechRead.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+
+func PingTechWriteDB() error {
+	if DBtechWrite == nil {
+		return errors.New("tech Write DB is not initialized")
+	}
+	sqlDB, err := DBtechWrite.DB()
 	if err != nil {
 		return err
 	}

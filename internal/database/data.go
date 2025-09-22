@@ -42,10 +42,10 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		// Create a map to store column data
 		row := make(map[string]interface{})
 		columnPointers := make([]interface{}, len(columns))
+		rawData := make([]interface{}, len(columns))
 
 		for i := range columns {
-			var colData interface{}
-			columnPointers[i] = &colData
+			columnPointers[i] = &rawData[i]
 		}
 
 		if err := rows.Scan(columnPointers...); err != nil {
@@ -53,7 +53,14 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		}
 
 		for i, colName := range columns {
-			row[colName] = *(columnPointers[i].(*interface{}))
+			val := rawData[i]
+			// Normalize MySQL []uint8 (raw bytes) to string
+			switch v := val.(type) {
+			case []byte:
+				row[colName] = string(v)
+			default:
+				row[colName] = v
+			}
 		}
 
 		results = append(results, row)
@@ -186,7 +193,7 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 
 	// Add ROWLOCK hint to enforce row-level locking
 	query := fmt.Sprintf(
-		"INSERT INTO %s WITH (ROWLOCK) (%s) VALUES (%s)",
+		"INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
@@ -281,11 +288,11 @@ func CheckIfRecordAlreadyExists(tableName, mobile, txnId string) (bool, error) {
 	var exists int
 	query := fmt.Sprintf(`
 		SELECT CASE WHEN EXISTS (
-			SELECT 1 FROM %s WITH (NOLOCK)
+			SELECT 1 FROM %s
 			WHERE Mobile = ? AND transactionId = ?
 		) THEN 1 ELSE 0 END`, tableName)
 
-	err := DBtech.Raw(query, mobile, txnId).Scan(&exists).Error
+	err := DBtechRead.Raw(query, mobile, txnId).Scan(&exists).Error
 	if err != nil {
 		return false, fmt.Errorf("error checking record existence: %w", err)
 	}

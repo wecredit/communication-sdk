@@ -14,19 +14,19 @@ func LoadConsumerDataIntoCache(config models.Config) {
 	InitializeCache()
 
 	// Store auth data into cache
-	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtech)
+	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtechRead)
 
 	// Store Vendors Data into cache
-	StoreMappedDataIntoCache(VendorsData, config.VendorTable, "Name", "Channel", database.DBtech)
+	StoreMappedDataIntoCache(VendorsData, config.VendorTable, "Name", "Channel", database.DBtechRead)
 
-	StoreMappedDataIntoCache(ClientsData, config.ClientsTable, "Name", "Channel", database.DBtech)
+	StoreMappedDataIntoCache(ClientsData, config.ClientsTable, "Name", "Channel", database.DBtechRead)
 
-	StoreMappedDataIntoCache(TemplateDetailsData, config.TemplateDetailsTable, "Process", "Stage", database.DBtech)
+	StoreMappedDataIntoCache(TemplateDetailsData, config.TemplateDetailsTable, "Process", "Stage", database.DBtechRead)
 
-	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtech)
+	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtechRead)
 
 	// Store auth data into cache
-	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)
+	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtechRead)
 
 	// Store Vendors Data into cache
 	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)

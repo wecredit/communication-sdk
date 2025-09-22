@@ -14,6 +14,6 @@ func LoadApiDataIntoCache(config models.Config) {
 	InitializeCache()
 
 	// Store auth data into cache
-	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtech)
+	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtechRead)
 
 }

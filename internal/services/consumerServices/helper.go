@@ -51,7 +51,7 @@ func CheckIfDataAlreadyExists(data sdkModels.CommApiRequestBody, redisKey string
 			"IsSent":          true,
 			"ResponseMessage": "Message submitted successfully",
 		}
-		if err := database.InsertData(outputTableName, database.DBtech, dbResponse); err != nil {
+		if err := database.InsertData(outputTableName, database.DBtechWrite, dbResponse); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 			dbResponse["tableName"] = outputTableName
 			if queueErr := queue.SendMessageWithSubject(queue.SQSClient, dbResponse, config.Configs.AwsErrorQueueUrl, variables.OutputInsertionFails, err.Error()); queueErr != nil {

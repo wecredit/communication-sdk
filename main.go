@@ -39,7 +39,7 @@ func main() {
 	stages := []float64{
 		// 	1.01,1.02,1.03,1.04,
 		// 	2.01,2.02,2.03,2.04,2.05,2.06,
-		103.01,//3.02,3.03,3.04,
+		3.01,//3.02,3.03,3.04,
 		// 	4.01,4.02,4.03,4.04,
 		// 	5.01,5.02,5.03,5.04,5.05,5.06,
 		// 	6.01,6.02,6.03,6.04,6.05,6.06,6.07,6.08,6.09,6.10,6.11,6.12,6.13,6.14,6.15,6.16,6.17,6.18,6.19,6.20,
@@ -58,7 +58,7 @@ func main() {
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			Mobile:            "8877887788",
+			Mobile:            "9220146969",
 			Email:             "neelansh@creditsea.com",
 			Channel:           "SMS",
 			ProcessName:       "CREDITSEA",
