@@ -13,7 +13,7 @@ func main() {
 	username := "creditsea"
 	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
 	channel := "SMS"
-	baseUrl := "http://localhost:8080"
+	baseUrl := "http://172.16.18.47:8080"
 
 	// For Creditsea UAT testing
 	// username := "creditsea"

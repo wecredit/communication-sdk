@@ -289,7 +289,7 @@ func CheckIfRecordAlreadyExists(tableName, mobile, txnId string) (bool, error) {
 	query := fmt.Sprintf(`
 		SELECT CASE WHEN EXISTS (
 			SELECT 1 FROM %s
-			WHERE Mobile = ? AND transactionId = ?
+			WHERE MobileNumber = ? AND transactionId = ?
 		) THEN 1 ELSE 0 END`, tableName)
 
 	err := DBtechRead.Raw(query, mobile, txnId).Scan(&exists).Error
