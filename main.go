@@ -12,8 +12,8 @@ func main() {
 	// For Creditsea local testing
 	username := "creditsea"
 	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
-	channel := "SMS"
-	baseUrl := "http://localhost:8080"
+	channel := "WHATSAPP"
+	baseUrl := "http://172.16.40.46:8080"
 
 	// For Creditsea UAT testing
 	// username := "creditsea"
@@ -58,9 +58,9 @@ func main() {
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			Mobile:            "9220146969",
+			Mobile:            "7570897034",
 			Email:             "neelansh@creditsea.com",
-			Channel:           "SMS",
+			Channel:           "WHATSAPP",
 			ProcessName:       "CREDITSEA",
 			Stage:             stage,
 			IsPriority:        true,

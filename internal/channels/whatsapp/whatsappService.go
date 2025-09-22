@@ -116,6 +116,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		// Step 2: Once you have responseId, update the value
 		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
 		response.TransactionId = "shouldHitVendor is off"
+		dbMappedData["TransactionId"] = "shouldHitVendor is off"
 		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
 		if err != nil {
 			utils.Error(fmt.Errorf("redis update value failed: %v", err))
