@@ -12,11 +12,12 @@ type Config struct {
 	DbNameAnalytical     string `envconfig:"DB_NAME_ANALYTICS"`
 
 	// Tech DB variables
-	DbServerTech   string `envconfig:"DB_SERVER_TECH"`
-	DbPortTech     string `envconfig:"DB_PORT_TECH"`
-	DbUserTech     string `envconfig:"DB_USER_TECH"`
-	DbPasswordTech string `envconfig:"DB_PASSWORD_TECH"`
-	DbNameTech     string `envconfig:"DB_NAME_TECH"`
+	DbServerTechRead  string `envconfig:"DB_SERVER_TECH_READ"`
+	DbServerTechWrite string `envconfig:"DB_SERVER_TECH_WRITE"`
+	DbPortTech        string `envconfig:"DB_PORT_TECH"`
+	DbUserTech        string `envconfig:"DB_USER_TECH"`
+	DbPasswordTech    string `envconfig:"DB_PASSWORD_TECH"`
+	DbNameTech        string `envconfig:"DB_NAME_TECH"`
 
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
