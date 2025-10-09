@@ -9,8 +9,6 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
-	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
-	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
@@ -68,16 +66,21 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 
 	if shouldHitVendor {
-		// Hit Into WP
-		switch msg.Vendor {
-		case variables.TIMES:
-			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
-		case variables.SINCH:
-			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
-		}
+		response.TransactionId = fmt.Sprintf("shouldHitVendor is off for mobile %s", msg.Mobile)
 	}
+
+	// if shouldHitVendor {
+	// 	// Hit Into WP
+	// 	switch msg.Vendor {
+	// 	case variables.TIMES:
+	// 		response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+	// 	case variables.SINCH:
+	// 		response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+	// 	}
+	// }
 
 	// apihit. : successful -> redis
 
@@ -115,14 +118,14 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if !shouldHitVendor {
 		// Step 2: Once you have responseId, update the value
 		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		response.TransactionId = "shouldHitVendor is off"
-		dbMappedData["TransactionId"] = "shouldHitVendor is off"
+		response.TransactionId = fmt.Sprintf("shouldHitVendor is off for mobile %s", msg.Mobile)
+		dbMappedData["TransactionId"] = response.TransactionId
 		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
 		if err != nil {
 			utils.Error(fmt.Errorf("redis update value failed: %v", err))
 		}
 	}
-	
+
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
 	return true, dbMappedData, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
 

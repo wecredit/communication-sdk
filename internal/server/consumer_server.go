@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 	"net"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
 	apiServices "github.com/wecredit/communication-sdk/internal/services/apiServices"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 )
 
@@ -36,8 +38,7 @@ func GetLocalIP() string {
 func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
-
-	log.Printf("Starting Consumer Server on port %s", port)
+	utils.Debug(fmt.Sprintf("Starting Consumer Server on port %s", port))
 
 	// Set up Gin router
 	r := gin.Default()

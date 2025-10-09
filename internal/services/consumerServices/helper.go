@@ -42,6 +42,7 @@ func CheckIfDataAlreadyExists(data sdkModels.CommApiRequestBody, redisKey string
 	}
 
 	if exists {
+		utils.Debug(fmt.Sprintf("record already exists in output table for mobile: %s, transactionId: %s", data.Mobile, redisKeyVal))
 		return true, nil
 	} else {
 		dbResponse := map[string]interface{}{

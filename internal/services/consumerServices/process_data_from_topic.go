@@ -163,7 +163,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 			timeout.Reset(time.Hour)
 			isMessageProcessed := processMessage(ctx, sqsClient, queueURL, msgWrapper)
 			if isMessageProcessed {
-				fmt.Println("Message processed")
+				utils.Debug("Message processed")
 				// deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
 			}
 		case <-timeout.C:
@@ -274,7 +274,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		utils.Error(fmt.Errorf("error inserting data into wp input table for mobile %s: %v", data.Mobile, err))
 		dbMappedData["tableName"] = config.Configs.SdkWhatsappInputTable
 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
@@ -297,7 +297,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 				"IsSent":          false,
 				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeeded. Message not sent for commid: %s", data.CommId),
 			}); err != nil {
-				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+				utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 				dbMappedData["tableName"] = config.Configs.WhatsappOutputTable
 				if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.OutputInsertionFails, err.Error()); queueErr != nil {
 					utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
@@ -322,7 +322,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	}
 
 	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 		dbMappedData["tableName"] = config.Configs.WhatsappOutputTable
 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.OutputInsertionFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
@@ -353,7 +353,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		utils.Error(fmt.Errorf("error inserting data into sms input table for mobile %s: %v", data.Mobile, err))
 		dbMappedData["tableName"] = config.Configs.SdkSmsInputTable
 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
@@ -371,7 +371,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
 		dbMappedData["tableName"] = config.Configs.SmsOutputTable
 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.OutputInsertionFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
@@ -404,7 +404,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	}
 
 	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		utils.Error(fmt.Errorf("error inserting data into table for mobile %s: %v", data.Mobile, err))
 		dbMappedData["tableName"] = config.Configs.EmailOutputTable
 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.OutputInsertionFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))

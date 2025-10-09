@@ -115,7 +115,7 @@ func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int)
 		return nil, err
 	}
 
-	fmt.Println("Results", results)
+	utils.Debug(fmt.Sprintf("Results : %v", results))
 
 	return results, nil
 }
@@ -203,13 +203,13 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	result := tx.Exec(query, values...)
 	if result.Error != nil {
 		tx.Rollback() // Explicit rollback on error
-		return fmt.Errorf("failed to insert data into table %s: %w", tableName, result.Error)
+		return fmt.Errorf("failed to insert data into table %s for query: %s : %w", tableName, query, result.Error)
 	}
 
 	// Explicitly commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback() // Rollback if commit fails
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to commit transaction into table %s for query %s: %w", tableName, query, err)
 	}
 
 	// Log success

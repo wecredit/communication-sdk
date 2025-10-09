@@ -73,7 +73,7 @@ func ConnectDB(dbType string, config models.Config) error {
 			return fmt.Errorf("failed to connect to Tech Read DB: %w", err)
 		}
 
-		fmt.Println("DBtechRead: ", DBtechRead)
+		// fmt.Println("DBtechRead: ", DBtechRead)
 
 		utils.Info("Database connection established for Tech Read DB.")
 

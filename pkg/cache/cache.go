@@ -215,7 +215,7 @@ func (c *Cache) GetMappedData(key string) (map[string]map[string]interface{}, bo
 func (c *Cache) GetMappedIdData(key string) (map[uint]string, bool) {
 	value, found := c.store.Get(key)
 	if !found {
-		fmt.Println("Cache key not found:", key)
+		utils.Error(fmt.Errorf("Cache key not found: %s", key))
 		return nil, false
 	}
 
