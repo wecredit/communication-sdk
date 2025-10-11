@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/dgraph-io/ristretto"
 
@@ -79,17 +80,35 @@ func (c *Cache) Get(key string) ([]map[string]interface{}, bool) {
 	return nil, false
 }
 
-func storeDataIntoCache(key, tableName string, db *gorm.DB) {
+func storeDataIntoCache(key, tableName string, db *gorm.DB) error {
+	utils.Info(fmt.Sprintf("Initializing cache for key: %s (table: %s)", key, tableName))
+
+	// Fetch data
 	data, err := database.GetDataFromTable(tableName, db)
 	if err != nil {
-		utils.Error(fmt.Errorf("failed to fetch initial data for cache: %v", err))
-	}
-	// Store the data in the cache
-	if !GetCache().Set(key, data) {
-		utils.Error(fmt.Errorf("failed to set initial data in cache for: %v", key))
+		utils.Error(fmt.Errorf("cache init failed while fetching data (table: %s, key: %s): %v", tableName, key, err))
+		return fmt.Errorf("failed to fetch data for cache: %w", err)
 	}
 
-	utils.Info(fmt.Sprint("Cache initialized successfully for: ", key))
+	if len(data) == 0 {
+		utils.Warn(fmt.Sprintf("cache init: table %s returned 0 records (key: %s)", tableName, key))
+	}
+
+	// Try setting cache with retry
+	const maxRetries = 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if GetCache().Set(key, data) {
+			utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s (records: %d)", key, len(data)))
+			return nil
+		}
+
+		utils.Warn(fmt.Sprintf("attempt %d/%d failed to set cache for key: %s", attempt, maxRetries, key))
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+
+	err = fmt.Errorf("failed to set cache for key %s after %d attempts", key, maxRetries)
+	utils.Error(err)
+	return err
 }
 
 func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixColumnName string, db *gorm.DB) {
@@ -114,7 +133,8 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		keyStr := fmt.Sprintf("%s:%v", columnNameToBeUsedAsKey, keyVal)
 		if suffixColumnName != "" {
 			if suffixVal, ok := row[suffixColumnName]; ok && tableName == config.Configs.TemplateDetailsTable {
-				stageFloat, _ := strconv.ParseFloat(string(suffixVal.([]uint8)), 64)
+				// stageFloat, _ := strconv.ParseFloat(string(suffixVal.([]uint8)), 64)
+				stageFloat, _ := strconv.ParseFloat(suffixVal.(string), 64)
 				keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
 			} else if suffixVal, ok := row[suffixColumnName]; ok {
 				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)
@@ -214,7 +234,7 @@ func (c *Cache) GetMappedData(key string) (map[string]map[string]interface{}, bo
 func (c *Cache) GetMappedIdData(key string) (map[uint]string, bool) {
 	value, found := c.store.Get(key)
 	if !found {
-		fmt.Println("Cache key not found:", key)
+		utils.Error(fmt.Errorf("Cache key not found: %s", key))
 		return nil, false
 	}
 

@@ -7,6 +7,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -76,6 +77,9 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
+		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, sinchApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
 		return responseBody
 	}

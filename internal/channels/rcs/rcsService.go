@@ -36,7 +36,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	}
 	channelHelper.PopulateRcsFields(&req, templateData)
 
-	rcsAppIdData, err := database.GetRcsAppId(database.DBtech, req.AppId)
+	rcsAppIdData, err := database.GetRcsAppId(database.DBtechRead, req.AppId)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
 		return false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
@@ -71,7 +71,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	if err != nil {
 		utils.Error(fmt.Errorf("mapping error: %v", err))
 	}
-	database.InsertData(config.Configs.RcsOutputTable, database.DBtech, dbMappedData)
+	database.InsertData(config.Configs.RcsOutputTable, database.DBtechWrite, dbMappedData)
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("RCS Response: %s", string(jsonBytes)))

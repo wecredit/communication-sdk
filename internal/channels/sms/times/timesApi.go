@@ -4,8 +4,9 @@ import (
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/sms/times/timesPayloads"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -39,7 +40,11 @@ func HitTimesSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, config.Configs.TimesSmsApiUserName, config.Configs.TimesSmsApiPassword, apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Times Sms API: %v", err))
+		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, data, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
 		timesSmsResponse.ResponseMessage = fmt.Sprintf("Error in hitting Times SMS API: %v", err)
+		return timesSmsResponse
 	}
 
 	status := apiResponse["state"].(string)

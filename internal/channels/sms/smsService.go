@@ -61,6 +61,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 	if shouldHitVendor {
 		switch msg.Vendor {
 		case variables.TIMES:
@@ -98,13 +99,14 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	if !shouldHitVendor {
 		// Step 2: Once you have responseId, update the value
 		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		response.TransactionId = "shouldHitVendor is off"
+		response.TransactionId = fmt.Sprintf("shouldHitVendor is off for mobile %s", msg.Mobile)
+		dbMappedData["TransactionId"] = response.TransactionId
 		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
 		if err != nil {
 			utils.Error(fmt.Errorf("redis update value failed: %v", err))
 		}
 	}
-	
+
 	utils.Info(fmt.Sprintf("SMS sent successfully for Process: %s on %s via %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 	return true, dbMappedData, nil
 	// if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, dbMappedData); err != nil {

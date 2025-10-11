@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -18,14 +17,9 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 	var results []map[string]interface{}
 
-	var query string
-	if tableName == "dbo.TemplateDetails" {
-		// Execute raw SQL to fetch active template from the table
-		query = fmt.Sprintf("SELECT * FROM %s --where IsActive = 1", tableName)
-	} else {
-		// Execute raw SQL to fetch all data from the table
-		query = fmt.Sprintf("SELECT * FROM %s", tableName)
-	}
+	// Execute raw SQL to fetch all data from the table
+	query := fmt.Sprintf("SELECT * FROM %s", tableName)
+
 	rows, err := db.Raw(query).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch data from table %s: %w", tableName, err)
@@ -42,10 +36,10 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		// Create a map to store column data
 		row := make(map[string]interface{})
 		columnPointers := make([]interface{}, len(columns))
+		rawData := make([]interface{}, len(columns))
 
 		for i := range columns {
-			var colData interface{}
-			columnPointers[i] = &colData
+			columnPointers[i] = &rawData[i]
 		}
 
 		if err := rows.Scan(columnPointers...); err != nil {
@@ -53,7 +47,14 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		}
 
 		for i, colName := range columns {
-			row[colName] = *(columnPointers[i].(*interface{}))
+			val := rawData[i]
+			// Normalize MySQL []uint8 (raw bytes) to string
+			switch v := val.(type) {
+			case []byte:
+				row[colName] = string(v)
+			default:
+				row[colName] = v
+			}
 		}
 
 		results = append(results, row)
@@ -65,7 +66,7 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 	// Log the result for debugging
 	// jsonData, _ := json.Marshal(results) // Optional: Serialize for readability
-	log.Printf("Fetched data from table '%s'", tableName)
+	utils.Info(fmt.Sprintf("Fetched data from table '%s'", tableName))
 
 	return results, nil
 }
@@ -108,7 +109,7 @@ func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int)
 		return nil, err
 	}
 
-	fmt.Println("Results", results)
+	utils.Debug(fmt.Sprintf("Results : %v", results))
 
 	return results, nil
 }
@@ -186,7 +187,7 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 
 	// Add ROWLOCK hint to enforce row-level locking
 	query := fmt.Sprintf(
-		"INSERT INTO %s WITH (ROWLOCK) (%s) VALUES (%s)",
+		"INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
 		strings.Join(columns, ", "),
 		strings.Join(placeholders, ", "),
@@ -196,13 +197,13 @@ func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	result := tx.Exec(query, values...)
 	if result.Error != nil {
 		tx.Rollback() // Explicit rollback on error
-		return fmt.Errorf("failed to insert data into table %s: %w", tableName, result.Error)
+		return fmt.Errorf("failed to insert data into table %s for query: %s : %w", tableName, query, result.Error)
 	}
 
 	// Explicitly commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		tx.Rollback() // Rollback if commit fails
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to commit transaction into table %s for query %s: %w", tableName, query, err)
 	}
 
 	// Log success
@@ -275,3 +276,19 @@ func UpdateData(tableName string, db *gorm.DB, data map[string]interface{}) erro
 	return nil
 }
 */
+
+// CheckIfRecordExists checks if a record exists in given table.
+func CheckIfRecordAlreadyExists(tableName, mobile, txnId string) (bool, error) {
+	var exists int
+	query := fmt.Sprintf(`
+		SELECT CASE WHEN EXISTS (
+			SELECT 1 FROM %s
+			WHERE MobileNumber = ? AND transactionId = ?
+		) THEN 1 ELSE 0 END`, tableName)
+
+	err := DBtechRead.Raw(query, mobile, txnId).Scan(&exists).Error
+	if err != nil {
+		return false, fmt.Errorf("error checking record existence: %w", err)
+	}
+	return exists == 1, nil
+}

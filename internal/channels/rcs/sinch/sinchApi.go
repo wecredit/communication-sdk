@@ -8,6 +8,7 @@ import (
 	"github.com/wecredit/communication-sdk/helper"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -48,6 +49,11 @@ func HitSinchRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsResponse {
 	apiResponse, err := utils.ApiHit(variables.PostMethod, rcsApiUrl, apiHeaders, "", "", payload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch RCS API: %v", err))
+		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, data, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
+		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch RCS payload: %v", err)
+		return responseBody
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
