@@ -253,8 +253,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
-	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into wp input table for mobile %s: %v", data.Mobile, err))
 	}
 
 	maxCountInt, _ := strconv.Atoi(config.Configs.CreditSeaWhatsappMaxCount)
@@ -266,16 +266,16 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		data.Vendor = variables.SINCH
 		if count > maxCountInt {
 			utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
-			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, map[string]interface{}{
+			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, map[string]interface{}{
 				"CommId":          data.CommId,
 				"Vendor":          data.Vendor,
 				"MobileNumber":    data.Mobile,
 				"IsSent":          false,
 				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeeded. Message not sent for commid: %s", data.CommId),
 			}); err != nil {
-				utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+				utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 			}
-			// deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			return true // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
@@ -293,9 +293,8 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
-		// if insertion fails, handle it later
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 	}
 
 	return isMessageProcessed
@@ -303,7 +302,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
-	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtech, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
@@ -317,8 +316,8 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 }
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
-	if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into sms input table for mobile %s: %v", data.Mobile, err))
 	}
 	AssignVendor(&data)
 	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
@@ -331,8 +330,8 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtech, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
 	}
 
 	return isMessageProcessed
@@ -342,7 +341,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	// delete Mobile from dbMappedData and Add Email in it for successful insertion in email input audit table
 	delete(dbMappedData, "Mobile")
 	dbMappedData["Email"] = data.Email
-	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtech, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 	AssignVendor(&data)
@@ -356,7 +355,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
 
-	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtech, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 
