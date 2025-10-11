@@ -202,16 +202,16 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	redisKey := fmt.Sprintf("%s_%s", data.Mobile, strings.ToUpper(data.Channel))
 
 	// check if message already sent for once
-	redisKeyVal, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	transactionId, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in checking mobile on redis: %v", err))
 	}
 
 	if exists {
-		// check for redisKeyVal, if exists -> save in database, else -> send message to error queue.
-		if redisKeyVal != "" {
+		// check for transactionId stored in the rediskey, if exists -> save in database, else -> send message to error queue.
+		if transactionId != "" {
 			// check if record already exists in output table
-			dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKeyVal, redisKeyVal)
+			dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKey, transactionId)
 			if err != nil {
 				utils.Error(fmt.Errorf("error checking if data exists: %v", err))
 				return false

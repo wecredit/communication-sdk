@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -18,14 +17,9 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 	var results []map[string]interface{}
 
-	var query string
-	if tableName == "dbo.TemplateDetails" {
-		// Execute raw SQL to fetch active template from the table
-		query = fmt.Sprintf("SELECT * FROM %s --where IsActive = 1", tableName)
-	} else {
-		// Execute raw SQL to fetch all data from the table
-		query = fmt.Sprintf("SELECT * FROM %s", tableName)
-	}
+	// Execute raw SQL to fetch all data from the table
+	query := fmt.Sprintf("SELECT * FROM %s", tableName)
+
 	rows, err := db.Raw(query).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch data from table %s: %w", tableName, err)
@@ -72,7 +66,7 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 	// Log the result for debugging
 	// jsonData, _ := json.Marshal(results) // Optional: Serialize for readability
-	log.Printf("Fetched data from table '%s'", tableName)
+	utils.Info(fmt.Sprintf("Fetched data from table '%s'", tableName))
 
 	return results, nil
 }

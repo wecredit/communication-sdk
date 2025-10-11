@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"fmt"
+
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -13,9 +15,11 @@ func LoadConsumerDataIntoCache(config models.Config) {
 	// Initialize the global cache
 	InitializeCache()
 
-	// Store auth data into cache
-	storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtechRead)
-
+	if err := storeDataIntoCache(AuthDetails, config.BasicAuthTableName, database.DBtechRead); err != nil {
+		utils.Error(fmt.Errorf("cache initialization failed for auth details: %v", err))
+		// optionally trigger a background retry or health check flag
+	}
+	
 	// Store Vendors Data into cache
 	StoreMappedDataIntoCache(VendorsData, config.VendorTable, "Name", "Channel", database.DBtechRead)
 

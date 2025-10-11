@@ -42,53 +42,63 @@ func ConnectDB(dbType string, config models.Config) error {
 	// Determine configuration based on the database type
 	switch dbType {
 	case Analytics:
-		dsn = GetDSN(
-			config.DbUserAnalytical,
-			config.DbPasswordAnalytical,
-			config.DbServerAnalytical,
-			config.DbPortAnalytical,
-			config.DbNameAnalytical,
-		)
-		// Connect to Analytical DB
-		DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
-		if err != nil {
-			return fmt.Errorf("failed to connect to Analytical DB: %w", err)
+		if DBanalytics == nil {
+			dsn = GetDSN(
+				config.DbUserAnalytical,
+				config.DbPasswordAnalytical,
+				config.DbServerAnalytical,
+				config.DbPortAnalytical,
+				config.DbNameAnalytical,
+			)
+			// Connect to Analytical DB
+			DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+			if err != nil {
+				return fmt.Errorf("failed to connect to Analytical DB: %w", err)
+			}
+			utils.Info("Database connection established for Analytical DB.")
+		} else {
+			utils.Info("Analytical DB already connected, skipping initialization.")
 		}
-		utils.Info("Database connection established for Analytical DB.")
 
 	case Tech:
-		dsnRead := GetMySQLDSN(
-			config.DbUserTech,
-			config.DbPasswordTech,
-			config.DbServerTechRead,
-			config.DbNameTech,
-		)
+		// Only connect if not already connected
+		if DBtechRead == nil {
+			dsnRead := GetMySQLDSN(
+				config.DbUserTech,
+				config.DbPasswordTech,
+				config.DbServerTechRead,
+				config.DbNameTech,
+			)
 
-		fmt.Println("DSN Read: ", dsnRead)
+			fmt.Println("DSN Read: ", dsnRead)
 
-		// Connect to Tech DB
-		DBtechRead, err = gorm.Open(mysql.Open(dsnRead), &gorm.Config{})
-		if err != nil {
-			utils.Error(err)
-			return fmt.Errorf("failed to connect to Tech Read DB: %w", err)
+			// Connect to Tech DB
+			DBtechRead, err = gorm.Open(mysql.Open(dsnRead), &gorm.Config{})
+			if err != nil {
+				utils.Error(err)
+				return fmt.Errorf("failed to connect to Tech Read DB: %w", err)
+			}
+			utils.Info("Database connection established for Tech Read DB.")
+		} else {
+			utils.Info("Tech Read DB already connected, skipping initialization.")
 		}
 
-		// fmt.Println("DBtechRead: ", DBtechRead)
-
-		utils.Info("Database connection established for Tech Read DB.")
-
-		dsnWrite := GetMySQLDSN(
-			config.DbUserTech,
-			config.DbPasswordTech,
-			config.DbServerTechWrite,
-			config.DbNameTech,
-		)
-		// Connect to Tech DB
-		DBtechWrite, err = gorm.Open(mysql.Open(dsnWrite), &gorm.Config{})
-		if err != nil {
-			return fmt.Errorf("failed to connect to Tech Write DB: %w", err)
+		if DBtechWrite == nil {
+			dsnWrite := GetMySQLDSN(
+				config.DbUserTech,
+				config.DbPasswordTech,
+				config.DbServerTechWrite,
+				config.DbNameTech,
+			)
+			// Connect to Tech DB
+			DBtechWrite, err = gorm.Open(mysql.Open(dsnWrite), &gorm.Config{})
+			if err != nil {
+				return fmt.Errorf("failed to connect to Tech Write DB: %w", err)
+			}
+			utils.Info("Database connection established for Tech Write DB.")
+		} else {
+			utils.Info("Tech Write DB already connected, skipping initialization.")
 		}
-		utils.Info("Database connection established for Tech Write DB.")
 
 	default:
 		return fmt.Errorf("invalid database type: %s", dbType)

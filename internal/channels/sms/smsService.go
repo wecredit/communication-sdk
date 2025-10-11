@@ -8,12 +8,15 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
+	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
@@ -59,17 +62,13 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
 	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
-	// if shouldHitVendor {
-	// 	switch msg.Vendor {
-	// 	case variables.TIMES:
-	// 		response = timesSms.HitTimesSmsApi(req)
-	// 	case variables.SINCH:
-	// 		response = sinchSms.HitSinchSmsApi(req)
-	// 	}
-	// }
-
-	if shouldHitVendor{
-		response.TransactionId = fmt.Sprintf("shouldHitVendor is on for mobile %s", msg.Mobile)
+	if shouldHitVendor {
+		switch msg.Vendor {
+		case variables.TIMES:
+			response = timesSms.HitTimesSmsApi(req)
+		case variables.SINCH:
+			response = sinchSms.HitSinchSmsApi(req)
+		}
 	}
 
 	// Step 2: Once you have responseId, update the value

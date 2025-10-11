@@ -1,10 +1,8 @@
 package utils
 
 import (
-	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -14,7 +12,7 @@ import (
 
 // Log levels
 const (
-	DEBUG  = iota
+	DEBUG = iota
 	INFO
 	WARN
 	ERROR
@@ -22,7 +20,7 @@ const (
 )
 
 var logLevel = INFO
-var Logger *log.Logger
+var Logger = log.New(os.Stdout, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
 
 func init() {
 	// Load .env file if present
@@ -30,22 +28,23 @@ func init() {
 		log.Printf("Warning: No .env file found: %v", err)
 	}
 
-	// Create logs directory if not exists
-	logDir := "logs"
-	if err := os.MkdirAll(logDir, os.ModePerm); err != nil {
-		log.Fatalf("Failed to create log directory: %v", err)
-	}
+	/* 	// Create logs directory if not exists
+	   	logDir := "logs"
+	   	if err := os.MkdirAll(logDir, os.ModePerm); err != nil {
+	   		log.Fatalf("Failed to create log directory: %v", err)
+	   	}
 
-	// Open log file
-	logFilePath := filepath.Join(logDir, "app.log")
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
+	   	// Open log file
+	   	logFilePath := filepath.Join(logDir, "app.log")
+	   	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	   	if err != nil {
+	   		log.Fatalf("Failed to open log file: %v", err)
+	   	}
 
-	// MultiWriter to log both to console and file
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-	Logger = log.New(multiWriter, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	   	// MultiWriter to log both to console and file
+	   	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	   	Logger = log.New(multiWriter, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	*/
 
 	// Set log level
 	level := env.LOG_LEVEL
