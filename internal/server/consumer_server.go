@@ -44,7 +44,7 @@ func StartConsumer(port string) {
 
 	r.GET("/health", health.HealthCheckHandler(port))
 
-	vendorHandler := handlers.NewVendorHandler(apiServices.NewVendorService(database.DBtech)) // Create handler for vendors passing them database object
+	vendorHandler := handlers.NewVendorHandler(apiServices.NewVendorService(database.DBtechRead)) // Create handler for vendors passing them database object
 	vendors := r.Group("/vendors")
 	{
 		vendors.GET("/", vendorHandler.GetVendors) // endpoint:- /vendors; filter: ?channel=WHATSAPP
@@ -54,7 +54,7 @@ func StartConsumer(port string) {
 		vendors.DELETE("/id/:id", vendorHandler.DeleteVendor)
 	}
 
-	clientHandler := handlers.NewClientHandler(apiServices.NewClientService(database.DBtech)) // Create handler for vendors passing them database object
+	clientHandler := handlers.NewClientHandler(apiServices.NewClientService(database.DBtechRead)) // Create handler for vendors passing them database object
 	clients := r.Group("/clients")
 	{
 		clients.GET("/", clientHandler.GetClients)
@@ -65,7 +65,7 @@ func StartConsumer(port string) {
 		clients.POST("/validate-client", clientHandler.ValidateClient)
 	}
 
-	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtech))
+	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead))
 	templates := r.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)
