@@ -166,7 +166,7 @@ func PopulateEmailFields(req *extapimodels.EmailRequestBody, data map[string]int
 // HandleTemplateNotFoundError handles the common template not found error pattern
 func HandleTemplateNotFoundError(msg sdkModels.CommApiRequestBody, err error) (bool, map[string]interface{}, error) {
 	LogTemplateNotFound(msg, err)
-	errorMessage := "template not found"
+	errorMessage := "template not found for mobile: " + msg.Mobile + " for stage: " + fmt.Sprintf("%.2f", msg.Stage)
 	if updateErr := UpdateRedisErrorMessage(msg.Mobile, msg.Channel, errorMessage); updateErr != nil {
 		utils.Error(fmt.Errorf("failed to update Redis for template not found: %v", updateErr))
 	}
