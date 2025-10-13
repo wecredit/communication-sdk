@@ -58,14 +58,14 @@ func main() {
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			Mobile:            "8877887788",
-			Email:             "neelansh@creditsea.com",
+			Mobile:            "9220146969",
+			Email:             "nikhil@wecredit.co.in",
 			Channel:           "SMS",
 			ProcessName:       "CREDITSEA",
 			Stage:             stage,
 			IsPriority:        true,
 			EmiAmount:         "5646",
-			CustomerName:      "Neelansh",
+			CustomerName:      "Nikhil",
 			LoanId:            "21535486557",
 			ApplicationNumber: "12362423769",
 			DueDate:           "2025-09-20",
