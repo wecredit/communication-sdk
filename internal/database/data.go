@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
-	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
 
@@ -103,6 +102,7 @@ func GetRcsAppId(db *gorm.DB, AppId string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+/*
 func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 
@@ -127,7 +127,7 @@ func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int)
 	return results, nil
 }
 
-/*
+
 // GetWhatsappProcessData fetches records based on the provided process name
 func GetWhatsappProcessData(db *gorm.DB, process, vendor string) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
