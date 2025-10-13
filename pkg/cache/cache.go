@@ -3,7 +3,6 @@ package cache
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"time"
 
@@ -134,7 +133,10 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		if suffixColumnName != "" {
 			if suffixVal, ok := row[suffixColumnName]; ok && tableName == config.Configs.TemplateDetailsTable {
 				// stageFloat, _ := strconv.ParseFloat(string(suffixVal.([]uint8)), 64)
-				stageFloat, _ := strconv.ParseFloat(suffixVal.(string), 64)
+				// stageFloat, _ := strconv.ParseFloat(suffixVal.(string), 64)
+
+				// Stage is now already parsed as float64 from database function
+				stageFloat := suffixVal.(float64)
 				keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
 			} else if suffixVal, ok := row[suffixColumnName]; ok {
 				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)

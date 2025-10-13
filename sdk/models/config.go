@@ -12,6 +12,8 @@ type Config struct {
 	DbNameAnalytical     string `envconfig:"DB_NAME_ANALYTICS"`
 
 	// Tech DB variables
+
+	// DbServerTech   string `envconfig:"DB_SERVER_TECH"` // NOT IN USE AS OF NOW
 	DbServerTechRead  string `envconfig:"DB_SERVER_TECH_READ"`
 	DbServerTechWrite string `envconfig:"DB_SERVER_TECH_WRITE"`
 	DbPortTech        string `envconfig:"DB_PORT_TECH"`

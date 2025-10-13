@@ -2,14 +2,15 @@ package database
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
-	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
 
-// GetBasicAuthData fetches data from the BasicAuth table and returns it
+// GetDataFromTable fetches data from the specified table and returns it
+// Note: This function should be used with caution as it fetches all data from the table
 func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, error) {
 	if tableName == "" {
 		return nil, fmt.Errorf("table name cannot be empty")
@@ -47,13 +48,31 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		}
 
 		for i, colName := range columns {
+			// utils.Debug(fmt.Sprintf("Hello %s %v %v", colName, rawData[i], reflect.TypeOf(rawData[i])))
 			val := rawData[i]
-			// Normalize MySQL []uint8 (raw bytes) to string
-			switch v := val.(type) {
-			case []byte:
-				row[colName] = string(v)
-			default:
-				row[colName] = v
+
+			// Handle different data types from MySQL
+			if val == nil {
+				row[colName] = nil
+			} else if bytes, ok := val.([]byte); ok {
+				// Special handling for Stage column (decimal) - convert to float64
+				if colName == "Stage" {
+					if str := string(bytes); str != "" {
+						if floatVal, err := strconv.ParseFloat(str, 64); err == nil {
+							row[colName] = floatVal
+						} else {
+							row[colName] = str // fallback to string if parsing fails
+						}
+					} else {
+						row[colName] = nil
+					}
+				} else {
+					// Convert other []byte columns to string
+					row[colName] = string(bytes)
+				}
+			} else {
+				// Keep other types as-is (int, time.Time, etc.)
+				row[colName] = val
 			}
 		}
 
@@ -83,36 +102,31 @@ func GetRcsAppId(db *gorm.DB, AppId string) (map[string]interface{}, error) {
 	return result, nil
 }
 
+/*
 func GetTemplateDetails(db *gorm.DB, process, channel, vendor string, stage int) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	var query *gorm.DB
 
-	switch vendor {
-	case variables.TIMES:
-		query = db.Table("TemplateDetails").
-			Where("Process LIKE ?", process).
-			Where("Stage = ?", stage).
-			Where("Channel = ?", channel).
-			Where("Vendor = ?", "TIMES").
-			Where("IsActive = ?", true)
-
-	case variables.SINCH:
-		query = db.Table("TemplateDetails").
-			Where("Process LIKE ?", process).
-			Where("Stage = ?", stage).
-			Where("Channel = ?", channel).
-			Where("Vendor = ?", "SINCH").
-			Where("IsActive = ?", true)
+	// Validate vendor parameter
+	if vendor != variables.TIMES && vendor != variables.SINCH {
+		return nil, fmt.Errorf("invalid vendor: %s", vendor)
 	}
+
+	// Build query using common conditions
+	query := db.Table("TemplateDetails").
+		Where("Process LIKE ?", process).
+		Where("Stage = ?", stage).
+		Where("Channel = ?", channel).
+		Where("Vendor = ?", vendor).
+		Where("IsActive = ?", true)
 
 	if err := query.Find(&results).Error; err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch template details: %w", err)
 	}
 
-	utils.Debug(fmt.Sprintf("Results : %v", results))
-
+	utils.Debug(fmt.Sprintf("Found %d template details for vendor %s", len(results), vendor))
 	return results, nil
 }
+
 
 // GetWhatsappProcessData fetches records based on the provided process name
 func GetWhatsappProcessData(db *gorm.DB, process, vendor string) ([]map[string]interface{}, error) {
@@ -147,6 +161,7 @@ func GetWhatsappProcessData(db *gorm.DB, process, vendor string) ([]map[string]i
 
 	return results, nil
 }
+*/
 
 // InsertData inserts data into the given table name using a transaction
 func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) error {

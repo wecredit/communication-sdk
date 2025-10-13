@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,14 @@ import (
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/queue"
+)
+
+// Health status constants
+const (
+	StatusOK        = "ok"
+	StatusDegraded  = "degraded"
+	StatusHealthy   = "healthy"
+	StatusUnhealthy = "unhealthy"
 )
 
 type HealthCheckResponse struct {
@@ -23,58 +32,109 @@ type HealthCheckResponse struct {
 	ServerPort     string `json:"server_port"`
 }
 
+// healthCheckResult represents the result of a single health check
+type healthCheckResult struct {
+	status    string
+	isHealthy bool
+}
+
+// checkHealth performs a health check and returns the result
+func checkHealth(checkFunc func() error, healthyMsg string) healthCheckResult {
+	if err := checkFunc(); err != nil {
+		return healthCheckResult{
+			status:    fmt.Sprintf("%s: %v", StatusUnhealthy, err),
+			isHealthy: false,
+		}
+	}
+	return healthCheckResult{
+		status:    healthyMsg,
+		isHealthy: true,
+	}
+}
+
+// checkRedisHealth performs Redis health check with proper error handling
+func checkRedisHealth() healthCheckResult {
+	r, err := redis.GetRedisClient(config.Configs.RedisAddress, config.Configs.RedisPassword)
+	if err != nil {
+		return healthCheckResult{
+			status:    fmt.Sprintf("%s: Failed to get Redis client: %v", StatusUnhealthy, err),
+			isHealthy: false,
+		}
+	}
+
+	if err := r.Ping(context.Background()).Err(); err != nil {
+		return healthCheckResult{
+			status:    fmt.Sprintf("%s: %v", StatusUnhealthy, err),
+			isHealthy: false,
+		}
+	}
+
+	return healthCheckResult{
+		status:    StatusHealthy,
+		isHealthy: true,
+	}
+}
+
+// checkAWSQueueHealth checks if AWS queue clients are initialized
+func checkAWSQueueHealth() healthCheckResult {
+	if queue.SQSClient == nil || queue.SNSClient == nil {
+		return healthCheckResult{
+			status:    fmt.Sprintf("%s: AWS clients not initialized", StatusUnhealthy),
+			isHealthy: false,
+		}
+	}
+	return healthCheckResult{
+		status:    StatusHealthy,
+		isHealthy: true,
+	}
+}
+
+// checkCacheHealth checks if cache is initialized
+func checkCacheHealth() healthCheckResult {
+	if cache.GetCache() == nil {
+		return healthCheckResult{
+			status:    fmt.Sprintf("%s: Cache not initialized", StatusUnhealthy),
+			isHealthy: false,
+		}
+	}
+	return healthCheckResult{
+		status:    StatusHealthy,
+		isHealthy: true,
+	}
+}
+
 // HealthCheckHandler handles health checks using Gin
 func HealthCheckHandler(port string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		resp := HealthCheckResponse{
-			Status:     "ok",
-			ClientIP:   c.ClientIP(),
-			ServerPort: port,
+			Status:     StatusOK,
 		}
 
-		// Check TechReadDB
-		if err := database.PingTechReadDB(); err != nil {
-			resp.TechReadDB = "unhealthy: " + err.Error()
-			resp.Status = "degraded"
-		} else {
-			resp.TechReadDB = "healthy"
+		// Perform all health checks
+		techReadResult := checkHealth(database.PingTechReadDB, StatusHealthy)
+		resp.TechReadDB = techReadResult.status
+
+		techWriteResult := checkHealth(database.PingTechWriteDB, StatusHealthy)
+		resp.TechWriteDB = techWriteResult.status
+
+		redisResult := checkRedisHealth()
+		resp.RedisStatus = redisResult.status
+
+		awsQueueResult := checkAWSQueueHealth()
+		resp.AWSQueueClient = awsQueueResult.status
+
+		cacheResult := checkCacheHealth()
+		resp.CacheStatus = cacheResult.status
+
+		// Determine overall status
+		if !techReadResult.isHealthy || !techWriteResult.isHealthy ||
+			!redisResult.isHealthy || !awsQueueResult.isHealthy || !cacheResult.isHealthy {
+			resp.Status = StatusDegraded
 		}
 
-		// Check TechWriteDB
-		if err := database.PingTechWriteDB(); err != nil {
-			resp.TechWriteDB = "unhealthy: " + err.Error()
-			resp.Status = "degraded"
-		} else {
-			resp.TechWriteDB = "healthy"
-		}
-
-		// Check Redis client
-		redis, _ := redis.GetRedisClient(config.Configs.RedisAddress, config.Configs.RedisPassword)
-
-		// Ping Redis to check if the connection is alive
-		if err := redis.Ping(context.Background()).Err(); err != nil {
-			resp.RedisStatus = "unhealthy: " + err.Error()
-			resp.Status = "degraded"
-		}
-
-		// Check AWS Queue clients
-		if queue.SQSClient == nil || queue.SNSClient == nil {
-			resp.AWSQueueClient = "unhealthy: AWS clients not initialized"
-			resp.Status = "degraded"
-		} else {
-			resp.AWSQueueClient = "healthy"
-		}
-
-		// Check cache
-		if cache.GetCache() == nil {
-			resp.CacheStatus = "unhealthy: Cache not initialized"
-			resp.Status = "degraded"
-		} else {
-			resp.CacheStatus = "healthy"
-		}
-
+		// Set appropriate HTTP status code
 		statusCode := http.StatusOK
-		if resp.Status != "ok" {
+		if resp.Status != StatusOK {
 			statusCode = http.StatusServiceUnavailable
 		}
 

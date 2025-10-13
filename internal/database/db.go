@@ -1,7 +1,6 @@
 package database
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/sdk/models"
@@ -22,6 +21,12 @@ const (
 	Analytics string = "analytics"
 )
 
+// Database connection types
+const (
+	ConnectionTypeRead  = "read"
+	ConnectionTypeWrite = "write"
+)
+
 // GetDSN generates the DSN string for the database connection
 func GetDSN(user, password, server, port, database string) string {
 	return fmt.Sprintf("sqlserver://%s:%s@%s:%s?database=%s", user, password, server, port, database)
@@ -32,99 +37,126 @@ func GetMySQLDSN(username, password, server, database string) string {
 		username, password, server, database)
 }
 
-// ConnectDB initializes the database connection pool for the given database type
-func ConnectDB(dbType string, config models.Config) error {
-	var (
-		dsn string
-		err error
+// connectAnalyticsDB establishes connection to Analytics database
+func connectAnalyticsDB(config models.Config) error {
+	if DBanalytics != nil {
+		utils.Info("Analytical DB already connected, skipping initialization.")
+		return nil
+	}
+
+	dsn := GetDSN(
+		config.DbUserAnalytical,
+		config.DbPasswordAnalytical,
+		config.DbServerAnalytical,
+		config.DbPortAnalytical,
+		config.DbNameAnalytical,
 	)
 
-	// Determine configuration based on the database type
+	var err error
+	DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to Analytical DB: %w", err)
+	}
+
+	utils.Info("Database connection established for Analytical DB.")
+	return nil
+}
+
+// connectTechDB establishes connection to Tech database (read or write)
+func connectTechDB(connectionType string, config models.Config) error {
+	var (
+		varDB  **gorm.DB
+		server string
+		dbName string
+	)
+
+	// Determine which database variable and server to use
+	switch connectionType {
+	case ConnectionTypeRead:
+		if DBtechRead != nil {
+			utils.Info("Tech Read DB already connected, skipping initialization.")
+			return nil
+		}
+		varDB = &DBtechRead
+		server = config.DbServerTechRead
+		dbName = "Tech Read DB"
+	case ConnectionTypeWrite:
+		if DBtechWrite != nil {
+			utils.Info("Tech Write DB already connected, skipping initialization.")
+			return nil
+		}
+		varDB = &DBtechWrite
+		server = config.DbServerTechWrite
+		dbName = "Tech Write DB"
+	default:
+		return fmt.Errorf("invalid connection type: %s", connectionType)
+	}
+
+	dsn := GetMySQLDSN(
+		config.DbUserTech,
+		config.DbPasswordTech,
+		server,
+		config.DbNameTech,
+	)
+
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s: %w", dbName, err)
+	}
+
+	*varDB = db
+	utils.Info(fmt.Sprintf("Database connection established for %s.", dbName))
+	return nil
+}
+
+// ConnectDB initializes the database connection pool for the given database type
+func ConnectDB(dbType string, config models.Config) error {
 	switch dbType {
 	case Analytics:
-		if DBanalytics == nil {
-			dsn = GetDSN(
-				config.DbUserAnalytical,
-				config.DbPasswordAnalytical,
-				config.DbServerAnalytical,
-				config.DbPortAnalytical,
-				config.DbNameAnalytical,
-			)
-			// Connect to Analytical DB
-			DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
-			if err != nil {
-				return fmt.Errorf("failed to connect to Analytical DB: %w", err)
-			}
-			utils.Info("Database connection established for Analytical DB.")
-		} else {
-			utils.Info("Analytical DB already connected, skipping initialization.")
-		}
-
+		return connectAnalyticsDB(config)
 	case Tech:
-		// Only connect if not already connected
-		if DBtechRead == nil {
-			dsnRead := GetMySQLDSN(
-				config.DbUserTech,
-				config.DbPasswordTech,
-				config.DbServerTechRead,
-				config.DbNameTech,
-			)
-
-			fmt.Println("DSN Read: ", dsnRead)
-
-			// Connect to Tech DB
-			DBtechRead, err = gorm.Open(mysql.Open(dsnRead), &gorm.Config{})
-			if err != nil {
-				utils.Error(err)
-				return fmt.Errorf("failed to connect to Tech Read DB: %w", err)
-			}
-			utils.Info("Database connection established for Tech Read DB.")
-		} else {
-			utils.Info("Tech Read DB already connected, skipping initialization.")
+		// Connect both read and write connections for Tech DB
+		if err := connectTechDB(ConnectionTypeRead, config); err != nil {
+			return err
 		}
-
-		if DBtechWrite == nil {
-			dsnWrite := GetMySQLDSN(
-				config.DbUserTech,
-				config.DbPasswordTech,
-				config.DbServerTechWrite,
-				config.DbNameTech,
-			)
-			// Connect to Tech DB
-			DBtechWrite, err = gorm.Open(mysql.Open(dsnWrite), &gorm.Config{})
-			if err != nil {
-				return fmt.Errorf("failed to connect to Tech Write DB: %w", err)
-			}
-			utils.Info("Database connection established for Tech Write DB.")
-		} else {
-			utils.Info("Tech Write DB already connected, skipping initialization.")
+		if err := connectTechDB(ConnectionTypeWrite, config); err != nil {
+			return err
 		}
-
+		return nil
 	default:
 		return fmt.Errorf("invalid database type: %s", dbType)
+	}
+}
+
+// pingDatabase is a generic function to ping any database connection
+func pingDatabase(db *gorm.DB, dbName string) error {
+	if db == nil {
+		return fmt.Errorf("%s is not initialized", dbName)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB for %s: %w", dbName, err)
+	}
+
+	if err := sqlDB.Ping(); err != nil {
+		return fmt.Errorf("ping failed for %s: %w", dbName, err)
 	}
 
 	return nil
 }
 
+// PingTechReadDB pings the Tech Read database connection
 func PingTechReadDB() error {
-	if DBtechRead == nil {
-		return errors.New("tech Read DB is not initialized")
-	}
-	sqlDB, err := DBtechRead.DB()
-	if err != nil {
-		return err
-	}
-	return sqlDB.Ping()
+	return pingDatabase(DBtechRead, "Tech Read DB")
 }
 
+// PingTechWriteDB pings the Tech Write database connection
 func PingTechWriteDB() error {
-	if DBtechWrite == nil {
-		return errors.New("tech Write DB is not initialized")
-	}
-	sqlDB, err := DBtechWrite.DB()
-	if err != nil {
-		return err
-	}
-	return sqlDB.Ping()
+	return pingDatabase(DBtechWrite, "Tech Write DB")
+}
+
+// PingAnalyticsDB pings the Analytics database connection
+func PingAnalyticsDB() error {
+	return pingDatabase(DBanalytics, "Analytics DB")
 }
