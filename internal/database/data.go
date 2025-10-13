@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -48,13 +49,31 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 		}
 
 		for i, colName := range columns {
+			// utils.Debug(fmt.Sprintf("Hello %s %v %v", colName, rawData[i], reflect.TypeOf(rawData[i])))
 			val := rawData[i]
-			// Normalize MySQL []uint8 (raw bytes) to string
-			switch v := val.(type) {
-			case []byte:
-				row[colName] = string(v)
-			default:
-				row[colName] = v
+
+			// Handle different data types from MySQL
+			if val == nil {
+				row[colName] = nil
+			} else if bytes, ok := val.([]byte); ok {
+				// Special handling for Stage column (decimal) - convert to float64
+				if colName == "Stage" {
+					if str := string(bytes); str != "" {
+						if floatVal, err := strconv.ParseFloat(str, 64); err == nil {
+							row[colName] = floatVal
+						} else {
+							row[colName] = str // fallback to string if parsing fails
+						}
+					} else {
+						row[colName] = nil
+					}
+				} else {
+					// Convert other []byte columns to string
+					row[colName] = string(bytes)
+				}
+			} else {
+				// Keep other types as-is (int, time.Time, etc.)
+				row[colName] = val
 			}
 		}
 
