@@ -1,6 +1,7 @@
 package sinchWhatsapp
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -71,7 +72,10 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
-	fmt.Println("WHatsapp payload:", apiPayload)
+	// fmt.Println("WHatsapp payload:", apiPayload)
+
+	jsonBytes, _ := json.Marshal(apiPayload)
+	utils.Debug(fmt.Sprintf("Sinch Whatsapp payload for mobile: %s and templateName: %s is: %s", sinchApiModel.Mobile, sinchApiModel.TemplateName, string(jsonBytes)))
 
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {

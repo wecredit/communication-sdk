@@ -55,7 +55,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	}
 
 	// Step 2: Once you have responseId, update the value of transactionId in redis
-	if err := channelHelper.UpdateRedisTransactionId(msg.Mobile, msg.Channel, response.TransactionId); err != nil {
+	if err := channelHelper.UpdateRedisTransactionId(msg.Mobile, msg.Channel, msg.Stage, response.TransactionId); err != nil {
 		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
 	}
 
@@ -79,7 +79,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
-		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel); err != nil {
+		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
 			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}
 	}

@@ -162,12 +162,11 @@ func PopulateEmailFields(req *extapimodels.EmailRequestBody, data map[string]int
 	}
 }
 
-
 // HandleTemplateNotFoundError handles the common template not found error pattern
 func HandleTemplateNotFoundError(msg sdkModels.CommApiRequestBody, err error) (bool, map[string]interface{}, error) {
 	LogTemplateNotFound(msg, err)
 	errorMessage := "template not found for mobile: " + msg.Mobile + " for stage: " + fmt.Sprintf("%.2f", msg.Stage)
-	if updateErr := UpdateRedisErrorMessage(msg.Mobile, msg.Channel, errorMessage); updateErr != nil {
+	if updateErr := UpdateRedisErrorMessage(msg.Mobile, msg.Channel, msg.Stage, errorMessage); updateErr != nil {
 		utils.Error(fmt.Errorf("failed to update Redis for template not found: %v", updateErr))
 	}
 
@@ -182,7 +181,7 @@ func HandleTemplateNotFoundError(msg sdkModels.CommApiRequestBody, err error) (b
 }
 
 // HandleShouldHitVendorOffError handles the common shouldHitVendor is off error pattern
-func HandleShouldHitVendorOffError(mobile, channel string) error {
+func HandleShouldHitVendorOffError(mobile, channel string, stage float64) error {
 	errorMessage := fmt.Sprintf("shouldHitVendor is off for mobile: %s and channel: %s", mobile, channel)
-	return UpdateRedisErrorMessage(mobile, channel, errorMessage)
+	return UpdateRedisErrorMessage(mobile, channel, stage, errorMessage)
 }
