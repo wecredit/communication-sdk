@@ -65,28 +65,28 @@ func ResetCreditSeaCounter(ctx context.Context, redisClient *redis.Client, key s
 }
 
 // Check if mobile_channel exists and return both transactionId and errorMessage if present
-func CheckIfMobileExists(CommIdempotentKey string, redisKey string, rdb *redis.Client) (string, string, bool, error) {
+func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redis.Client) (bool,string, string, error) {
 	ctx := context.Background()
 	val, err := rdb.HGet(ctx, CommIdempotentKey, redisKey).Result()
 	if err == redis.Nil {
 		utils.Info(fmt.Sprintf("[redis]: %s does not exist. Proceed for communication", redisKey))
-		return "", "", false, nil
+		return false, "", "", nil
 	}
 	if err != nil {
-		return "", "", false, err
+		return false,"", "", err
 	}
 
 	// Try to parse as JSON first (new format)
 	var data redisModels.MobileChannelRedisData
 	if err := json.Unmarshal([]byte(val), &data); err == nil {
 		utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s, ErrorMessage: %s", redisKey, data.TransactionId, data.ErrorMessage))
-		return data.TransactionId, data.ErrorMessage, true, nil
+		return true, data.TransactionId, data.ErrorMessage, nil
 	}
 
 	// Fallback to old format (single string value)
 	// If it's not JSON, treat it as the old format where everything was stored as transactionId
 	utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s", redisKey, val))
-	return val, "", true, nil
+	return true, val, "", nil
 }
 
 // 1. Create a field (mobile_channel) inside CommIdempotentKey with blank value
@@ -118,23 +118,10 @@ func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, re
 func UpdateTransactionId(RDB *redis.Client, commIdempotentKey, redisKey, transactionId string) error {
 	ctx := context.Background()
 
-	// Get existing data
-	val, err := RDB.HGet(ctx, commIdempotentKey, redisKey).Result()
-	if err != nil && err != redis.Nil {
-		return fmt.Errorf("failed to get existing data for key %s: %v", redisKey, err)
-	}
-
-	var data redisModels.MobileChannelRedisData
-	if val != "" {
-		// Try to parse existing JSON data
-		if err := json.Unmarshal([]byte(val), &data); err != nil {
-			// If it's not JSON, treat as old format and preserve as errorMessage
-			data.ErrorMessage = val
-		}
-	}
-
 	// Update transactionId
-	data.TransactionId = transactionId
+	data := redisModels.MobileChannelRedisData{
+		TransactionId: transactionId,
+	}
 
 	// Marshal back to JSON
 	jsonData, err := json.Marshal(data)
