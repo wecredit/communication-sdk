@@ -196,21 +196,37 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	redisKey := fmt.Sprintf("%s_%s", data.Mobile, strings.ToUpper(data.Channel))
 
 	// check if message already sent for once
-	redisKeyVal, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	transactionId, errorMessage, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
-		utils.Error(fmt.Errorf("error in checking mobile on redis: %v", err))
+		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
 	}
 
 	if exists {
-		// check for redisKeyVal, if exists -> save in database, else -> send message to error queue.
-		if redisKeyVal != "" {
-			fmt.Println("Redis key is not blank", redisKeyVal)
-		} else {
-			fmt.Println("Redis key is blank. send to error queue.")
+		// check for transactionId, if exists -> save in database, else -> send message to error queue.
+		if transactionId != "" {
+			// check if record already exists in output table
+			dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKey, transactionId)
+			if err != nil {
+				utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
+				return false
+			}
+
+			// for debugging purpose
+			if dataExistsAlready {
+				utils.Debug("Data already exists in output table, skipping processing")
+			} else {
+				utils.Debug("Data does not exist in output table, inserted new record")
+			}
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
 		}
 
-		// do not delete the message
-		return false
+		// If we have an error message but no transactionId, we can also skip processing
+		if errorMessage != "" {
+			utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s with error: %s, skipping", redisKey, errorMessage))
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
+		}
 	}
 
 	// If not exists, add key with blank value

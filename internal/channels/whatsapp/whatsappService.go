@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/wecredit/communication-sdk/config"
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
@@ -41,23 +39,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 
 	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
-		channelHelper.LogTemplateNotFound(msg, err)
-		// update in redis for no template found
-		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, "template not found")
-		if err != nil {
-			utils.Error(fmt.Errorf("redis update value failed: %v", err))
-		}
-
-		dbResponse := map[string]interface{}{
-			"CommId":          msg.CommId,
-			"Vendor":          msg.Vendor,
-			"MobileNumber":    msg.Mobile,
-			"IsSent":          false,
-			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
-		}
-
-		return true, dbResponse, nil // message processed but not sent as Template not found
+		return channelHelper.HandleTemplateNotFoundError(msg, err)
 	}
 
 	msg.Vendor = matchedVendor
@@ -85,11 +67,9 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 
 	// delete message then insert in the database.
 
-	// Step 2: Once you have responseId, update the value
-	redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-	err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
-	if err != nil {
-		utils.Error(fmt.Errorf("redis update value failed: %v", err))
+	// Step 2: Once you have responseId, update the value of transactionId in redis
+	if err := channelHelper.UpdateRedisTransactionId(msg.Mobile, msg.Channel, response.TransactionId); err != nil {
+		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
 	}
 
 	response.CommId = msg.CommId
@@ -113,15 +93,12 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	}
 
 	if !shouldHitVendor {
-		// Step 2: Once you have responseId, update the value
-		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		response.TransactionId = "shouldHitVendor is off"
-		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
-		if err != nil {
-			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		// Step 2: Once you have error message, update the error message in redis
+		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel); err != nil {
+			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}
 	}
-	
+
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
 	return true, dbMappedData, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
 
