@@ -4,14 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
 	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
-	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -26,22 +23,9 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	}
 	templateData, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
 	if err != nil {
-		channelHelper.LogTemplateNotFound(msg, err)
-		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, "template not found")
-		if err != nil {
-			utils.Error(fmt.Errorf("redis update value failed: %v", err))
-		}
-
-		dbResponse := map[string]interface{}{
-			"CommId":          msg.CommId,
-			"Vendor":          msg.Vendor,
-			"MobileNumber":    msg.Mobile,
-			"IsSent":          false,
-			"ResponseMessage": fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s and Vendor: %s", msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor),
-		}
-		return true, dbResponse, nil // message processed but not sent as Template not found
+		return channelHelper.HandleTemplateNotFoundError(msg, err)
 	}
+
 	msg.Vendor = matchedVendor
 
 	req := extapimodels.SmsRequestBody{
@@ -71,11 +55,9 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 		}
 	}
 
-	// Step 2: Once you have responseId, update the value
-	redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-	err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
-	if err != nil {
-		utils.Error(fmt.Errorf("redis update value failed: %v", err))
+	// Step 2: Once you have responseId, update the value of transactionId in redis
+	if err := channelHelper.UpdateRedisTransactionId(msg.Mobile, msg.Channel, msg.Stage, response.TransactionId); err != nil {
+		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
 	}
 
 	response.DltTemplateId = req.DltTemplateId
@@ -97,13 +79,9 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	}
 
 	if !shouldHitVendor {
-		// Step 2: Once you have responseId, update the value
-		redisKey := fmt.Sprintf("%s_%s", msg.Mobile, strings.ToUpper(msg.Channel))
-		response.TransactionId = fmt.Sprintf("shouldHitVendor is off for mobile %s", msg.Mobile)
-		dbMappedData["TransactionId"] = response.TransactionId
-		err = redis.UpdateMobileChannelValue(redis.RDB, config.Configs.CommIdempotentKey, redisKey, response.TransactionId)
-		if err != nil {
-			utils.Error(fmt.Errorf("redis update value failed: %v", err))
+		// Step 2: Once you have error message, update the error message in redis
+		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
+			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}
 	}
 

@@ -2,9 +2,11 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
 )
@@ -62,18 +64,29 @@ func ResetCreditSeaCounter(ctx context.Context, redisClient *redis.Client, key s
 	return redisClient.Set(ctx, key, 0, 0).Err()
 }
 
-// Check if mobile_channel exists and return value if present
-func CheckIfMobileExists(CommIdempotentKey string, redisKey string, rdb *redis.Client) (string, bool, error) {
+// Check if mobile_channel exists and return both transactionId and errorMessage if present
+func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redis.Client) (bool,string, string, error) {
 	ctx := context.Background()
 	val, err := rdb.HGet(ctx, CommIdempotentKey, redisKey).Result()
 	if err == redis.Nil {
-		utils.Info(fmt.Sprintf("[redis]: %s does not exist Proceed for communication", redisKey))
-		return "", false, nil
+		utils.Info(fmt.Sprintf("[redis]: %s does not exist. Proceed for communication", redisKey))
+		return false, "", "", nil
 	}
 	if err != nil {
-		return "", false, err
+		return false,"", "", err
 	}
-	return val, true, nil
+
+	// Try to parse as JSON first (new format)
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(val), &data); err == nil {
+		utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s, ErrorMessage: %s", redisKey, data.TransactionId, data.ErrorMessage))
+		return true, data.TransactionId, data.ErrorMessage, nil
+	}
+
+	// Fallback to old format (single string value)
+	// If it's not JSON, treat it as the old format where everything was stored as transactionId
+	utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s", redisKey, val))
+	return true, val, "", nil
 }
 
 // 1. Create a field (mobile_channel) inside CommIdempotentKey with blank value
@@ -89,6 +102,7 @@ func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) 
 }
 
 // 2. Update the value (e.g. responseId) for an existing mobile_channel key
+// This function is kept for backward compatibility
 func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, responseId string) error {
 	ctx := context.Background()
 	err := RDB.HSet(ctx, commIdempotentKey, redisKey, responseId).Err()
@@ -97,5 +111,66 @@ func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, re
 		return err
 	}
 	utils.Info(fmt.Sprintf("Key %s in hash %s updated with value %s", redisKey, commIdempotentKey, responseId))
+	return nil
+}
+
+// UpdateTransactionId updates the transactionId for an existing mobile_channel key
+func UpdateTransactionId(RDB *redis.Client, commIdempotentKey, redisKey, transactionId string) error {
+	ctx := context.Background()
+
+	// Update transactionId
+	data := redisModels.MobileChannelRedisData{
+		TransactionId: transactionId,
+	}
+
+	// Marshal back to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data: %v", err)
+	}
+
+	err = RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err()
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to update transactionId for key %s in redis: %v", redisKey, err))
+		return err
+	}
+	utils.Info(fmt.Sprintf("Key %s in hash %s updated with transactionId %s", redisKey, commIdempotentKey, transactionId))
+	return nil
+}
+
+// UpdateErrorMessage updates the errorMessage for an existing mobile_channel key
+func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMessage string) error {
+	ctx := context.Background()
+
+	// Get existing data
+	val, err := RDB.HGet(ctx, commIdempotentKey, redisKey).Result()
+	if err != nil && err != redis.Nil {
+		return fmt.Errorf("failed to get existing data for key %s: %v", redisKey, err)
+	}
+
+	var data redisModels.MobileChannelRedisData
+	if val != "" {
+		// Try to parse existing JSON data
+		if err := json.Unmarshal([]byte(val), &data); err != nil {
+			// If it's not JSON, treat as old format and preserve as transactionId
+			data.TransactionId = val
+		}
+	}
+
+	// Update errorMessage
+	data.ErrorMessage = errorMessage
+
+	// Marshal back to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data: %v", err)
+	}
+
+	err = RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err()
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to update errorMessage for key %s in redis: %v", redisKey, err))
+		return err
+	}
+	utils.Info(fmt.Sprintf("Key %s in hash %s updated with errorMessage %s", redisKey, commIdempotentKey, errorMessage))
 	return nil
 }

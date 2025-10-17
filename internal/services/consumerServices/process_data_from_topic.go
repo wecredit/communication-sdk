@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
@@ -197,23 +198,24 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// continue
 	// else store key in redis (mobile_channel)
 
-	// redis fails, project close
-
-	redisKey := fmt.Sprintf("%s_%s", data.Mobile, strings.ToUpper(data.Channel))
+	// Convert stage to string for Redis key
+	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
 
 	// check if message already sent for once
-	transactionId, exists, err := redis.CheckIfMobileExists(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
-		utils.Error(fmt.Errorf("error in checking mobile on redis: %v", err))
+		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
+		return false // message is not processed as redis check failed
 	}
 
+	// If we have data from Redis, handle accordingly
 	if exists {
-		// check for transactionId stored in the rediskey, if exists -> save in database, else -> send message to error queue.
+		// Priority: If we have a transactionId, the message was successfully processed before
 		if transactionId != "" {
 			// check if record already exists in output table
 			dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKey, transactionId)
 			if err != nil {
-				utils.Error(fmt.Errorf("error checking if data exists: %v", err))
+				utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
 				return false
 			}
 
@@ -223,14 +225,18 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			} else {
 				utils.Debug("Data does not exist in output table, inserted new record")
 			}
-		} else {
-			if queueErr := queue.SendMessageWithSubject(sqsClient, msg, config.Configs.AwsErrorQueueUrl, variables.RedisValueMissing, ""); queueErr != nil {
-				utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
-			}
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
 		}
 
-		deleteMessage(ctx, sqsClient, queueURL, msg, data)
-		return true // message processed
+		// If we have an error message (and no transactionId), skip processing
+		if errorMessage != "" && transactionId == "" {
+			utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s with error: %s, skipping", redisKey, errorMessage))
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
+		}
+
+		return false // message not processed as redis key exists
 	}
 
 	// If not exists, add key with blank value
