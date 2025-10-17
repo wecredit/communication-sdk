@@ -23,7 +23,7 @@ func NewTemplateService(db *gorm.DB) *TemplateService {
 	return &TemplateService{DB: db}
 }
 
-func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
+func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.TemplateDetails, error) {
 	// cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
@@ -31,7 +31,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 		return nil, errors.New("template data not found in cache")
 	}
 
-	var templates []apiModels.Templatedetails
+	var templates []apiModels.TemplateDetails
 
 	// Case 1: all params provided → direct key lookup
 	if process != "" && stage != "" && client != "" && channel != "" && vendor != "" {
@@ -42,7 +42,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 				utils.Error(fmt.Errorf("failed to convert cache data to template: %v", err))
 				return nil, err
 			}
-			return []apiModels.Templatedetails{*template}, nil
+			return []apiModels.TemplateDetails{*template}, nil
 		}
 		return nil, nil // no match
 	}
@@ -85,7 +85,7 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 	return templates, nil
 }
 
-func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, error) {
+func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.TemplateDetails, error) {
 	idIndex, found := cache.GetCache().GetMappedIdData(cache.TemplateDetailsData + ":IdIndex")
 	if !found {
 		utils.Error(fmt.Errorf("template Id index not found in cache"))
@@ -117,7 +117,7 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 	return template, nil
 }
 
-func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
+func (s *TemplateService) AddTemplate(template *apiModels.TemplateDetails) error {
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
 	template.Process = strings.ToUpper(template.Process)
@@ -136,7 +136,7 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 }
 
 func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interface{}) error {
-	var existing apiModels.Templatedetails
+	var existing apiModels.TemplateDetails
 	if err := s.DB.Where("id = ?", id).First(&existing).Error; err != nil {
 		return errors.New("template not found")
 	}
@@ -154,7 +154,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interfac
 }
 
 func (s *TemplateService) DeleteTemplate(id int) error {
-	result := s.DB.Where("id = ?", id).Delete(&apiModels.Templatedetails{})
+	result := s.DB.Where("id = ?", id).Delete(&apiModels.TemplateDetails{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -165,7 +165,7 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
 	return nil
 }
-func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, error) {
+func mapToTemplate(data map[string]interface{}) (*apiModels.TemplateDetails, error) {
 	if data == nil {
 		return nil, fmt.Errorf("input data is nil")
 	}
@@ -202,14 +202,14 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		return 0
 	}
 
-	getBool := func(key string) bool {
+	_ = func(key string) bool {
 		if val, ok := data[key].(int64); ok {
 			return val == 1
 		}
 		return false
 	}
 
-	template := &apiModels.Templatedetails{
+	template := &apiModels.TemplateDetails{
 		Id:                getInt("Id"),
 		Client:            getStr("Client"),
 		Channel:           getStr("Channel"),
@@ -220,7 +220,7 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		ImageId:           getStr("ImageId"),
 		ImageUrl:          getStr("ImageUrl"),
 		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
-		IsActive:          getBool("IsActive"),
+		IsActive:          getInt("IsActive"),
 		TemplateText:      getStr("TemplateText"),
 		TemplateCategory:  int64(getInt("TemplateCategory")),
 		TemplateVariables: getStr("TemplateVariables"),

@@ -57,7 +57,7 @@ func (h *VendorHandler) GetVendorByID(c *gin.Context) {
 }
 
 func (h *VendorHandler) AddVendor(c *gin.Context) {
-	var vendor apiModels.Vendor
+	var vendor apiModels.Vendors
 	if c.Request.Method != "POST" {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method NOT ALLOWED "})
 		return
@@ -80,7 +80,7 @@ func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 	name := c.Param("name")
 	channel := c.Param("channel")
 
-	var vendor apiModels.Vendor
+	var vendor apiModels.Vendors
 
 	if err := c.ShouldBindJSON(&vendor); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body"})

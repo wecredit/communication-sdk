@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
 )
@@ -87,6 +88,51 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 	// jsonData, _ := json.Marshal(results) // Optional: Serialize for readability
 	utils.Info(fmt.Sprintf("Fetched data from table '%s'", tableName))
 
+	return results, nil
+}
+
+// TableModelMapping maps table names to their corresponding struct models
+var TableModelMapping = map[string]interface{}{
+	"Userbasicauth":   &apiModels.Userbasicauth{},
+	"Vendors":         &apiModels.Vendors{},
+	"Clients":         &apiModels.Clients{},
+	"TemplateDetails": &apiModels.TemplateDetails{},
+}
+
+// AddTableMapping allows adding new table-to-struct mappings dynamically
+// Usage: AddTableMapping("NewTable", &apiModels.NewStruct{})
+func AddTableMapping(tableName string, model interface{}) {
+	TableModelMapping[tableName] = model
+}
+
+// GetDataFromTableWithStruct fetches data from the specified table using GORM with struct models
+// This is the preferred method over GetDataFromTable as it provides type safety
+func GetDataFromTableWithStruct(tableName string, db *gorm.DB) ([]map[string]interface{}, error) {
+	if tableName == "" {
+		return nil, fmt.Errorf("table name cannot be empty")
+	}
+
+	// Check if table is mapped to a struct model
+	model, exists := TableModelMapping[tableName]
+	if !exists {
+		// Fallback to raw query for unmapped tables
+		utils.Warn(fmt.Sprintf("Table '%s' not mapped to struct, falling back to raw query", tableName))
+		return GetDataFromTable(tableName, db)
+	}
+
+	// Use GORM's Model() method with explicit table name - this ensures correct table name is used!
+	var results []map[string]interface{}
+	err := db.Model(model).Table(tableName).Find(&results).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch data from table %s: %w", tableName, err)
+	}
+
+	if len(results) < 1 {
+		utils.Info("No data found")
+	}
+
+	utils.Info(fmt.Sprintf("Fetched data from table '%s' using GORM", tableName))
 	return results, nil
 }
 

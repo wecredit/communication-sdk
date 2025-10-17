@@ -21,14 +21,14 @@ func NewVendorService(db *gorm.DB) *VendorService {
 	return &VendorService{DB: db}
 }
 
-func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, error) {
+func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendors, error) {
 	vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
 	if !found {
 		utils.Error(fmt.Errorf("vendor data not found in cache"))
 		return nil, errors.New("vendor data not found in cache")
 	}
 
-	var vendors []apiModels.Vendor
+	var vendors []apiModels.Vendors
 
 	// Case 1: Both name and channel provided -> direct key lookup
 	if name != "" && channel != "" {
@@ -39,7 +39,7 @@ func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, er
 				utils.Error(fmt.Errorf("failed to convert cache data to vendor: %v", err))
 				return nil, err
 			}
-			return []apiModels.Vendor{*vendor}, nil
+			return []apiModels.Vendors{*vendor}, nil
 		}
 		return nil, nil // No match found
 	}
@@ -60,7 +60,7 @@ func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, er
 	return vendors, nil
 }
 
-func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
+func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendors, error) {
 	// Fetch Id index
 	idIndex, found := cache.GetCache().GetMappedIdData(cache.VendorsData + ":IdIndex")
 	if !found {
@@ -95,10 +95,10 @@ func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
 	return vendor, nil
 }
 
-func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
+func (s *VendorService) AddVendor(vendor *apiModels.Vendors) error {
 	var totalWeight int64
 
-	err := s.DB.Model(apiModels.Vendor{}).
+	err := s.DB.Model(apiModels.Vendors{}).
 		Where("channel = ? AND status = 1", vendor.Channel).
 		Select("COALESCE(SUM(weight), 0)").
 		Scan(&totalWeight).Error
@@ -126,15 +126,15 @@ func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
 	return nil
 }
 
-func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updates apiModels.Vendor) error {
-	var existing apiModels.Vendor
+func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updates apiModels.Vendors) error {
+	var existing apiModels.Vendors
 	if err := s.DB.Where("name = ? AND channel = ?", name, channel).First(&existing).Error; err != nil {
 		return errors.New("vendor not found")
 	}
 
 	// Calculate total weight excluding this vendor
 	var sum int64
-	if err := s.DB.Model(&apiModels.Vendor{}).
+	if err := s.DB.Model(&apiModels.Vendors{}).
 		Where("channel = ? AND status = 1 AND name != ?", channel, name).
 		Select("COALESCE(SUM(weight), 0)").Scan(&sum).Error; err != nil {
 		return err
@@ -161,7 +161,7 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 }
 
 func (s *VendorService) DeleteVendor(id int) error {
-	result := s.DB.Where("id = ?", id).Delete(&apiModels.Vendor{})
+	result := s.DB.Where("id = ?", id).Delete(&apiModels.Vendors{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -176,8 +176,8 @@ func (s *VendorService) DeleteVendor(id int) error {
 }
 
 // Helper function to convert map to Vendor struct
-func mapToVendor(data map[string]interface{}) (*apiModels.Vendor, error) {
-	vendor := &apiModels.Vendor{
+func mapToVendor(data map[string]interface{}) (*apiModels.Vendors, error) {
+	vendor := &apiModels.Vendors{
 		Id:        int(data["Id"].(int64)),
 		Name:      data["Name"].(string),
 		Channel:   data["Channel"].(string),

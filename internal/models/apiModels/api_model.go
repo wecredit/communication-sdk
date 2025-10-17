@@ -9,7 +9,7 @@ type WpApiResponseData struct {
 	ResponseId string `json:"responseId"`
 }
 
-type Vendor struct {
+type Vendors struct {
 	Id        int        `json:"id"`
 	Name      string     `gorm:"column:Name" json:"name" binding:"required"`
 	Channel   string     `gorm:"column:Channel" json:"channel" binding:"required"`
@@ -20,7 +20,7 @@ type Vendor struct {
 	UpdatedOn *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
 }
 
-type Client struct {
+type Clients struct {
 	Id                 int        `json:"id"`
 	Name               string     `gorm:"column:Name" json:"name"`
 	Channel            string     `gorm:"column:Channel" json:"channel"`
@@ -28,16 +28,18 @@ type Client struct {
 	RateLimitPerMinute int        `gorm:"column:RateLimitPerMinute" json:"rateLimitPerMinute"`
 	CreatedOn          time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn          *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
+	ShouldHitVendor    int        `gorm:"column:ShouldHitVendor" json:"shouldHitVendor"`
 }
 
 type Userbasicauth struct {
-	Id        int       `json:"Id"`
-	Username  string    `gorm:"column:username" json:"username" binding:"required"`
-	Password  string    `gorm:"column:password" json:"password" binding:"required"`
-	CreatedOn time.Time `gorm:"column:createdOn" json:"createdOn,omitempty"`
+	Id         int       `json:"Id"`
+	Username   string    `gorm:"column:username" json:"username" binding:"required"`
+	Password   string    `gorm:"column:password" json:"password" binding:"required"`
+	CreatedOn  time.Time `gorm:"column:createdOn" json:"createdOn,omitempty"`
+	ExpiryDate time.Time `gorm:"column:expiryDate" json:"expiryDate,omitempty"`
 }
 
-type Templatedetails struct {
+type TemplateDetails struct {
 	Id                int        `json:"id"`
 	Client            string     `gorm:"column:Client" json:"client,omitempty"`
 	Channel           string     `gorm:"column:Channel" json:"channel"`
@@ -48,7 +50,7 @@ type Templatedetails struct {
 	ImageId           string     `gorm:"column:ImageId" json:"imageId,omitempty"`
 	ImageUrl          string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
 	DltTemplateId     int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
-	IsActive          bool       `gorm:"column:IsActive" json:"isActive"`
+	IsActive          int        `gorm:"column:IsActive" json:"isActive"`
 	TemplateText      string     `gorm:"column:TemplateText" json:"templateText,omitempty"`
 	Link              string     `gorm:"column:Link" json:"link,omitempty"`
 	CreatedOn         time.Time  `gorm:"column:CreatedOn" json:"createdOn"`

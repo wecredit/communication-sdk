@@ -57,7 +57,7 @@ func (h *ClientHandler) GetClientByID(c *gin.Context) {
 }
 
 func (h *ClientHandler) AddClient(c *gin.Context) {
-	var client apiModels.Client
+	var client apiModels.Clients
 	if c.Request.Method != "POST" {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "METHOD NOT ALLOWED "})
 		return
@@ -85,7 +85,7 @@ func (h *ClientHandler) UpdateClientByNameAndChannel(c *gin.Context) {
 	name := c.Param("name")
 	channel := c.Param("channel")
 
-	var client apiModels.Client
+	var client apiModels.Clients
 
 	if err := c.ShouldBindJSON(&client); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid JSON body: %v", err)})

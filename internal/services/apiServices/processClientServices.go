@@ -21,14 +21,14 @@ func NewClientService(db *gorm.DB) *ClientService {
 	return &ClientService{DB: db}
 }
 
-func (s *ClientService) GetClients(channel, name string) ([]apiModels.Client, error) {
+func (s *ClientService) GetClients(channel, name string) ([]apiModels.Clients, error) {
 	clientDetails, found := cache.GetCache().GetMappedData(cache.ClientsData)
 	if !found {
 		utils.Error(fmt.Errorf("client data not found in cache"))
 		return nil, errors.New("client data not found in cache")
 	}
 
-	var clients []apiModels.Client
+	var clients []apiModels.Clients
 
 	// Case 1: Both name and channel provided -> direct key lookup
 	if name != "" && channel != "" {
@@ -39,7 +39,7 @@ func (s *ClientService) GetClients(channel, name string) ([]apiModels.Client, er
 				utils.Error(fmt.Errorf("failed to convert cache data to client: %v", err))
 				return nil, err
 			}
-			return []apiModels.Client{*client}, nil
+			return []apiModels.Clients{*client}, nil
 		}
 		return nil, nil // No match
 	}
@@ -60,7 +60,7 @@ func (s *ClientService) GetClients(channel, name string) ([]apiModels.Client, er
 	return clients, nil
 }
 
-func (s *ClientService) GetClientByID(id uint) (*apiModels.Client, error) {
+func (s *ClientService) GetClientByID(id uint) (*apiModels.Clients, error) {
 	idIndex, found := cache.GetCache().GetMappedIdData(cache.ClientsData + ":IdIndex")
 	if !found {
 		utils.Error(fmt.Errorf("client Id index not found in cache"))
@@ -92,7 +92,7 @@ func (s *ClientService) GetClientByID(id uint) (*apiModels.Client, error) {
 	return client, nil
 }
 
-func (s *ClientService) AddClient(client *apiModels.Client) error {
+func (s *ClientService) AddClient(client *apiModels.Clients) error {
 	var clientName string
 	err := s.DB.Model(apiModels.Userbasicauth{}).
 		Where("username = ?", client.Name).
@@ -121,8 +121,8 @@ func (s *ClientService) AddClient(client *apiModels.Client) error {
 	return nil
 }
 
-func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updates apiModels.Client) error {
-	var existing apiModels.Client
+func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updates apiModels.Clients) error {
+	var existing apiModels.Clients
 	if err := s.DB.Where("name = ? AND channel = ?", name, channel).First(&existing).Error; err != nil {
 		return errors.New("client not found")
 	}
@@ -144,7 +144,7 @@ func (s *ClientService) UpdateClientByNameAndChannel(name, channel string, updat
 }
 
 func (s *ClientService) DeleteClient(id int) error {
-	result := s.DB.Where("id = ?", id).Delete(&apiModels.Client{})
+	result := s.DB.Where("id = ?", id).Delete(&apiModels.Clients{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -200,8 +200,8 @@ func (s *ClientService) ValidateCredentials(username, password, channel string) 
 }
 
 // Helper function to convert map to Client struct
-func mapToClient(data map[string]interface{}) (*apiModels.Client, error) {
-	client := &apiModels.Client{
+func mapToClient(data map[string]interface{}) (*apiModels.Clients, error) {
+	client := &apiModels.Clients{
 		Id:                 int(data["Id"].(int64)),
 		Name:               data["Name"].(string),
 		Channel:            data["Channel"].(string),

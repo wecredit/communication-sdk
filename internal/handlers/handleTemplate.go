@@ -60,7 +60,7 @@ func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
 }
 
 func (h *TemplateHandler) AddTemplate(c *gin.Context) {
-	var template apiModels.Templatedetails
+	var template apiModels.TemplateDetails
 	if c.Request.Method != "POST" {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "METHOD NOT ALLOWED "})
 		return
