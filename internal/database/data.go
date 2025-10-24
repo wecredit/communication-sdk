@@ -93,7 +93,7 @@ func GetDataFromTable(tableName string, db *gorm.DB) ([]map[string]interface{}, 
 
 // TableModelMapping maps table names to their corresponding struct models
 var TableModelMapping = map[string]interface{}{
-	"Userbasicauth":   &apiModels.Userbasicauth{},
+	"userBasicAuths":  &apiModels.Userbasicauth{},
 	"Vendors":         &apiModels.Vendors{},
 	"Clients":         &apiModels.Clients{},
 	"TemplateDetails": &apiModels.TemplateDetails{},

@@ -1,0 +1,24 @@
+LOG: 2025/10/18 17:25:40 logger.go:67: INFO: Redis connection established.
+LOG: 2025/10/18 17:25:41 logger.go:67: INFO: Database connection established for Tech Read DB.
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Database connection established for Tech Write DB.
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Tech Database connection pool initialized successfully.
+AWS SNS client initialized successfully
+AWS SQS client initialized successfully
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Initializing Ristretto cache...
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Fetched data from table 'userBasicAuths' using GORM
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Cache initialized successfully for: authDetails
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Fetched data from table 'Vendors' using GORM
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: fetched 8 entries from DB
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Cache initialized successfully for key: vendorsData
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Fetched data from table 'Clients' using GORM
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: fetched 6 entries from DB
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Cache initialized successfully for key: clientsData
+
+2025/10/18 17:25:42 D:/go/src/github.com/wecredit/communication-sdk/internal/database/data.go:125 SLOW SQL >= 200ms
+[206.217ms] [rows:252] SELECT * FROM `TemplateDetails`
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Fetched data from table 'TemplateDetails' using GORM
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: fetched 252 entries from DB
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: Cache initialized successfully for key: templateDetailsData
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: user basic auth: [map[CreatedOn:2025-04-30 12:58:02 +0530 IST Id:1 expiryDate:<nil> password:Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU= username:wecredit] map[CreatedOn:2025-06-05 15:42:36 +0530 IST Id:2 expiryDate:<nil> password:FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9 username:creditsea] map[CreatedOn:2025-07-07 12:47:35 +0530 IST Id:3 expiryDate:<nil> password:eFY@OHJMbSMxcUR6IVRnRQ== username:apiengine] map[CreatedOn:2025-07-14 12:29:38 +0530 IST Id:4 expiryDate:<nil> password:zxcvbnm,./ZXCVBNM<>? username:wcTest]]  
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: client data: map[Name:creditsea|Channel:EMAIL:map[Channel:EMAIL CreatedOn:2025-07-15 18:25:01 +0530 IST Id:10 Name:creditsea RateLimitPerMinute:100 ShouldHitVendor:0 Status:1 UpdatedOn:<nil>] Name:creditsea|Channel:RCS:map[Channel:RCS CreatedOn:2025-07-09 13:48:17 +0530 IST Id:8 Name:creditsea RateLimitPerMinute:100 ShouldHitVendor:0 Status:1 UpdatedOn:<nil>] Name:creditsea|Channel:SMS:map[Channel:SMS CreatedOn:2025-06-10 14:07:50 +0530 IST Id:6 Name:creditsea RateLimitPerMinute:80 ShouldHitVendor:0 Status:1 UpdatedOn:2025-06-17 18:27:05 +0530 IST] Name:creditsea|Channel:WHATSAPP:map[Channel:WHATSAPP CreatedOn:2025-06-05 15:47:27 +0530 IST Id:4 Name:creditsea RateLimitPerMinute:100 ShouldHitVendor:0 Status:1 UpdatedOn:<nil>] Name:wecredit|Channel:SMS:map[Channel:SMS CreatedOn:2025-06-10 14:07:42 +0530 IST Id:5 Name:wecredit RateLimitPerMinute:100 ShouldHitVendor:0 Status:1 UpdatedOn:2025-07-12 15:16:47 +0530 IST] Name:wecredit|Channel:WHATSAPP:map[Channel:WHATSAPP CreatedOn:2025-04-23 20:01:51 +0530 IST Id:1 Name:wecredit RateLimitPerMinute:100 ShouldHitVendor:0 Status:1 UpdatedOn:<nil>]]
+LOG: 2025/10/18 17:25:42 logger.go:67: INFO: vendor data: map[Name:SINCH|Channel:EMAIL:map[Channel:EMAIL CreatedOn:2025-04-30 12:34:07 +0530 IST Id:4 IsHealthy:1 Name:SINCH Status:1 UpdatedOn:<nil> Weight:100] Name:SINCH|Channel:RCS:map[Channel:RCS CreatedOn:2025-04-30 12:33:48 +0530 IST Id:2 IsHealthy:1 Name:SINCH Status:1 UpdatedOn:<nil> Weight:100] Name:SINCH|Channel:SMS:map[Channel:SMS CreatedOn:2025-04-30 12:33:56 +0530 IST Id:3 IsHealthy:1 Name:SINCH Status:1 UpdatedOn:<nil> Weight:70] Name:SINCH|Channel:WHATSAPP:map[Channel:WHATSAPP CreatedOn:2025-04-23 20:04:39 +0530 IST Id:1 IsHealthy:1 Name:SINCH Status:1 UpdatedOn:2025-05-10 18:18:49.853 +0530 IST Weight:80] Name:TIMES|Channel:EMAIL:map[Channel:EMAIL CreatedOn:2025-04-30 12:34:58 +0530 IST Id:8 IsHealthy:1 Name:TIMES Status:1 UpdatedOn:<nil> Weight:100] Name:TIMES|Channel:PUSH:map[Channel:PUSH CreatedOn:2025-04-30 12:34:36 +0530 IST Id:6 IsHealthy:1 Name:TIMES Status:0 UpdatedOn:<nil> Weight:0] Name:TIMES|Channel:SMS:map[Channel:SMS CreatedOn:2025-04-30 12:34:47 +0530 IST Id:7 IsHealthy:1 Name:TIMES Status:1 UpdatedOn:<nil> Weight:30] Name:TIMES|Channel:WHATSAPP:map[Channel:WHATSAPP CreatedOn:2025-04-30 12:34:24 +0530 IST Id:5 IsHealthy:1 Name:TIMES Status:1 UpdatedOn:2025-05-10 18:22:49.453 +0530 IST Weight:1]]

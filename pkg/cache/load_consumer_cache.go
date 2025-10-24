@@ -31,4 +31,33 @@ func LoadConsumerDataIntoCache(config models.Config) {
 	// Store Vendors Data into cache
 	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)
 
+	// userBasicAuth, found := GetCache().Get(AuthDetails)
+	// if !found {
+	// 	utils.Error(fmt.Errorf("user basic auth not found in cache"))
+	// }
+
+	// utils.Info(fmt.Sprintf("user basic auth: %v", userBasicAuth))
+
+
+	// clientDetails, found := GetCache().GetMappedData(ClientsData)
+	// if !found {
+	// 	utils.Error(fmt.Errorf("client data not found in cache"))
+	// }
+
+	// utils.Info(fmt.Sprintf("client data: %v", clientDetails))
+
+	// vendorDetails, found := GetCache().GetMappedData(VendorsData)
+	// if !found {
+	// 	utils.Error(fmt.Errorf("vendor data not found in cache"))
+	// }
+
+	// utils.Info(fmt.Sprintf("vendor data: %v", vendorDetails))
+
+	// templateDetails, found := GetCache().GetMappedData(TemplateDetailsData)
+	// if !found {
+	// 	utils.Error(fmt.Errorf("template data not found in cache"))
+	// }
+
+	// utils.Info(fmt.Sprintf("template data: %v", templateDetails))
+
 }

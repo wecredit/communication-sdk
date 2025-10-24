@@ -80,6 +80,7 @@ func (c *Cache) Get(key string) ([]map[string]interface{}, bool) {
 
 func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 	data, err := database.GetDataFromTableWithStruct(tableName, db)
+	// data, err := database.GetDataFromTable(tableName, db)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to fetch initial data for cache: %v", err))
 	}
@@ -93,6 +94,7 @@ func storeDataIntoCache(key, tableName string, db *gorm.DB) {
 
 func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixColumnName string, db *gorm.DB) {
 	data, err := database.GetDataFromTableWithStruct(tableName, db)
+	// data, err := database.GetDataFromTable(tableName, db)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to fetch initial data for cache: %v", err))
 		return
