@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go/service/sns"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
@@ -90,4 +91,40 @@ func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topic
 	}
 
 	return fmt.Errorf("failed to send message after %d attempts: %w", maxRetries, lastErr)
+}
+
+// SendMessageToErrorQueue moves the message to an error queue in case of processing failure with a subject like inputInsertionFails, outputInsertionFails, apihitsFails
+func SendMessageToErrorQueue(sqsClient *sqs.SQS, messageMap interface{}, queueURL string, subject, errMsg string) error {
+	if sqsClient == nil {
+		return fmt.Errorf("SQS client is not initialized")
+	}
+	// Convert message to JSON
+	messageBytes, err := json.Marshal(messageMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message to JSON: %w", err)
+	}
+
+	// Prepare message attributes (for filtering)
+	messageAttributes := map[string]*sqs.MessageAttributeValue{
+		"Subject": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String(subject),
+		},
+		"Error": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String(errMsg),
+		},
+	}
+
+	// Send message to the queue
+	_, err = SQSClient.SendMessage(&sqs.SendMessageInput{
+		QueueUrl:          aws.String(queueURL),
+		MessageBody:       aws.String(string(messageBytes)),
+		MessageAttributes: messageAttributes,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message to SQS: %w", err)
+	}
+
+	return nil
 }
