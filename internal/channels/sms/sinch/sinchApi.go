@@ -10,6 +10,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// TODO: Make a map for channel and step : function to call
+
 func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	var sinchSmsResponse extapimodels.SmsResponse
 	sinchSmsResponse.IsSent = false

@@ -194,10 +194,10 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// continue
 	// else store key in redis (mobile_channel)
 
-	// Convert stage to string for Redis key
+	// generate redis key
 	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
 
-	// check if message already sent for once
+	// check if message already sent for once, redis key exists
 	exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
@@ -239,6 +239,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	err = redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
 	if err != nil {
 		utils.Error(fmt.Errorf("redis add failed: %v", err))
+		return false // message not processed as redis key addition failed
 	}
 
 	utils.Debug(fmt.Sprintf("Payload: %+v", data))
@@ -251,6 +252,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
+		return false // message not processed as mapping data into dbModel failed
 	}
 
 	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
