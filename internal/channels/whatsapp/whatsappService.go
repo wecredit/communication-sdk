@@ -95,6 +95,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	response.TemplateName = requestBody.TemplateName
 	response.Vendor = msg.Vendor
 	response.MobileNumber = msg.Mobile
+	response.PaymentLink = msg.PaymentLink
 
 	dbMappedData, err := services.MapIntoDbModel(response)
 	if err != nil {
