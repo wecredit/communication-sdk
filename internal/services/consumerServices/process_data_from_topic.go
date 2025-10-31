@@ -369,13 +369,16 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	AssignVendor(&data)
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending Email: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
 
 	if isMessageProcessed {
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
+
+	delete(dbMappedData, "MobileNumber")
+	dbMappedData["Email"] = data.Email
 
 	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
