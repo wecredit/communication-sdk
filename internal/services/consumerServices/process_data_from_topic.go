@@ -376,6 +376,9 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
 
+	delete(dbMappedData, "MobileNumber")
+	dbMappedData["Email"] = data.Email
+
 	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
 		handleErrorAndSendToQueue(ctx, sqsClient, queueURL, msg, dbMappedData, variables.OutputInsertionFails, err.Error(), fmt.Sprintf("email %s", data.Email), data, false)
 	}
