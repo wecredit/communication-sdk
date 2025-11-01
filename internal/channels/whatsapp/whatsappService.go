@@ -74,9 +74,17 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		// Hit Into WP
 		switch msg.Vendor {
 		case variables.TIMES:
-			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+			response, err = timesWhatsapp.HitTimesWhatsappApi(requestBody)
+			if err != nil {
+				utils.Error(fmt.Errorf("error in hitting into times whatsapp api: %v", err))
+				return false, nil, fmt.Errorf("error in hitting into times whatsapp api: %v", err)
+			}
 		case variables.SINCH:
-			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+			response, err = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+			if err != nil {
+				utils.Error(fmt.Errorf("error in hitting into sinch whatsapp api: %v", err))
+				return false, nil, fmt.Errorf("error in hitting into sinch whatsapp api: %v", err)
+			}
 		}
 	}
 

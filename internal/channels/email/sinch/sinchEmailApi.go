@@ -10,7 +10,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResponse {
+func HitSinchEmailApi(data extapimodels.EmailRequestBody) (extapimodels.EmailResponse, error) {
 	var sinchEmailResponse extapimodels.EmailResponse
 	sinchEmailResponse.IsSent = false
 
@@ -29,20 +29,20 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting Email payload: %v", err))
 		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured in Sinch Email payload: %v for %s", err, data.Client)
-		return sinchEmailResponse
+		return sinchEmailResponse, nil
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Email API: %v", err))
 		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch Email payload: %v", err)
-		return sinchEmailResponse
+		return sinchEmailResponse, err
 	}
 
 	status, ok := apiResponse["ApistatusCode"].(int)
 	if !ok {
 		sinchEmailResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch Email payload: %v", err)
-		return sinchEmailResponse
+		return sinchEmailResponse, nil
 	}
 
 	accepted := status == 200
@@ -57,5 +57,5 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 
 	fmt.Println("Sinch Email Final response:", sinchEmailResponse)
 
-	return sinchEmailResponse
+	return sinchEmailResponse, nil
 }
