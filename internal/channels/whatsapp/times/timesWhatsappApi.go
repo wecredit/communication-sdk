@@ -5,13 +5,13 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times/timesPayloads"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
+func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) (extapimodels.WhatsappResponse, error) {
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 	// Getting the API URL
@@ -31,7 +31,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while getting Times Whatsapp payload: %v", err)
-		return responseBody
+		return responseBody, nil
 	}
 
 	fmt.Println("Times Whatsapp payload:", apiPayload)
@@ -40,7 +40,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Times Wp API: %v", err)
-		return responseBody
+		return responseBody, err
 	}
 
 	fmt.Println("ApiResponse Times:", apiResponse)
@@ -112,7 +112,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 
 	}
 
-	return responseBody
+	return responseBody, nil
 }
 
 func getPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {

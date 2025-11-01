@@ -48,9 +48,17 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 	if shouldHitVendor {
 		switch msg.Vendor {
 		case variables.TIMES:
-			response = timesSms.HitTimesSmsApi(req)
+			response, err = timesSms.HitTimesSmsApi(req)
+			if err != nil {
+				utils.Error(fmt.Errorf("error in hitting into times sms api: %v", err))
+				return false, nil, fmt.Errorf("error in hitting into times sms api: %v", err)
+			}
 		case variables.SINCH:
-			response = sinchSms.HitSinchSmsApi(req)
+			response, err = sinchSms.HitSinchSmsApi(req)
+			if err != nil {
+				utils.Error(fmt.Errorf("error in hitting into sinch sms api: %v", err))
+				return false, nil, fmt.Errorf("error in hitting into sinch sms api: %v", err)
+			}
 		}
 	}
 

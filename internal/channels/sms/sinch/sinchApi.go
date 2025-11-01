@@ -12,7 +12,7 @@ import (
 
 // TODO: Make a map for channel and step : function to call
 
-func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
+func HitSinchSmsApi(data extapimodels.SmsRequestBody) (extapimodels.SmsResponse, error) {
 	var sinchSmsResponse extapimodels.SmsResponse
 	sinchSmsResponse.IsSent = false
 
@@ -29,13 +29,14 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured in Sinch SMS payload: %v for %s", err, data.Client)
-		return sinchSmsResponse
+		return sinchSmsResponse, nil
 	}
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch SMS API: %v", err))
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch SMS payload: %v", err)
+		return sinchSmsResponse, err
 	}
 
 	accepted := apiResponse["accepted"].(bool)
@@ -59,7 +60,7 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	// response.Status = apiResponse["status"].(bool)
 	fmt.Println("Sinch SMS Final response:", sinchSmsResponse)
 
-	return sinchSmsResponse
+	return sinchSmsResponse, nil
 }
 
 // RejectionCodeMap maps rejection codes to their descriptions

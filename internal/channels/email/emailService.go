@@ -53,7 +53,11 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]inte
 		case variables.TIMES:
 			return false, nil, errors.New("times email is not supported yet")
 		case variables.SINCH:
-			response = sinchEmail.HitSinchEmailApi(requestBody)
+			response, err = sinchEmail.HitSinchEmailApi(requestBody)
+			if err != nil {
+				utils.Error(fmt.Errorf("error in hitting into sinch email api: %v", err))
+				return false, nil, fmt.Errorf("error in hitting into sinch email api: %v", err)
+			}
 		}
 	}
 

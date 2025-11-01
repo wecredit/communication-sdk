@@ -12,7 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
+func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) (extapimodels.WhatsappResponse, error) {
 	// var response apiModels.WpApiResponseData
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
@@ -22,7 +22,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	if generateTokenURL == "" {
 		utils.Error(fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set"))
 		responseBody.ResponseMessage = "SINCH_GENERATE_TOKEN_API_URL is not set"
-		return responseBody
+		return responseBody, fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set")
 	}
 
 	var tokenPayload map[string]string
@@ -52,7 +52,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		sinchApiModel.AccessToken = accessToken
 	} else {
 		responseBody.ResponseMessage = "failed to generate access token"
-		return responseBody
+		return responseBody, fmt.Errorf("failed to generate Sinch Wp Access token for mobile: %s", sinchApiModel.Mobile)
 	}
 
 	sendMessageURL := config.Configs.SinchWhatsappMessageApiUrl
@@ -81,7 +81,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
-		return responseBody
+		return responseBody, fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err)
 	}
 
 	success, ok := apiResponse["success"].(string)
@@ -89,7 +89,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		utils.Error(fmt.Errorf("success field is missing or not a string in API response"))
 		responseBody.IsSent = false
 		responseBody.ResponseMessage = "failed to send message due to missing success field"
-		return responseBody
+		return responseBody, fmt.Errorf("failed to send message due to missing success field")
 	}
 
 	if success == "true" {
@@ -113,7 +113,7 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 
 	fmt.Println("SINCH FINAL WHATSAPP RESPONSE:", responseBody)
 
-	return responseBody
+	return responseBody, nil
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
