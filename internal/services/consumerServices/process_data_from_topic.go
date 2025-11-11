@@ -454,3 +454,45 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) {
 		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
 	}
 }
+
+// ErrorQueueConsumerService consumes messages from the error queue and retries failed operations
+func ErrorQueueConsumerService(workerCount int, errorQueueUrl string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go handleShutdown(cancel)
+
+	utils.Info(fmt.Sprintf("Starting Error Queue Consumer for queue: %s with %d workers", errorQueueUrl, workerCount))
+
+	// Use a single worker to avoid race conditions on retry logic
+	for {
+		select {
+		case <-ctx.Done():
+			utils.Warn("Error Queue Consumer context cancelled. Shutting down.")
+			return
+		default:
+			result, err := queue.SQSClient.ReceiveMessage(&sqs.ReceiveMessageInput{
+				QueueUrl:              aws.String(errorQueueUrl),
+				MaxNumberOfMessages:   aws.Int64(10),
+				WaitTimeSeconds:       aws.Int64(10),
+				VisibilityTimeout:     aws.Int64(300),
+				MessageAttributeNames: aws.StringSlice([]string{"All"}),
+			})
+			if err != nil {
+				utils.Error(fmt.Errorf("error receiving messages from error queue: %v", err))
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			utils.Debug(fmt.Sprintf("[ErrorQueueConsumer] Received %d messages from error queue", len(result.Messages)))
+
+			// Process messages sequentially to avoid race conditions
+			for _, msg := range result.Messages {
+				isProcessed := ProcessErrorQueueMessage(ctx, queue.SQSClient, errorQueueUrl, msg)
+				if isProcessed {
+					utils.Debug("Message processed successfully from error queue")
+				}
+			}
+		}
+	}
+}

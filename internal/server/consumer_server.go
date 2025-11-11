@@ -35,6 +35,7 @@ func GetLocalIP() string {
 
 func StartConsumer(port string) {
 	go services.ConsumerService(10, config.Configs.AwsQueueUrl)
+	go services.ErrorQueueConsumerService(1, config.Configs.AwsErrorQueueUrl)
 	go cron.StartMidnightResetCron()
 
 	log.Printf("Starting Consumer Server on port %s", port)
