@@ -305,7 +305,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			return true // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 	}
 
 	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
@@ -381,13 +381,16 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	AssignVendor(&data)
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending Email: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
 
 	if isMessageProcessed {
 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	}
+
+	delete(dbMappedData, "MobileNumber")
+	dbMappedData["Email"] = data.Email
 
 	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
@@ -429,6 +432,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) {
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
 	} else {
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
+		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
 }
