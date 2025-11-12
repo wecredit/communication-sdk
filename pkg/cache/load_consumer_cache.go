@@ -23,10 +23,10 @@ func LoadConsumerDataIntoCache(config models.Config) {
 
 	StoreMappedDataIntoCache(TemplateDetailsData, config.TemplateDetailsTable, "Process", "Stage", database.DBtechRead)
 
-	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtech)
+	// storeDataIntoCache(ActiveVendors, config.VendorTable, database.DBtechRead)
 
 	// Store auth data into cache
-	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)
+	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtechRead)
 
 	// Store Vendors Data into cache
 	// StoreMappedDataIntoCache(RcsTemplateAppData, config.RcsTemplateAppIdTable, "AppId", "", database.DBtech)

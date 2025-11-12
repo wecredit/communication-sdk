@@ -85,6 +85,7 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]inte
 
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
+		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for email " + msg.Email
 		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
 			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}

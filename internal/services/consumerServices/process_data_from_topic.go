@@ -80,6 +80,10 @@ func ConsumerService(workerCount int, queueURL string) {
 				continue
 			}
 
+			if len(result.Messages) == 0 {
+				continue
+			}
+
 			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
@@ -160,7 +164,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 			timeout.Reset(time.Hour)
 			isMessageProcessed := processMessage(ctx, sqsClient, queueURL, msgWrapper)
 			if isMessageProcessed {
-				fmt.Println("Message processed")
+				utils.Debug("Message processed")
 				// deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
 			}
 		case <-timeout.C:
@@ -326,6 +330,10 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		dbMappedData["tableName"] = config.Configs.SdkRcsInputTable
+		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
 	}
 	AssignVendor(&data)
 	isMessageProcessed, err := rcs.SendRcsByProcess(data)
@@ -333,8 +341,8 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
+	deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	return isMessageProcessed
-	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
@@ -365,6 +373,10 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	dbMappedData["Email"] = data.Email
 	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+		dbMappedData["tableName"] = config.Configs.SdkEmailInputTable
+		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
 	}
 	AssignVendor(&data)
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
