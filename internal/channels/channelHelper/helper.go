@@ -58,7 +58,7 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 			parts := strings.Split(otherKey, "|")
 			if len(parts) == 5 {
 				vendor := strings.TrimPrefix(parts[4], "Vendor:")
-				if IsVendorActive(vendor, msg.Channel) {
+				if IsVendorActive(msg.Client, vendor, msg.Channel) {
 					return val, vendor, nil
 				}
 			}
@@ -69,16 +69,29 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		msg.ProcessName, msg.Stage, msg.Client, msg.Channel)
 }
 
-func IsVendorActive(vendor, channel string) bool {
+func IsVendorActive(client, vendor, channel string) bool {
 	vendors, found := cache.GetCache().GetMappedData(cache.VendorsData)
 	if !found {
 		utils.Error(fmt.Errorf("vendor data not found in cache"))
 		return false
 	}
-	key := fmt.Sprintf("Name:%s|Channel:%s", vendor, channel)
-	if vendorData, ok := vendors[key]; ok {
-		if status, ok := vendorData["Status"].(int64); ok && status == variables.Active {
-			return true
+
+	clientKey := strings.ToLower(strings.TrimSpace(client))
+	channelKey := strings.ToUpper(strings.TrimSpace(channel))
+	baseKey := fmt.Sprintf("Name:%s|Channel:%s", vendor, channelKey)
+
+	keysToTry := []string{
+		fmt.Sprintf("%s|Client:%s", baseKey, clientKey),
+	}
+	if clientKey != "" {
+		keysToTry = append(keysToTry, fmt.Sprintf("%s|Client:", baseKey))
+	}
+
+	for _, key := range keysToTry {
+		if vendorData, ok := vendors[key]; ok {
+			if status, ok := vendorData["Status"].(int64); ok && status == variables.Active {
+				return true
+			}
 		}
 	}
 	return false
