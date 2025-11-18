@@ -301,7 +301,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			return true // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 	}
 
 	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
@@ -420,6 +420,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) {
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
 	} else {
-		data.Vendor = GetVendorByChannel(data.Channel, data.CommId)
+		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
+		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
 }

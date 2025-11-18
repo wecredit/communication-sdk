@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -43,13 +44,25 @@ func GetVendorByWeight(idempotencyKey string, vendors []Vendor) string {
 	return "UNKNOWN"
 }
 
-func GetVendorByChannel(channel, idempotencyKey string) string {
+func GetVendorByClientAndChannel(channel, client, idempotencyKey string) string {
 	h := fnv.New32a()
 	h.Write([]byte(idempotencyKey))
 	val := int(h.Sum32() % 100)
 
-	if slots, ok := cache.ChannelVendorSlots[channel]; ok {
-		return slots[val]
+	channelKey := strings.ToUpper(channel)
+	clientKey := strings.ToLower(client)
+
+	if channelSlots, ok := cache.ChannelVendorSlots[channelKey]; ok {
+		if slots, ok := channelSlots[clientKey]; ok {
+			if vendor := slots[val]; vendor != "" {
+				return vendor
+			}
+		}
+		if slots, ok := channelSlots[""]; ok {
+			if vendor := slots[val]; vendor != "" {
+				return vendor
+			}
+		}
 	}
 	return "UNKNOWN"
 }
@@ -73,7 +86,7 @@ func main() {
 	// Process each key
 	for _, key := range testKeys {
 		time.Sleep(1 * time.Second)
-		vendor := GetVendorByChannel("SMS", key)
+		vendor := GetVendorByClientAndChannel("WHATSAPP", "creditsea", key)
 		if vendor == "SINCH" {
 			sinchCount++
 		} else if vendor == "TIMES" {

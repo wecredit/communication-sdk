@@ -21,18 +21,22 @@ func NewVendorService(db *gorm.DB) *VendorService {
 	return &VendorService{DB: db}
 }
 
-func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, error) {
+func (s *VendorService) GetVendors(channel, name, client string) ([]apiModels.Vendor, error) {
 	vendorDetails, found := cache.GetCache().GetMappedData(cache.VendorsData)
 	if !found {
 		utils.Error(fmt.Errorf("vendor data not found in cache"))
 		return nil, errors.New("vendor data not found in cache")
 	}
 
+	channel = strings.ToUpper(strings.TrimSpace(channel))
+	name = strings.ToUpper(strings.TrimSpace(name))
+	client = strings.ToLower(strings.TrimSpace(client))
+
 	var vendors []apiModels.Vendor
 
-	// Case 1: Both name and channel provided -> direct key lookup
-	if name != "" && channel != "" {
-		key := fmt.Sprintf("Name:%s|Channel:%s", name, channel)
+	// Case 1: name, channel and client provided -> direct key lookup
+	if name != "" && channel != "" && client != "" {
+		key := fmt.Sprintf("Name:%s|Channel:%s|Client:%s", name, channel, client)
 		if data, ok := vendorDetails[key]; ok {
 			vendor, err := mapToVendor(data)
 			if err != nil {
@@ -44,9 +48,19 @@ func (s *VendorService) GetVendors(channel, name string) ([]apiModels.Vendor, er
 		return nil, nil // No match found
 	}
 
-	// Case 2: Only channel or only name provided, or no filters -> loop through entries
+	// Case 2: loop through entries with applied filters
 	for _, data := range vendorDetails {
-		if (channel != "" && data["Channel"] != channel) || (name != "" && data["Name"] != name) {
+		dataChannel := strings.ToUpper(extractString(data["Channel"]))
+		dataName := strings.ToUpper(extractString(data["Name"]))
+		dataClient := strings.ToLower(extractString(data["Client"]))
+
+		if channel != "" && dataChannel != channel {
+			continue
+		}
+		if name != "" && dataName != name {
+			continue
+		}
+		if client != "" && dataClient != client {
 			continue
 		}
 		vendor, err := mapToVendor(data)
@@ -96,10 +110,18 @@ func (s *VendorService) GetVendorByID(id uint) (*apiModels.Vendor, error) {
 }
 
 func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
+	vendor.Name = strings.ToUpper(strings.TrimSpace(vendor.Name))
+	vendor.Channel = strings.ToUpper(strings.TrimSpace(vendor.Channel))
+	vendor.Client = strings.ToLower(strings.TrimSpace(vendor.Client))
+
+	if vendor.Client == "" {
+		return errors.New("client is required")
+	}
+
 	var totalWeight int64
 
 	err := s.DB.Model(apiModels.Vendor{}).
-		Where("channel = ? AND status = 1", vendor.Channel).
+		Where("channel = ? AND client = ? AND status = 1", vendor.Channel, vendor.Client).
 		Select("COALESCE(SUM(weight), 0)").
 		Scan(&totalWeight).Error
 	if err != nil {
@@ -112,8 +134,6 @@ func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
 
 	vendor.Status = 1
 	vendor.IsHealthy = 1
-	vendor.Name = strings.ToUpper(vendor.Name)
-	vendor.Channel = strings.ToUpper(vendor.Channel)
 	istOffset := 5*time.Hour + 30*time.Minute
 	now := time.Now().UTC().Add(istOffset)
 	vendor.CreatedOn = now
@@ -126,16 +146,24 @@ func (s *VendorService) AddVendor(vendor *apiModels.Vendor) error {
 	return nil
 }
 
-func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updates apiModels.Vendor) error {
+func (s *VendorService) UpdateVendorByNameAndChannel(_, _ string, updates apiModels.Vendor) error {
+	updates.Name = strings.ToUpper(strings.TrimSpace(updates.Name))
+	updates.Channel = strings.ToUpper(strings.TrimSpace(updates.Channel))
+	updates.Client = strings.ToLower(strings.TrimSpace(updates.Client))
+
+	if updates.Client == "" {
+		return errors.New("client is required")
+	}
+
 	var existing apiModels.Vendor
-	if err := s.DB.Where("name = ? AND channel = ?", name, channel).First(&existing).Error; err != nil {
+	if err := s.DB.Where("name = ? AND channel = ? AND client = ?", updates.Name, updates.Channel, updates.Client).First(&existing).Error; err != nil {
 		return errors.New("vendor not found")
 	}
 
 	// Calculate total weight excluding this vendor
 	var sum int64
 	if err := s.DB.Model(&apiModels.Vendor{}).
-		Where("channel = ? AND status = 1 AND name != ?", channel, name).
+		Where("channel = ? AND client = ? AND status = 1 AND name != ?", updates.Channel, updates.Client, updates.Name).
 		Select("COALESCE(SUM(weight), 0)").Scan(&sum).Error; err != nil {
 		return err
 	}
@@ -147,8 +175,6 @@ func (s *VendorService) UpdateVendorByNameAndChannel(name, channel string, updat
 	existing.Status = updates.Status
 	existing.IsHealthy = updates.IsHealthy
 	existing.Weight = updates.Weight
-	existing.Name = strings.ToUpper(existing.Name)
-	existing.Channel = strings.ToUpper(existing.Channel)
 	istOffset := 5*time.Hour + 30*time.Minute
 	now := time.Now().UTC().Add(istOffset)
 	existing.UpdatedOn = &now
@@ -179,8 +205,9 @@ func (s *VendorService) DeleteVendor(id int) error {
 func mapToVendor(data map[string]interface{}) (*apiModels.Vendor, error) {
 	vendor := &apiModels.Vendor{
 		Id:        int(data["Id"].(int64)),
-		Name:      data["Name"].(string),
-		Channel:   data["Channel"].(string),
+		Name:      extractString(data["Name"]),
+		Channel:   extractString(data["Channel"]),
+		Client:    strings.ToLower(extractString(data["Client"])),
 		Status:    int(data["Status"].(int64)),
 		IsHealthy: int(data["IsHealthy"].(int64)),
 		Weight:    int(data["Weight"].(int64)),
@@ -212,4 +239,17 @@ func mapToVendor(data map[string]interface{}) (*apiModels.Vendor, error) {
 	}
 
 	return vendor, nil
+}
+
+func extractString(val interface{}) string {
+	switch v := val.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
