@@ -24,8 +24,9 @@ func NewVendorHandler(s *services.VendorService) *VendorHandler {
 func (h *VendorHandler) GetVendors(c *gin.Context) {
 	channel := c.Query("channel")
 	name := c.Query("name")
+	client := c.Query("client")
 
-	vendors, err := h.Service.GetVendors(channel, name)
+	vendors, err := h.Service.GetVendors(channel, name, client)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -79,6 +80,7 @@ func (h *VendorHandler) AddVendor(c *gin.Context) {
 func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 	name := c.Param("name")
 	channel := c.Param("channel")
+	client := c.Query("client")
 
 	var vendor apiModels.Vendor
 
@@ -95,6 +97,10 @@ func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 	// Fill name & channel from URL
 	vendor.Name = name
 	vendor.Channel = channel
+
+	if client != "" {
+		vendor.Client = client
+	}
 
 	if err := h.Service.UpdateVendorByNameAndChannel(name, channel, vendor); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
