@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times/timesPayloads"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -116,7 +116,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 }
 
 func getPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(timesApiModel.Process, "utility") {
+	if strings.Contains(timesApiModel.TemplateName, "utility") {
 		// For Utility Payload
 		return timespayloads.GetTimesUtilityPayload(timesApiModel)
 	} else {
