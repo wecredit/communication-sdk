@@ -10,7 +10,6 @@ import (
 	"github.com/wecredit/communication-sdk/helper"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
-	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
@@ -27,7 +26,7 @@ func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[
 	var bodyParams []map[string]interface{}
 
 	// Add dynamic text values to a single body component
-	if sinchApiModel.Client == variables.CreditSea && sinchApiModel.TemplateVariables != "" {
+	if sinchApiModel.TemplateVariables != "" {
 		keys := strings.Split(sinchApiModel.TemplateVariables, ",")
 		for _, key := range keys {
 			key = strings.TrimSpace(key)
