@@ -71,7 +71,7 @@ func (h *VendorHandler) AddVendor(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errorMsg})
 		return
 	}
-	if vendor.Name == "" || vendor.Channel == "" || vendor.Status == 0 {
+	if vendor.Name == "" || vendor.Channel == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required fields: Name, Channel, or Status"})
 		return
 	}
@@ -136,26 +136,28 @@ func (h *VendorHandler) DeleteVendor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "vendor deleted successfully"})
 }
 
-// formatVendorValidationError formats validation errors using GORM column names
+// formatVendorValidationError formats validation errors using field names and validator tags
 func formatVendorValidationError(err error) string {
 	var validationErrors []string
+	var validationErrs validator.ValidationErrors
 
-	validationErrs, ok := err.(validator.ValidationErrors)
-	if ok {
+	if errors.As(err, &validationErrs) {
 		for _, vErr := range validationErrs {
-			field := vErr.Namespace()
+			field := vErr.Field()
 
 			switch field {
-			case "Vendor.Name":
-				validationErrors = append(validationErrors, "Name is required")
-			case "Vendor.Channel":
-				validationErrors = append(validationErrors, "Channel is required")
-			case "Vendor.Client":
-				validationErrors = append(validationErrors, "Client is required")
-			case "Vendor.IsHealthy":
-				validationErrors = append(validationErrors, "IsHealthy is required")
-			case "Vendor.Weight":
-				validationErrors = append(validationErrors, "Weight is required")
+			case "Name":
+				validationErrors = append(validationErrors, "name is required")
+			case "Channel":
+				validationErrors = append(validationErrors, "channel is required")
+			case "Client":
+				validationErrors = append(validationErrors, "client is required")
+			case "IsHealthy":
+				validationErrors = append(validationErrors, "isHealthy is required")
+			case "Weight":
+				validationErrors = append(validationErrors, "weight is required")
+			default:
+				validationErrors = append(validationErrors, fmt.Sprintf("%s %s", strings.ToLower(field), vErr.Tag()))
 			}
 		}
 	}
