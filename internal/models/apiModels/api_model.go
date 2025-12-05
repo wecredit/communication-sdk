@@ -31,6 +31,11 @@ type Client struct {
 	UpdatedOn          *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
 }
 
+// TableName overrides default GORM table name
+func (Client) TableName() string {
+	return "Clients"
+}
+
 type Userbasicauth struct {
 	Id        int       `json:"Id"`
 	Username  string    `gorm:"column:username" json:"username" binding:"required"`
@@ -38,13 +43,17 @@ type Userbasicauth struct {
 	CreatedOn time.Time `gorm:"column:createdOn" json:"createdOn,omitempty"`
 }
 
+func (Userbasicauth) TableName() string {
+	return "userBasicAuths"
+}
+
 type Templatedetails struct {
 	Id                int        `json:"id"`
 	Client            string     `gorm:"column:Client" json:"client,omitempty"`
-	Channel           string     `gorm:"column:Channel" json:"channel"`
+	Channel           string     `gorm:"column:Channel" json:"channel" binding:"required"`
 	Process           string     `gorm:"column:Process" json:"process"`
-	Stage             float64    `gorm:"column:Stage" json:"stage"`
-	Vendor            string     `gorm:"column:Vendor" json:"vendor"`
+	Stage             float64    `gorm:"column:Stage" json:"stage" binding:"required"`
+	Vendor            string     `gorm:"column:Vendor" json:"vendor" binding:"required"`
 	TemplateName      string     `gorm:"column:TemplateName" json:"templateName" binding:"required"`
 	ImageId           string     `gorm:"column:ImageId" json:"imageId,omitempty"`
 	ImageUrl          string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
@@ -58,4 +67,9 @@ type Templatedetails struct {
 	TemplateVariables string     `gorm:"column:TemplateVariables" json:"templateVariables,omitempty"`
 	Subject           string     `gorm:"column:Subject" json:"subject,omitempty"`
 	FromEmail         string     `gorm:"column:FromEmail" json:"fromEmail,omitempty"`
+}
+
+// TableName overrides the default table name used by GORM
+func (Templatedetails) TableName() string {
+	return "TemplateDetails"
 }

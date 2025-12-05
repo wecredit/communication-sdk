@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 
@@ -65,10 +67,14 @@ func (h *VendorHandler) AddVendor(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&vendor); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input: " + err.Error()})
+		errorMsg := formatVendorValidationError(err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": errorMsg})
 		return
 	}
-
+	if vendor.Name == "" || vendor.Channel == "" || vendor.Status == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required fields: Name, Channel, or Status"})
+		return
+	}
 	if err := h.Service.AddVendor(&vendor); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -128,4 +134,35 @@ func (h *VendorHandler) DeleteVendor(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "vendor deleted successfully"})
+}
+
+// formatVendorValidationError formats validation errors using GORM column names
+func formatVendorValidationError(err error) string {
+	var validationErrors []string
+
+	validationErrs, ok := err.(validator.ValidationErrors)
+	if ok {
+		for _, vErr := range validationErrs {
+			field := vErr.Namespace()
+
+			switch field {
+			case "Vendor.Name":
+				validationErrors = append(validationErrors, "Name is required")
+			case "Vendor.Channel":
+				validationErrors = append(validationErrors, "Channel is required")
+			case "Vendor.Client":
+				validationErrors = append(validationErrors, "Client is required")
+			case "Vendor.IsHealthy":
+				validationErrors = append(validationErrors, "IsHealthy is required")
+			case "Vendor.Weight":
+				validationErrors = append(validationErrors, "Weight is required")
+			}
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		return strings.Join(validationErrors, ", ")
+	}
+
+	return "invalid input: " + err.Error()
 }

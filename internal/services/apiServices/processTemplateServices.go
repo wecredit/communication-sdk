@@ -49,7 +49,18 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	// Case 2: filtering
 	for _, data := range templateDetails {
-		stageFloat, _ := strconv.ParseFloat(string(data["Stage"].([]uint8)), 64)
+		var stageFloat float64
+		if stage != "" {
+			switch val := data["Stage"].(type) {
+			case float64:
+				stageFloat = val
+			case []byte:
+				stageFloat, _ = strconv.ParseFloat(string(val), 64)
+			case string:
+				stageFloat, _ = strconv.ParseFloat(val, 64)
+			}
+		}
+
 		if (process != "" && data["Process"] != process) ||
 			(stage != "" && fmt.Sprintf("%.2f", stageFloat) != stage) ||
 			(client != "" && data["Client"] != client) ||
@@ -118,6 +129,26 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 }
 
 func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
+	if s.DB == nil {
+		return errors.New("database connection not initialized")
+	}
+
+	// Trim and validate required fields
+	template.Channel = strings.TrimSpace(template.Channel)
+	if template.Channel == "" {
+		return errors.New("channel cannot be empty or whitespace")
+	}
+
+	template.Vendor = strings.TrimSpace(template.Vendor)
+	if template.Vendor == "" {
+		return errors.New("vendor cannot be empty or whitespace")
+	}
+
+	// Process is optional, but trim if provided
+	template.Process = strings.TrimSpace(template.Process)
+
+	// Client is optional, but trim if provided
+	template.Client = strings.TrimSpace(template.Client)
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
 	template.Process = strings.ToUpper(template.Process)
@@ -139,6 +170,37 @@ func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interfac
 	var existing apiModels.Templatedetails
 	if err := s.DB.Where("id = ?", id).First(&existing).Error; err != nil {
 		return errors.New("template not found")
+	}
+
+	// Validate and sanitize fields if present in updates
+	if channel, ok := updates["channel"].(string); ok {
+		channel = strings.TrimSpace(channel)
+		if channel == "" {
+			return errors.New("channel cannot be empty or whitespace")
+		}
+		updates["channel"] = strings.ToUpper(channel)
+	}
+
+	if vendor, ok := updates["vendor"].(string); ok {
+		vendor = strings.TrimSpace(vendor)
+		if vendor == "" {
+			return errors.New("vendor cannot be empty or whitespace")
+		}
+		updates["vendor"] = strings.ToUpper(vendor)
+	}
+
+	if process, ok := updates["process"].(string); ok {
+		updates["process"] = strings.ToUpper(strings.TrimSpace(process))
+	}
+
+	if client, ok := updates["client"].(string); ok {
+		updates["client"] = strings.ToLower(strings.TrimSpace(client))
+	}
+
+	if stage, ok := updates["stage"].(float64); ok {
+		if stage <= 0 {
+			return errors.New("stage must be greater than 0")
+		}
 	}
 
 	// add updatedOn timestamp
