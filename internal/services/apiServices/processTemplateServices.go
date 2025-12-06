@@ -144,6 +144,23 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 		return errors.New("vendor cannot be empty or whitespace")
 	}
 
+	// Normalize for GetRequiredFields call (before uppercase conversion)
+	vendorUpper := strings.ToUpper(template.Vendor)
+	channelUpper := strings.ToUpper(template.Channel)
+
+	// Get required fields based on vendor and channel
+	reqFieldsResp, err := s.GetRequiredFields(vendorUpper, channelUpper)
+	if err != nil {
+		// This handles unsupported vendor/channel combinations
+		return err
+	}
+
+	// Validate all required fields are present
+	missingFields := validateTemplateRequiredFields(template, reqFieldsResp.RequiredFields)
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
+	}
+
 	// Process is optional, but trim if provided
 	template.Process = strings.TrimSpace(template.Process)
 
@@ -152,11 +169,25 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
 	template.Process = strings.ToUpper(template.Process)
-	template.Channel = strings.ToUpper(template.Channel)
-	template.Vendor = strings.ToUpper(template.Vendor)
+	template.Channel = channelUpper
+	template.Vendor = vendorUpper
 	template.Client = strings.ToLower(template.Client)
 
-	err := s.DB.Create(template).Error
+	// Check for active template conflict before creating
+	if template.IsActive {
+		// Check if another active template exists with same combination
+		var conflicting apiModels.Templatedetails
+
+		err = s.DB.Where("Process = ? AND Stage = ? AND Vendor = ? AND Channel = ? AND IsActive = ?",
+			template.Process, template.Stage, template.Vendor, template.Channel, true).First(&conflicting).Error
+		if err == nil {
+			return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", conflicting.Id)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("error checking for conflicting templates: %v", err)
+		}
+	}
+
+	err = s.DB.Create(template).Error
 	if err != nil {
 		return err
 	}
@@ -348,9 +379,9 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 	case "WHATSAPP":
 		switch vendor {
 		case "SINCH":
-			requiredFields = []string{"templateName", "imageId", "link", "templateVariables", "process", "stage", "templatetext", "client"}
+			requiredFields = []string{"templateName", "imageId", "link", "templateVariables", "process", "stage", "templatetext", "client", "isActive"}
 		case "TIMES":
-			requiredFields = []string{"templateName", "imageUrl", "link", "process", "stage", "templatetext", "client"}
+			requiredFields = []string{"templateName", "imageUrl", "link", "process", "stage", "templatetext", "client", "isActive"}
 		default:
 			return nil, fmt.Errorf("unsupported vendor '%s' for WhatsApp channel", vendor)
 		}
@@ -358,9 +389,9 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 	case "SMS":
 		switch vendor {
 		case "SINCH":
-			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "templateVariables", "templateCategory", "process", "stage", "client"}
+			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "templateVariables", "templateCategory", "process", "stage", "client", "isActive"}
 		case "TIMES":
-			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "process", "stage", "client"}
+			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "process", "stage", "client", "isActive"}
 		default:
 			return nil, fmt.Errorf("unsupported vendor '%s' for SMS channel", vendor)
 		}
@@ -383,4 +414,53 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 		Channel:        channel,
 		RequiredFields: requiredFields,
 	}, nil
+}
+
+// validateTemplateRequiredFields validates that all required fields are present and non-empty
+// Returns a list of missing field names in camelCase format
+func validateTemplateRequiredFields(template *apiModels.Templatedetails, requiredFields []string) []string {
+	var missingFields []string
+
+	for _, field := range requiredFields {
+		fieldLower := strings.ToLower(field)
+		var isEmpty bool
+		var displayName string
+
+		switch fieldLower {
+		case "templatename":
+			isEmpty, displayName = template.TemplateName == "", "templateName"
+		case "imageid":
+			isEmpty, displayName = template.ImageId == "", "imageId"
+		case "imageurl":
+			isEmpty, displayName = template.ImageUrl == "", "imageUrl"
+		case "link":
+			isEmpty, displayName = template.Link == "", "link"
+		case "templatevariables":
+			isEmpty, displayName = template.TemplateVariables == "", "templateVariables"
+		case "process":
+			isEmpty, displayName = template.Process == "", "process"
+		case "stage":
+			isEmpty, displayName = template.Stage == 0, "stage"
+		case "templatetext": // Handles both "templatetext" and "templateText"
+			isEmpty, displayName = template.TemplateText == "", "templateText"
+		case "client":
+			isEmpty, displayName = template.Client == "", "client"
+		case "dlttemplateid":
+			isEmpty, displayName = template.DltTemplateId == 0, "dltTemplateId"
+		case "templatecategory":
+			isEmpty, displayName = template.TemplateCategory == 0, "templateCategory"
+		case "subject":
+			isEmpty, displayName = template.Subject == "", "subject"
+		case "fromemail":
+			isEmpty, displayName = template.FromEmail == "", "fromEmail"
+		default:
+			continue // Skip unknown fields
+		}
+
+		if isEmpty {
+			missingFields = append(missingFields, displayName)
+		}
+	}
+
+	return missingFields
 }
