@@ -73,3 +73,10 @@ type Templatedetails struct {
 func (Templatedetails) TableName() string {
 	return "TemplateDetails"
 }
+
+// RequiredFieldsResponse returns required fields for a vendor-channel combination
+type RequiredFieldsResponse struct {
+	Vendor         string   `json:"vendor"`
+	Channel        string   `json:"channel"`
+	RequiredFields []string `json:"requiredFields"`
+}

@@ -203,6 +203,20 @@ func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interfac
 		}
 	}
 
+	// Check for active template conflict before updating
+	if isActive, ok := updates["isActive"].(bool); ok && isActive {
+		// Check if another active template exists with same combination
+		var conflicting apiModels.Templatedetails
+
+		err := s.DB.Where("Process = ? AND Stage = ? AND Vendor = ? AND Channel = ? AND IsActive = ? AND Id != ?",
+			existing.Process, existing.Stage, existing.Vendor, existing.Channel, true, id).First(&conflicting).Error
+		if err == nil {
+			return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", conflicting.Id)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("error checking for conflicting templates: %v", err)
+		}
+	}
+
 	// add updatedOn timestamp
 	istOffset := 5*time.Hour + 30*time.Minute
 	updates["UpdatedOn"] = time.Now().UTC().Add(istOffset)
@@ -314,4 +328,59 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 	}
 
 	return template, nil
+}
+
+// GetRequiredFields returns required fields based on vendor and channel combination
+func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.RequiredFieldsResponse, error) {
+	vendor = strings.ToUpper(strings.TrimSpace(vendor))
+	channel = strings.ToUpper(strings.TrimSpace(channel))
+
+	if vendor == "" {
+		return nil, errors.New("vendor is required")
+	}
+	if channel == "" {
+		return nil, errors.New("channel is required")
+	}
+
+	var requiredFields []string
+
+	switch channel {
+	case "WHATSAPP":
+		switch vendor {
+		case "SINCH":
+			requiredFields = []string{"templateName", "imageId", "link", "templateVariables", "process", "stage", "templatetext", "client"}
+		case "TIMES":
+			requiredFields = []string{"templateName", "imageUrl", "link", "process", "stage", "templatetext", "client"}
+		default:
+			return nil, fmt.Errorf("unsupported vendor '%s' for WhatsApp channel", vendor)
+		}
+
+	case "SMS":
+		switch vendor {
+		case "SINCH":
+			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "templateVariables", "templateCategory", "process", "stage", "client"}
+		case "TIMES":
+			requiredFields = []string{"templateName", "templateText", "dltTemplateId", "process", "stage", "client"}
+		default:
+			return nil, fmt.Errorf("unsupported vendor '%s' for SMS channel", vendor)
+		}
+
+	case "EMAIL":
+		// Email requirements are same for both SINCH and TIMES vendors
+		switch vendor {
+		case "SINCH", "TIMES":
+			requiredFields = []string{"templateName", "subject", "fromEmail", "templateText", "process", "stage", "client", "Link"}
+		default:
+			return nil, fmt.Errorf("unsupported vendor '%s' for EMAIL channel", vendor)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported channel: %s", channel)
+	}
+
+	return &apiModels.RequiredFieldsResponse{
+		Vendor:         vendor,
+		Channel:        channel,
+		RequiredFields: requiredFields,
+	}, nil
 }

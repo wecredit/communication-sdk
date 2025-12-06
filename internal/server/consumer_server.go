@@ -69,6 +69,7 @@ func StartConsumer(port string) {
 	templates := r.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)
+		templates.GET("/required-fields", templateHandler.GetRequiredFields)
 		templates.POST("/add-template", templateHandler.AddTemplate)
 		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)

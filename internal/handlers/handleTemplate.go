@@ -153,6 +153,30 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Template deleted successfully"})
 }
 
+// GetRequiredFields returns required fields based on vendor and channel
+func (h *TemplateHandler) GetRequiredFields(c *gin.Context) {
+	vendor := c.Query("vendor")
+	channel := c.Query("channel")
+
+	if vendor == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "vendor query parameter is required"})
+		return
+	}
+
+	if channel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "channel query parameter is required"})
+		return
+	}
+
+	response, err := h.Service.GetRequiredFields(vendor, channel)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 // toTemplateResponse converts DB model to API response struct
 // Ensures all fields are always present in consistent order (struct field order)
 // No omitempty tags = all fields included even if empty
