@@ -17,9 +17,6 @@ type TemplateHandler struct {
 	Service *services.TemplateService
 }
 
-// TemplateResponse ensures all fields are always present in API response
-// Without omitempty, all fields will be included even if empty
-
 func NewTemplateHandler(s *services.TemplateService) *TemplateHandler {
 	return &TemplateHandler{Service: s}
 }
