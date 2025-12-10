@@ -12,6 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
 
@@ -51,14 +52,11 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 	for _, data := range templateDetails {
 		var stageFloat float64
 		if stage != "" {
-			switch val := data["Stage"].(type) {
-			case float64:
-				stageFloat = val
-			case []byte:
-				stageFloat, _ = strconv.ParseFloat(string(val), 64)
-			case string:
-				stageFloat, _ = strconv.ParseFloat(val, 64)
+			val, ok := data["Stage"].(float64)
+			if !ok {
+				return nil, fmt.Errorf("stage unexpected type=%T value=%v", data["Stage"], data["Stage"])
 			}
+			stageFloat = val
 		}
 
 		if (process != "" && data["Process"] != process) ||
@@ -145,8 +143,8 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	}
 
 	// Normalize for GetRequiredFields call (before uppercase conversion)
-	vendorUpper := strings.ToUpper(template.Vendor)
-	channelUpper := strings.ToUpper(template.Channel)
+	vendorUpper := strings.ToUpper(strings.TrimSpace(template.Vendor))
+	channelUpper := strings.ToUpper(strings.TrimSpace(template.Channel))
 
 	// Get required fields based on vendor and channel
 	reqFieldsResp, err := s.GetRequiredFields(vendorUpper, channelUpper)
@@ -175,15 +173,40 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 
 	// Check for active template conflict before creating
 	if template.IsActive {
-		// Check if another active template exists with same combination
-		var conflicting apiModels.Templatedetails
+		templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+		if !found {
+			return fmt.Errorf("template data not found in cache for conflict check")
+		}
 
-		err = s.DB.Where("Process = ? AND Stage = ? AND Vendor = ? AND Channel = ? AND IsActive = ?",
-			template.Process, template.Stage, template.Vendor, template.Channel, true).First(&conflicting).Error
-		if err == nil {
-			return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", conflicting.Id)
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("error checking for conflicting templates: %v", err)
+		// Try direct key lookup first (faster than full scan)
+		stageKey := fmt.Sprintf("%.2f", template.Stage)
+		lookupKey := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s",
+			template.Process, stageKey, template.Channel, template.Vendor)
+		checkedDirect := false
+		if data, ok := templateDetails[lookupKey]; ok {
+			checkedDirect = true
+			existing, err := mapToTemplate(data)
+			if err == nil && existing.IsActive {
+				return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", existing.Id)
+			}
+		}
+
+		// Fallback to scan cache for any active match only if direct lookup missed or failed
+		if !checkedDirect {
+			for _, data := range templateDetails {
+				existing, err := mapToTemplate(data)
+				if err != nil {
+					utils.Error(fmt.Errorf("skipping invalid template data during conflict check: %v", err))
+					continue
+				}
+				if existing.IsActive &&
+					existing.Process == template.Process &&
+					existing.Stage == template.Stage &&
+					existing.Vendor == template.Vendor &&
+					existing.Channel == template.Channel {
+					return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", existing.Id)
+				}
+			}
 		}
 	}
 
@@ -367,10 +390,10 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 	channel = strings.ToUpper(strings.TrimSpace(channel))
 
 	if vendor == "" {
-		return nil, errors.New("vendor is required")
+		return nil, errors.New(variables.ErrVendorRequired)
 	}
 	if channel == "" {
-		return nil, errors.New("channel is required")
+		return nil, errors.New(variables.ErrChannelRequired)
 	}
 
 	var requiredFields []string
