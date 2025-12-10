@@ -257,17 +257,43 @@ func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interfac
 		}
 	}
 
-	// Check for active template conflict before updating
+	// Check for active template conflict before updating (cache based, excluding current ID)
 	if isActive, ok := updates["isActive"].(bool); ok && isActive {
-		// Check if another active template exists with same combination
-		var conflicting apiModels.Templatedetails
+		templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
+		if !found {
+			return fmt.Errorf("template data not found in cache for conflict check")
+		}
 
-		err := s.DB.Where("Process = ? AND Stage = ? AND Vendor = ? AND Channel = ? AND IsActive = ? AND Id != ?",
-			existing.Process, existing.Stage, existing.Vendor, existing.Channel, true, id).First(&conflicting).Error
-		if err == nil {
-			return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", conflicting.Id)
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("error checking for conflicting templates: %v", err)
+		// Direct key lookup first (faster)
+		stageKey := fmt.Sprintf("%.2f", existing.Stage)
+		lookupKey := fmt.Sprintf("Process:%s|Stage:%s|Channel:%s|Vendor:%s",
+			existing.Process, stageKey, existing.Channel, existing.Vendor)
+		checkedDirect := false
+		if data, ok := templateDetails[lookupKey]; ok {
+			checkedDirect = true
+			tmpl, err := mapToTemplate(data)
+			if err == nil && tmpl.IsActive && tmpl.Id != id {
+				return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", tmpl.Id)
+			}
+		}
+
+		// Fallback to scan cache if direct lookup missed
+		if !checkedDirect {
+			for _, data := range templateDetails {
+				tmpl, err := mapToTemplate(data)
+				if err != nil {
+					utils.Error(fmt.Errorf("skipping invalid template data during conflict check: %v", err))
+					continue
+				}
+				if tmpl.IsActive &&
+					tmpl.Id != id &&
+					tmpl.Process == existing.Process &&
+					tmpl.Stage == existing.Stage &&
+					tmpl.Vendor == existing.Vendor &&
+					tmpl.Channel == existing.Channel {
+					return fmt.Errorf("another active template (ID: %d) already exists for this process-stage-vendor-channel combination", tmpl.Id)
+				}
+			}
 		}
 	}
 
