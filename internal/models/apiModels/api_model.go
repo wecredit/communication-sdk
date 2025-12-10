@@ -69,6 +69,28 @@ type Templatedetails struct {
 	FromEmail         string     `gorm:"column:FromEmail" json:"fromEmail,omitempty"`
 }
 
+type TemplateResponse struct {
+	Id                int     `json:"id"`
+	Client            string  `json:"client"`
+	Channel           string  `json:"channel"`
+	Process           string  `json:"process"`
+	Stage             float64 `json:"stage"`
+	Vendor            string  `json:"vendor"`
+	TemplateName      string  `json:"templateName"`
+	ImageId           string  `json:"imageId"`
+	ImageUrl          string  `json:"imageUrl"`
+	DltTemplateId     int64   `json:"dltTemplateId"`
+	IsActive          bool    `json:"isActive"`
+	TemplateText      string  `json:"templateText"`
+	Link              string  `json:"link"`
+	CreatedOn         string  `json:"createdOn"`
+	UpdatedOn         *string `json:"updatedOn"`
+	TemplateCategory  int64   `json:"templateCategory"`
+	TemplateVariables string  `json:"templateVariables"`
+	Subject           string  `json:"subject"`
+	FromEmail         string  `json:"fromEmail"`
+}
+
 // TableName overrides the default table name used by GORM
 func (Templatedetails) TableName() string {
 	return "TemplateDetails"
