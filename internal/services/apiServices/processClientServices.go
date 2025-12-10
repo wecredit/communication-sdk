@@ -101,13 +101,12 @@ func (s *ClientService) AddClient(client *apiModels.Client) error {
 	if err != nil {
 		return err
 	}
-
 	if clientName == "" {
 		return errors.New("add credentials for this client first")
 	}
 
-	client.Name = strings.ToLower(client.Name)
-	client.Channel = strings.ToUpper(client.Channel)
+	client.Name = strings.TrimSpace(strings.ToLower(client.Name))
+	client.Channel = strings.TrimSpace(strings.ToUpper(client.Channel))
 
 	client.Status = 1
 	istOffset := 5*time.Hour + 30*time.Minute

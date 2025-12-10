@@ -120,7 +120,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 }
 
 func getPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(timesApiModel.Process, "utility") {
+	if strings.Contains(timesApiModel.TemplateName, "utility") {
 		// For Utility Payload
 		return timespayloads.GetTimesUtilityPayload(timesApiModel)
 	} else {

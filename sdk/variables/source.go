@@ -24,3 +24,8 @@ const (
 	UtilityTemplateCategory   string = "1"
 	MarketingTemplateCategory string = "2"
 )
+
+const (
+	ErrVendorRequired  = "vendor is required"
+	ErrChannelRequired = "channel is required"
+)
