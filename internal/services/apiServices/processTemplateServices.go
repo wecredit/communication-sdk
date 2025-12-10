@@ -428,9 +428,9 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 	case "WHATSAPP":
 		switch vendor {
 		case "SINCH":
-			requiredFields = []string{"templateName", "imageId", "link", "templateVariables", "process", "stage", "templatetext", "client", "isActive"}
+			requiredFields = []string{"templateName", "imageId", "link", "templateVariables", "process", "stage", "templateText", "client", "isActive"}
 		case "TIMES":
-			requiredFields = []string{"templateName", "imageUrl", "link", "process", "stage", "templatetext", "client", "isActive"}
+			requiredFields = []string{"templateName", "imageUrl", "link", "process", "stage", "templateText", "client", "isActive"}
 		default:
 			return nil, fmt.Errorf("unsupported vendor '%s' for WhatsApp channel", vendor)
 		}
@@ -449,7 +449,7 @@ func (s *TemplateService) GetRequiredFields(vendor, channel string) (*apiModels.
 		// Email requirements are same for both SINCH and TIMES vendors
 		switch vendor {
 		case "SINCH", "TIMES":
-			requiredFields = []string{"templateName", "subject", "fromEmail", "templateText", "process", "stage", "client", "Link"}
+			requiredFields = []string{"templateName", "subject", "fromEmail", "templateText", "process", "stage", "client", "link"}
 		default:
 			return nil, fmt.Errorf("unsupported vendor '%s' for EMAIL channel", vendor)
 		}
