@@ -66,6 +66,7 @@ type WhatsappResponse struct {
 	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
+	PaymentLink     string `json:"paymentLink" gorm:"PaymentLink"`
 }
 
 type RcsRequestBody struct {

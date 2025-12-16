@@ -19,6 +19,7 @@ type CommApiRequestBody struct {
 	DueDate             string  `json:"dueDate,omitempty" gorm:-`
 	AzureIdempotencyKey string  `json:"azureIdempotencyKey,omitempty" gorm:"AzureIdempotencyKey"`
 	Description         string  `json:"description,omitempty" gorm:-` // variables used in creditsea Template
+	PaymentLink         string  `json:"paymentLink,omitempty" gorm:-` // payment link for the message
 }
 
 type CommApiResponseBody struct {

@@ -18,6 +18,17 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// paymentLinkStages defines which stages should use payment link instead of template button link
+// Add new stages here as needed - this is created once at package initialization
+var paymentLinkStages = map[int]bool{
+	4: true,
+	5: true,
+	6: true,
+	// Add more stages here in the future
+	// 7: true,
+	// 8: true,
+}
+
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:            msg.Mobile,
@@ -45,6 +56,14 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	msg.Vendor = matchedVendor
 
 	channelHelper.PopulateWhatsappFields(&requestBody, data)
+
+	// Handling For Payment Link
+	// Check if current stage should use payment link instead of button url
+	stageInt := int(msg.Stage)
+	if paymentLinkStages[stageInt] && msg.PaymentLink != "" {
+		requestBody.ButtonLink = msg.PaymentLink
+		utils.Debug(fmt.Sprintf("Updated button link with payment link for stage %d and mobile: %s: %s", stageInt, msg.Mobile, msg.PaymentLink))
+	}
 
 	var response extapimodels.WhatsappResponse
 
@@ -77,6 +96,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	response.TemplateName = requestBody.TemplateName
 	response.Vendor = msg.Vendor
 	response.MobileNumber = msg.Mobile
+	response.PaymentLink = msg.PaymentLink
 
 	dbMappedData, err := services.MapIntoDbModel(response)
 	if err != nil {

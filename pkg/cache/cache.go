@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
 
@@ -25,14 +27,15 @@ var (
 )
 
 // Global cache
-var ChannelVendorSlots = map[string][100]string{} // for fast weighted lookup
+var ChannelVendorSlots = map[string]map[string][100]string{} // for fast weighted lookup
 // var channelActiveVendors = map[string][]Vendor{}  // optional if needed elsewhere
 
 type Vendor struct {
 	Name    string
 	Channel string
+	Client  string
 	Status  int
-	Weight  int
+	Weight  int64
 }
 
 // InitializeCache initializes the global cache instance
@@ -149,6 +152,11 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 			keyStr = fmt.Sprintf("%s|Client:%v|Channel:%v|Vendor:%v", keyStr, row["Client"], row["Channel"], row["Vendor"])
 		}
 
+		if tableName == config.Configs.VendorTable {
+			clientStr := strings.ToLower(strings.TrimSpace(row["Client"].(string)))
+			keyStr = fmt.Sprintf("%s|Client:%s", keyStr, clientStr)
+		}
+
 		mappedData[keyStr] = row
 
 		// Build Id index
@@ -176,47 +184,64 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 }
 
 func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
-	temp := make(map[string][]Vendor)
-	// Step 1: Group by channel with only active vendors
+	temp := make(map[string]map[string][]Vendor)
+	// Step 1: Group by channel & client with only active vendors
 	for _, row := range raw {
-		status, _ := row["Status"].(int64)
-		if status != 1 {
+		status := (row["Status"].(int64))
+		if status != variables.Active {
 			continue
 		}
 
-		v := Vendor{
-			Name:    fmt.Sprintf("%v", row["Name"]),
-			Channel: fmt.Sprintf("%v", row["Channel"]),
-			Status:  1,
-			Weight:  int(row["Weight"].(int64)), // depending on actual DB type
+		name := strings.ToUpper(strings.TrimSpace(row["Name"].(string)))
+		channel := strings.ToUpper(strings.TrimSpace(row["Channel"].(string)))
+		client := strings.ToLower(strings.TrimSpace(row["Client"].(string)))
+		weight := row["Weight"].(int64)
+		if weight <= 0 {
+			continue
 		}
-		temp[v.Channel] = append(temp[v.Channel], v)
+
+		if _, ok := temp[channel]; !ok {
+			temp[channel] = make(map[string][]Vendor)
+		}
+
+		v := Vendor{
+			Name:    name,
+			Channel: channel,
+			Client:  client,
+			Status:  1,
+			Weight:  weight,
+		}
+		temp[channel][client] = append(temp[channel][client], v)
 	}
 
-	// Step 2: Pre-compute vendor slots for each channel
-	final := make(map[string][100]string)
-	for channel, vendors := range temp {
-		var slots [100]string
-		pos := 0
-		for _, v := range vendors {
-			end := pos + v.Weight
-			if end > 100 {
-				end = 100
-			}
-			for i := pos; i < end; i++ {
-				slots[i] = v.Name
-			}
-			pos = end
-			if pos >= 100 {
-				break
-			}
+	// Step 2: Pre-compute vendor slots for each channel & client
+	final := make(map[string]map[string][100]string)
+	for channel, clientVendors := range temp {
+		if _, ok := final[channel]; !ok {
+			final[channel] = make(map[string][100]string)
 		}
-		final[channel] = slots
+		for client, vendors := range clientVendors {
+			var slots [100]string
+			var pos int64 = 0
+			for _, v := range vendors {
+				end := pos + v.Weight
+				if end > 100 {
+					end = 100
+				}
+				for i := pos; i < end; i++ {
+					slots[i] = v.Name
+				}
+				pos = end
+				if pos >= 100 {
+					break
+				}
+			}
+			final[channel][client] = slots
+		}
 	}
 
 	// Step 3: Store in global vars
 	ChannelVendorSlots = final
-	// channelActiveVendors = temp
 }
 
 // Get fetches the data from the cache for a given key

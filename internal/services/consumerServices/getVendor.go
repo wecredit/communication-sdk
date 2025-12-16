@@ -2,6 +2,7 @@ package services
 
 import (
 	"hash/fnv"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/pkg/cache"
 )
@@ -39,13 +40,25 @@ func GetVendorByWeight(idempotencyKey string, vendors []Vendor) string {
 	return "UNKNOWN"
 }
 
-func GetVendorByChannel(channel, idempotencyKey string) string {
+func GetVendorByClientAndChannel(channel, client, idempotencyKey string) string {
 	h := fnv.New32a()
 	h.Write([]byte(idempotencyKey))
 	val := int(h.Sum32() % 100)
 
-	if slots, ok := cache.ChannelVendorSlots[channel]; ok {
-		return slots[val]
+	channel = strings.ToUpper(channel)
+	client = strings.ToLower(client)
+
+	if channelSlots, ok := cache.ChannelVendorSlots[channel]; ok {
+		if slots, ok := channelSlots[client]; ok {
+			if vendor := slots[val]; vendor != "" {
+				return vendor
+			}
+		}
+		if slots, ok := channelSlots[""]; ok {
+			if vendor := slots[val]; vendor != "" {
+				return vendor
+			}
+		}
 	}
 	return "UNKNOWN"
 }

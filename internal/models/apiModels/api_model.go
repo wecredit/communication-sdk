@@ -13,6 +13,7 @@ type Vendor struct {
 	Id        int        `json:"id"`
 	Name      string     `gorm:"column:Name" json:"name" binding:"required"`
 	Channel   string     `gorm:"column:Channel" json:"channel" binding:"required"`
+	Client    string     `gorm:"column:Client" json:"client" binding:"required"`
 	Status    int        `gorm:"column:Status" json:"status"` // 1 = active, 0 = inactive
 	IsHealthy int        `gorm:"column:IsHealthy" json:"isHealthy" binding:"required"`
 	Weight    int        `gorm:"column:Weight" json:"weight" binding:"required"`
