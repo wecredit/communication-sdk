@@ -39,6 +39,9 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Times Wp API: %v", err))
+		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, timesApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Times Wp API: %v", err)
 		return responseBody
 	}
