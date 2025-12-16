@@ -52,6 +52,32 @@ func GetRedisClient(address, password string) (*redis.Client, error) {
 	return RDB, nil
 }
 
+func GetSdkRedisClient(address string) (*redis.Client, error) {
+	if address == "" {
+		return nil, fmt.Errorf("environment variables for Redis are not set")
+	}
+
+	// Initialize Redis client
+	rdb := redis.NewClient(&redis.Options{
+		Addr:      address,
+		DB:        0,
+		TLSConfig: &tls.Config{InsecureSkipVerify: true},
+	})
+
+	// Test the Redis connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := rdb.Ping(ctx).Result()
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to connect to Redis at %s: %v", address, err))
+		return nil, fmt.Errorf("failed to connect to Redis: %v", err)
+	}
+
+	utils.Info(fmt.Sprintf("Redis connection established for SDK at address: %s", address))
+	return rdb, nil
+}
+
 // CloseRedisClient gracefully closes the Redis client
 func CloseRedisClient() {
 	if RDB != nil {
