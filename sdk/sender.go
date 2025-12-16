@@ -32,7 +32,7 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 
 	msg.Client = c.ClientName
 
-	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn)
+	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn, c.RedisAddress, c.RedisHashKey)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message: %v", err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err

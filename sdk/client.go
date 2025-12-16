@@ -15,6 +15,8 @@ type CommSdkClient struct {
 	Channel      string
 	TopicArn     string
 	AwsSnsClient *sns.SNS
+	RedisAddress string
+	RedisHashKey string
 }
 
 func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, error) {
@@ -27,9 +29,9 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		return nil, fmt.Errorf("username, password, channel, and baseUrl are required")
 	}
 
-	var userName, topicArn string
+	var userName, topicArn, redisAddress, redisHashKey string
 	var ok bool
-	if ok, userName, channel, topicArn = ValidateClient(username, password, channel, baseUrl); !ok {
+	if ok, userName, channel, topicArn, redisAddress, redisHashKey = ValidateClient(username, password, channel, baseUrl); !ok {
 		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
 
@@ -41,10 +43,12 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		Channel:      channel,
 		TopicArn:     topicArn,
 		AwsSnsClient: snsClient,
+		RedisAddress: redisAddress,
+		RedisHashKey: redisHashKey,
 	}, nil
 }
 
-func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string) {
+func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string, string) {
 
 	apiUrl := baseUrl + "/clients/validate-client"
 
@@ -60,11 +64,11 @@ func ValidateClient(username, password, channel, baseUrl string) (bool, string, 
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeaders, "", "", requestBody, variables.ContentTypeJSON)
 	if err != nil {
-		return false, "", "", ""
+		return false, "", "", "", "", ""
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string)
+		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), apiResponse["redisAddress"].(string), apiResponse["redisHashKey"].(string)
 	}
-	return false, "", "", ""
+	return false, "", "", "", "", ""
 }
