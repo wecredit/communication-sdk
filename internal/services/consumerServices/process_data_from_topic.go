@@ -232,7 +232,11 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			return true // message processed
 		}
 
-		return false // message not processed as redis key exists
+		// Redis key exists but no transactionId or errorMessage - message was already processed
+		// Delete it to prevent reprocessing
+		utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s (key exists but no transactionId/errorMessage), deleting", redisKey))
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		return true // message processed
 	}
 
 	// If not exists, add key with blank value
@@ -270,7 +274,9 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return isMessageProcessed
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
-		return false
+		// Delete invalid messages to prevent unnecessary retries
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		return true // message processed (rejected due to invalid channel)
 	}
 }
 
@@ -333,8 +339,12 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
 		return isMessageProcessed
 	}
+
+	if isMessageProcessed {
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	}
+
 	return isMessageProcessed
-	// deleteMessage(ctx, sqsClient, queueURL, msg, data)
 }
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
