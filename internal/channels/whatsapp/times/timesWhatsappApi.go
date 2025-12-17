@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/config"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times/timesPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
