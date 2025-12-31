@@ -5,9 +5,11 @@ import (
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/service/sns"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	env "github.com/wecredit/communication-sdk/sdk/constant"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/queue"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 // Create an instance of Config
@@ -20,7 +22,9 @@ func LoadSDKConfigs() (*sns.SNS, error) {
 
 	// Map of envconfig tags to their constant values
 	envVars := map[string]string{
-		"AWS_REGION": env.AWS_REGION,
+		"AWS_REGION":     env.AWS_REGION,
+		"REDIS_ADDRESS":  env.REDIS_ADDRESS,
+		"REDIS_PASSWORD": env.REDIS_PASSWORD,
 	}
 
 	for i := 0; i < val.NumField(); i++ {
@@ -40,6 +44,12 @@ func LoadSDKConfigs() (*sns.SNS, error) {
 				}
 			}
 		}
+	}
+
+	// Initialize Redis Connection
+	_, err := redis.GetRedisClient(SdkConfigs.RedisAddress, SdkConfigs.RedisPassword)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to initialize redis connection"))
 	}
 
 	// Initiate Default quueue client

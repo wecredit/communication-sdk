@@ -19,6 +19,8 @@ const (
 	// BASIC_AUTH_API_URL = "http://localhost:8080/clients/validate-client"
 
 	AWS_REGION = "ap-south-1"
+	REDIS_ADDRESS="nurture-engine-eieouu.serverless.aps1.cache.amazonaws.com:6379"
+	REDIS_PASSWORD = ""
 	// AWS_COMM_TOPIC_ARN = "arn:aws:sns:ap-south-1:717840664658:comm-sdk"
 	// AWS_COMM_TOPIC_ARN = "arn:aws:sns:ap-south-1:717840664658:comm-uat-sdk"
 
