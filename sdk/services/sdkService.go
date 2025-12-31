@@ -7,7 +7,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/google/uuid"
+	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/database"
+	"github.com/wecredit/communication-sdk/internal/redis"
+	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -35,6 +39,53 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 
 	if !isValidate {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
+	}
+
+	// Convert stage to string for Redis key
+	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
+
+	// check if message already sent for once
+	exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err)
+	}
+
+	// If we have data from Redis, handle accordingly
+	if exists {
+		// Priority: If we have a transactionId, the message was successfully processed before
+		if transactionId != "" {
+			// check if record already exists in output table
+			dataExistsAlready, err := services.CheckIfDataAlreadyExists(*data, redisKey, transactionId)
+			if err != nil {
+				utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err)
+			}
+
+			// for debugging purpose
+			if dataExistsAlready {
+				utils.Debug(fmt.Sprintf("Data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId))
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
+			}
+
+			utils.Debug(fmt.Sprintf("Data does not exist in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data does not exist in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
+		}
+
+		// If we have an error message (and no transactionId), return error
+		if errorMessage != "" && transactionId == "" {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for mobile: %s and channel: %s, redisKey: %s with error: %s", data.Mobile, data.Channel, redisKey, errorMessage)
+		}
+
+		// Redis key exists but no transactionId or errorMessage - return error
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+	}
+
+	// If not exists, add key with blank value
+	err = redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis add failed for mobile: %s, redisKey: %s: %v", data.Mobile, redisKey, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s and channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, err)
 	}
 
 	// Set CommId for requested Data
