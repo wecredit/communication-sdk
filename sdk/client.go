@@ -30,10 +30,8 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 	var userName, topicArn string
 	var ok bool
 	if ok, userName, channel, topicArn = ValidateClient(username, password, channel, baseUrl); !ok {
-		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
+		return nil, fmt.Errorf("client is not authenticated with us for username %s and channel %s. Wrong Username or password", username, channel)
 	}
-
-	// fmt.Println("TopicArn: ", topicArn)
 
 	return &CommSdkClient{
 		ClientName:   userName,

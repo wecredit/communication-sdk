@@ -7,6 +7,8 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/sns"
 	"github.com/google/uuid"
+	"github.com/wecredit/communication-sdk/internal/database"
+	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
@@ -44,11 +46,22 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		subject = variables.Priority
 	}
 
+	dbMappedData, err := dbservices.MapIntoDbModel(data)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in mapping data into dbModel for mobile %s and channel %s: %v", data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in mapping data into dbModel for mobile %s and channel %s: %v", data.Mobile, data.Channel, err)
+	}
+
+	if data.Channel == variables.Email {
+		delete(dbMappedData, "Mobile")
+		dbMappedData["Email"] = data.Email
+	}
+
 	// Convert the struct to JSON (byte slice)
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		utils.Error(fmt.Errorf("failed to serialize data: %w", err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to serialize data: %w", err)
+		utils.Error(fmt.Errorf("failed to serialize data for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to serialize data for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
 	// Initialize the map
@@ -57,23 +70,24 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	// Deserialize JSON into map
 	err = json.Unmarshal(jsonBytes, &dataMap)
 	if err != nil {
-		utils.Error(fmt.Errorf("failed to convert data to map: %w", err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map: %w", err)
+		utils.Error(fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
+	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+	}
 	// Send the map to AWS Queue
 	err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while sending data to queue: %w", err))
+		utils.Error(fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{
 			Success: false,
-		}, fmt.Errorf("error occurred while sending data to queue: %w", err)
+		}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
-	utils.Info("Message sent to AWS SNS.")
+	utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 
-	return sdkModels.CommApiResponseBody{
-		Success: true,
-		CommId:  data.CommId,
-	}, nil
+	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
 }
