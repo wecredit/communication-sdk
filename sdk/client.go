@@ -29,7 +29,7 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		return nil, fmt.Errorf("username, password, channel, and baseUrl are required")
 	}
 
-	var userName, topicArn, redisAddress, redisHashKey string
+	var userName, topicArn string
 	var ok bool
 	if ok, userName, channel, topicArn = ValidateClient(username, password, channel, baseUrl); !ok {
 		return nil, fmt.Errorf("client is not authenticated with us for username %s and channel %s. Wrong Username or password", username, channel)
@@ -41,12 +41,10 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		Channel:      channel,
 		TopicArn:     topicArn,
 		AwsSnsClient: snsClient,
-		RedisAddress: redisAddress,
-		RedisHashKey: redisHashKey,
 	}, nil
 }
 
-func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string, string) {
+func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string) {
 
 	apiUrl := baseUrl + "/clients/validate-client"
 
@@ -62,11 +60,11 @@ func ValidateClient(username, password, channel, baseUrl string) (bool, string, 
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeaders, "", "", requestBody, variables.ContentTypeJSON)
 	if err != nil {
-		return false, "", "", "", "", ""
+		return false, "", "", ""
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), apiResponse["redisAddress"].(string), apiResponse["redisHashKey"].(string)
+		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string)
 	}
-	return false, "", "", "", "", ""
+	return false, "", "", ""
 }
