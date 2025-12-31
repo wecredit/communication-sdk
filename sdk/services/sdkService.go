@@ -34,7 +34,7 @@ func GenerateCommID() string {
 	return commID
 }
 
-func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn string) (sdkModels.CommApiResponseBody, error) {
+func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn, redisAddress, redisHashKey string) (sdkModels.CommApiResponseBody, error) {
 	isValidate, message := sdkHelper.ValidateCommRequest(*data)
 
 	if !isValidate {

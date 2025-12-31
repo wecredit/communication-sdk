@@ -97,6 +97,9 @@ func (h *VendorHandler) UpdateVendorByNameAndChannel(c *gin.Context) {
 	// Fill name & channel from URL
 	vendor.Name = name
 	vendor.Channel = channel
+	if client != "" {
+		vendor.Client = client
+	}
 
 	if client != "" {
 		vendor.Client = client

@@ -69,6 +69,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 
 	if shouldHitVendor {
 		// Hit Into WP
@@ -101,7 +102,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
-
+	
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
@@ -111,9 +112,10 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		}
 		return true, dbMappedData, nil
 	}
-
+	
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
+		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for mobile " + msg.Mobile
 		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
 			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}

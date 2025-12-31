@@ -1,16 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/server"
 	"github.com/wecredit/communication-sdk/pkg/cache"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 func init() {
 	// Load configs
-	config.LoadConfigs()
+	if err := config.LoadConfigs(); err != nil {
+		utils.Error(fmt.Errorf("failed to load configs: %v", err))
+	}
+
 	cache.LoadConsumerDataIntoCache(config.Configs)
 }
 
