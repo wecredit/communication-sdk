@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/service/sns"
+	"github.com/redis/go-redis/v9"
+	redisHelper "github.com/wecredit/communication-sdk/internal/redis"
 	sdkConfig "github.com/wecredit/communication-sdk/sdk/config"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -15,8 +17,7 @@ type CommSdkClient struct {
 	Channel      string
 	TopicArn     string
 	AwsSnsClient *sns.SNS
-	RedisAddress string
-	RedisHashKey string
+	RedisClient  *redis.Client
 }
 
 func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, error) {
@@ -29,13 +30,17 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		return nil, fmt.Errorf("username, password, channel, and baseUrl are required")
 	}
 
-	var userName, topicArn, redisAddress, redisHashKey string
+	var userName, topicArn, redisAddress string
 	var ok bool
-	if ok, userName, channel, topicArn, redisAddress, redisHashKey = ValidateClient(username, password, channel, baseUrl); !ok {
-		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
+	if ok, userName, channel, topicArn, redisAddress = ValidateClient(username, password, channel, baseUrl); !ok {
+		return nil, fmt.Errorf("client is not authenticated with us for username %s and channel %s. Wrong Username or password", username, channel)
 	}
 
-	// fmt.Println("TopicArn: ", topicArn)
+	// Create redis client from the address
+	redisClient, err := redisHelper.GetSdkRedisClient(redisAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize redis client: %v", err)
+	}
 
 	return &CommSdkClient{
 		ClientName:   userName,
@@ -43,12 +48,11 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		Channel:      channel,
 		TopicArn:     topicArn,
 		AwsSnsClient: snsClient,
-		RedisAddress: redisAddress,
-		RedisHashKey: redisHashKey,
+		RedisClient:  redisClient,
 	}, nil
 }
 
-func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string, string) {
+func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string) {
 
 	apiUrl := baseUrl + "/clients/validate-client"
 
@@ -64,11 +68,15 @@ func ValidateClient(username, password, channel, baseUrl string) (bool, string, 
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeaders, "", "", requestBody, variables.ContentTypeJSON)
 	if err != nil {
-		return false, "", "", "", "", ""
+		return false, "", "", "", ""
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), apiResponse["redisAddress"].(string), apiResponse["redisHashKey"].(string)
+		redisAddress, ok := apiResponse["redisAddress"].(string)
+		if !ok {
+			return false, "", "", "", ""
+		}
+		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), redisAddress
 	}
-	return false, "", "", "", "", ""
+	return false, "", "", "", ""
 }
