@@ -31,8 +31,11 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	}
 
 	msg.Client = c.ClientName
+	if c.RedisClient == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis client not initialized")
+	}
 
-	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn)
+	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn, c.RedisClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message for mobile %s and channel %s for stage %f: %v", msg.Mobile, msg.Channel, msg.Stage, err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err

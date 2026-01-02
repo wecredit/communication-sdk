@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
-	// "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
@@ -198,50 +198,50 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// continue
 	// else store key in redis (mobile_channel)
 
-	// // Convert stage to string for Redis key
-	// redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
+	// Convert stage to string for Redis key
+	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
 
-	// // check if message already sent for once
-	// exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
-	// if err != nil {
-	// 	utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
-	// 	return false // message is not processed as redis check failed
-	// }
+	// check if message already sent for once
+	exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
+		return false // message is not processed as redis check failed
+	}
 
-	// // If we have data from Redis, handle accordingly
-	// if exists {
-	// 	// Priority: If we have a transactionId, the message was successfully processed before
-	// 	if transactionId != "" {
-	// 		// check if record already exists in output table
-	// 		dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKey, transactionId)
-	// 		if err != nil {
-	// 			utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
-	// 			return false
-	// 		}
+	// If we have data from Redis, handle accordingly
+	if exists {
+		// Priority: If we have a transactionId, the message was successfully processed before
+		if transactionId != "" {
+			// check if record already exists in output table
+			dataExistsAlready, err := CheckIfDataAlreadyExists(data, redisKey, transactionId)
+			if err != nil {
+				utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
+				return false
+			}
 
-	// 		// for debugging purpose
-	// 		if dataExistsAlready {
-	// 			utils.Debug("Data already exists in output table, skipping processing")
-	// 		} else {
-	// 			utils.Debug("Data does not exist in output table, inserted new record")
-	// 		}
-	// 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
-	// 		return true // message processed
-	// 	}
+			// for debugging purpose
+			if dataExistsAlready {
+				utils.Debug("Data already exists in output table, skipping processing")
+			} else {
+				utils.Debug("Data does not exist in output table, inserted new record")
+			}
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
+		}
 
-	// 	// If we have an error message (and no transactionId), skip processing
-	// 	if errorMessage != "" && transactionId == "" {
-	// 		utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s with error: %s, skipping", redisKey, errorMessage))
-	// 		deleteMessage(ctx, sqsClient, queueURL, msg, data)
-	// 		return true // message processed
-	// 	}
+		// If we have an error message (and no transactionId), skip processing
+		if errorMessage != "" && transactionId == "" {
+			utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s with error: %s, skipping", redisKey, errorMessage))
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			return true // message processed
+		}
 
-	// 	// Redis key exists but no transactionId or errorMessage - message was already processed
-	// 	// Delete it to prevent reprocessing
-	// 	utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s (key exists but no transactionId/errorMessage), deleting", redisKey))
-	// 	deleteMessage(ctx, sqsClient, queueURL, msg, data)
-	// 	return true // message processed
-	// }
+		// Redis key exists but no transactionId or errorMessage - message was already processed
+		// Delete it to prevent reprocessing
+		utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s (key exists but no transactionId/errorMessage), deleting", redisKey))
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		return true // message processed
+	}
 
 	// // If not exists, add key with blank value
 	// err = redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
@@ -334,13 +334,13 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
-// 	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-// 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-// 		dbMappedData["tableName"] = config.Configs.SdkRcsInputTable
-// 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
-// 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
-// 		}
-// 	}
+	// 	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+	// 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	// 		dbMappedData["tableName"] = config.Configs.SdkRcsInputTable
+	// 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
+	// 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+	// 		}
+	// 	}
 	AssignVendor(&data)
 	isMessageProcessed, err := rcs.SendRcsByProcess(data)
 	if err != nil {
@@ -379,15 +379,15 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) bool {
 	// delete Mobile from dbMappedData and Add Email in it for successful insertion in email input audit table
-// 	delete(dbMappedData, "Mobile")
-// 	dbMappedData["Email"] = data.Email
-// 	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtechWrite, dbMappedData); err != nil {
-// 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-// 		dbMappedData["tableName"] = config.Configs.SdkEmailInputTable
-// 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
-// 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
-// 		}
-// 	}
+	// 	delete(dbMappedData, "Mobile")
+	// 	dbMappedData["Email"] = data.Email
+	// 	if err := database.InsertData(config.Configs.SdkEmailInputTable, database.DBtechWrite, dbMappedData); err != nil {
+	// 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
+	// 		dbMappedData["tableName"] = config.Configs.SdkEmailInputTable
+	// 		if queueErr := queue.SendMessageWithSubject(sqsClient, dbMappedData, config.Configs.AwsErrorQueueUrl, variables.InputInsertionFails, err.Error()); queueErr != nil {
+	// 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+	// 		}
+	// 	}
 	AssignVendor(&data)
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {

@@ -10,16 +10,16 @@ import (
 
 func main() {
 	// For Creditsea local testing
-	username := "wecredit"
-	password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
-	channel := "SMS"
-	baseUrl := "http://localhost:8080"
+	// username := "wecredit"
+	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
+	// channel := "SMS"
+	// baseUrl := "http://localhost:8080"
 
 	// For Creditsea UAT testing
-	// username := "creditsea"
-	// password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
-	// channel := "WHATSAPP"
-	// baseUrl := "http://172.16.23.114:8080"
+	username := "creditsea"
+	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	channel := "WHATSAPP"
+	baseUrl := "http://localhost:8080"
 
 	// For Nurture Engine local testing
 	// username := "wecredit"
@@ -60,8 +60,8 @@ func main() {
 		request := &sdkModels.CommApiRequestBody{
 			Mobile:            "7570897034",
 			Email:             "nikhil@wecredit.co.in",
-			Channel:           "SMS",
-			ProcessName:       "OLYV",
+			Channel:           "WHATSAPP",
+			ProcessName:       "CREDITSEA",
 			Stage:             stage,
 			IsPriority:        true,
 			EmiAmount:         "25000",
