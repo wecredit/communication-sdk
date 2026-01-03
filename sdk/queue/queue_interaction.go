@@ -19,9 +19,6 @@ const (
 
 // SendMessage sends a message to an AWS SNS topic with the subject as a message attribute
 func SendMessageToAwsQueue(client *sns.SNS, messageMap interface{}, topicARN string, subject string) error {
-	// Ensure SNS client is initialized
-	fmt.Println("Sending message to SNS topic:", topicARN)
-
 	// Convert message to JSON
 	messageBytes, err := json.Marshal(messageMap)
 	if err != nil {
@@ -37,13 +34,23 @@ func SendMessageToAwsQueue(client *sns.SNS, messageMap interface{}, topicARN str
 	}
 
 	// Publish message using global SNSClient
-	_, err = client.Publish(&sns.PublishInput{
+	response, err := client.Publish(&sns.PublishInput{
 		Message:           aws.String(string(messageBytes)),
 		TopicArn:          aws.String(topicARN),
 		MessageAttributes: messageAttributes,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	// Validate response to ensure message was actually published
+	if response == nil {
+		return fmt.Errorf("publish returned nil response - message may not have been published")
+	}
+
+	// MessageId is required to confirm successful publication
+	if response.MessageId == nil || *response.MessageId == "" {
+		return fmt.Errorf("publish returned empty or nil MessageId - message may not have been published")
 	}
 
 	return nil
