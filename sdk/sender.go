@@ -14,7 +14,7 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("please initialize the client first")
 	}
 	if !c.isAuthed {
-		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client")
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client for username %s and channel %s", c.ClientName, c.Channel)
 	}
 
 	c.Channel = strings.ToUpper(c.Channel)
@@ -31,10 +31,13 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	}
 
 	msg.Client = c.ClientName
+	if c.RedisClient == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis client not initialized")
+	}
 
-	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn)
+	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn, c.RedisClient)
 	if err != nil {
-		utils.Error(fmt.Errorf("error in processing message: %v", err))
+		utils.Error(fmt.Errorf("error in processing message for mobile %s and channel %s for stage %f: %v", msg.Mobile, msg.Channel, msg.Stage, err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err
 	}
 
