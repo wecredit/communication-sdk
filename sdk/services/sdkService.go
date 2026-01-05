@@ -76,9 +76,28 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	// If not exists, add key with blank value
-
+	// Use HSetNX atomically - if key already exists, it will return error
 	redisSetErr := redisInteraction.SetMobileChannelKey(redisClient, config.Configs.CommIdempotentKey, redisKey)
 	if redisSetErr != nil {
+		utils.Error(fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr))
+		// If key already exists, check Redis again to get transactionId/errorMessage for proper error response
+		if strings.Contains(redisSetErr.Error(), "already exists") {
+			// Key was created between our check and set - re-check to get full details
+			exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
+			if err != nil {
+				utils.Error(fmt.Errorf("error re-checking mobile after key creation conflict: %s, redisKey: %s: %v", data.Mobile, redisKey, err))
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("key already exists for mobile: %s and channel: %s, redisKey: %s", data.Mobile, data.Channel, redisKey)
+			}
+			if exists {
+				if transactionId != "" {
+					return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
+				}
+				if errorMessage != "" {
+					return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for mobile: %s and channel: %s, redisKey: %s with error: %s", data.Mobile, data.Channel, redisKey, errorMessage)
+				}
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+			}
+		}
 		utils.Error(fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr)
 	}
