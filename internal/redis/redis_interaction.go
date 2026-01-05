@@ -65,7 +65,7 @@ func ResetCreditSeaCounter(ctx context.Context, redisClient *redis.Client, key s
 }
 
 // Check if mobile_channel exists and return both transactionId and errorMessage if present
-func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redis.Client) (bool,string, string, error) {
+func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redis.Client) (bool, string, string, error) {
 	ctx := context.Background()
 	val, err := rdb.HGet(ctx, CommIdempotentKey, redisKey).Result()
 	if err == redis.Nil {
@@ -73,7 +73,7 @@ func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redi
 		return false, "", "", nil
 	}
 	if err != nil {
-		return false,"", "", err
+		return false, "", "", err
 	}
 
 	// Try to parse as JSON first (new format)
@@ -90,12 +90,17 @@ func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redi
 }
 
 // 1. Create a field (mobile_channel) inside CommIdempotentKey with blank value
+// Returns error if key already exists (HSetNX returns false)
 func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) error {
 	ctx := context.Background()
-	err := RDB.HSetNX(ctx, commIdempotentKey, redisKey, "").Err()
+	created, err := RDB.HSetNX(ctx, commIdempotentKey, redisKey, "").Result()
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to set key %s in redis: %v", redisKey, err))
 		return err
+	}
+	if !created {
+		utils.Info(fmt.Sprintf("Key %s already exists in hash %s", redisKey, commIdempotentKey))
+		return fmt.Errorf("key %s already exists in redis", redisKey)
 	}
 	utils.Info(fmt.Sprintf("Key %s created in hash %s with blank value", redisKey, commIdempotentKey))
 	return nil
