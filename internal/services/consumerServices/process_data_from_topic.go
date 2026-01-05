@@ -159,9 +159,15 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 			}
 			timeout.Reset(time.Hour)
 			isMessageProcessed := processMessage(ctx, sqsClient, queueURL, msgWrapper)
-			if isMessageProcessed {
-				fmt.Println("Message processed")
-				// deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload) // delete message from SQS if it is processed
+			// Note: Message deletion is handled inside processMessage and channel handlers
+			// Only delete here if processMessage explicitly indicates it should be deleted
+			// but wasn't already deleted (e.g., on fatal errors)
+			if !isMessageProcessed {
+				// If message processing failed and wasn't deleted, we need to decide:
+				// - If it's a transient error, don't delete (let it retry)
+				// - If it's a permanent error, delete to prevent infinite retries
+				// For now, we let SQS handle retries via visibility timeout
+				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
 			}
 		case <-timeout.C:
 			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for client: %s", client))
@@ -201,6 +207,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	exists, transactionId, errorMessage, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
+		// Redis error is transient - don't delete message, let it retry
 		return false // message is not processed as redis check failed
 	}
 
@@ -232,11 +239,11 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			return true // message processed
 		}
 
-		// Redis key exists but no transactionId or errorMessage - message was already processed
+		// Redis key exists but no transactionId or errorMessage - new message
 		// Delete it to prevent reprocessing
-		utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s (key exists but no transactionId/errorMessage), deleting", redisKey))
-		deleteMessage(ctx, sqsClient, queueURL, msg, data)
-		return true // message processed
+		// utils.Debug(fmt.Sprintf("Message already processed for redisKey: %s (key exists but no transactionId/errorMessage), deleting", redisKey))
+		// deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		// return true // message processed
 	}
 
 	// // If not exists, add key with blank value
@@ -255,6 +262,10 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
+		// Data mapping error is likely permanent - delete message to prevent infinite retries
+		// But log it for investigation
+		deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		return false // Return false to indicate processing failed
 	}
 
 	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
@@ -313,6 +324,11 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
+		// If processing failed, don't delete message - let it retry after visibility timeout
+		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		if isMessageProcessed {
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		}
 		return isMessageProcessed
 	}
 
@@ -337,6 +353,11 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	isMessageProcessed, err := rcs.SendRcsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
+		// If processing failed, don't delete message - let it retry after visibility timeout
+		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		if isMessageProcessed {
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		}
 		return isMessageProcessed
 	}
 
@@ -355,6 +376,11 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
+		// If processing failed, don't delete message - let it retry after visibility timeout
+		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		if isMessageProcessed {
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		}
 		return isMessageProcessed
 	}
 
@@ -380,6 +406,11 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending Email: %v", data.Client, data.CommId, err))
+		// If processing failed, don't delete message - let it retry after visibility timeout
+		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		if isMessageProcessed {
+			deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		}
 		return isMessageProcessed
 	}
 
@@ -398,7 +429,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 }
 
 func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, data sdkModels.CommApiRequestBody) {
-	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	maxAttempts := 3
