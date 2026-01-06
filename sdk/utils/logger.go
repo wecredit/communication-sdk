@@ -12,24 +12,41 @@ import (
 
 // Log levels
 const (
-	DEBUG  = iota // 0
-	INFO          // 1
-	WARN          // 2
-	ERROR         // 3
-	NOLOGS        // 4
+	DEBUG = iota
+	INFO
+	WARN
+	ERROR
+	NOLOGS
 )
 
 var logLevel = INFO
-
 var Logger = log.New(os.Stdout, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
 
 func init() {
-	// Load .env file
+	// Load .env file if present
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: No .env file found: %v", err)
 	}
 
-	// Read log level from environment variable
+	/* 	// Create logs directory if not exists
+	   	logDir := "logs"
+	   	if err := os.MkdirAll(logDir, os.ModePerm); err != nil {
+	   		log.Fatalf("Failed to create log directory: %v", err)
+	   	}
+
+	   	// Open log file
+	   	logFilePath := filepath.Join(logDir, "app.log")
+	   	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	   	if err != nil {
+	   		log.Fatalf("Failed to open log file: %v", err)
+	   	}
+
+	   	// MultiWriter to log both to console and file
+	   	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	   	Logger = log.New(multiWriter, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	*/
+
+	// Set log level
 	level := env.LOG_LEVEL
 	switch strings.ToUpper(level) {
 	case variables.Debug:
@@ -43,34 +60,36 @@ func init() {
 	case variables.NoLogs:
 		logLevel = NOLOGS
 	default:
-		logLevel = NOLOGS // Default to NOLOGS if no valid level is set
+		logLevel = INFO // Default to INFO if not set
 	}
+
+	Logger.Printf("Logger initialized with level: %s", strings.ToUpper(level))
 }
 
-// Error logs an error message if the level is set to ERROR or lower
+// Error logs an error message
 func Error(err error) {
 	if logLevel <= ERROR {
-		Logger.Println("ERROR: " + err.Error())
+		Logger.Println("ERROR:", err)
 	}
 }
 
-// Warning logs a warning message if the level is set to WARN or lower
+// Warn logs a warning message
 func Warn(message string) {
 	if logLevel <= WARN {
-		Logger.Println("WARN: " + message)
+		Logger.Println("WARN:", message)
 	}
 }
 
-// Info logs an informational message if the level is set to INFO or lower
+// Info logs an informational message
 func Info(message string) {
 	if logLevel <= INFO {
-		Logger.Println("INFO: " + message)
+		Logger.Println("INFO:", message)
 	}
 }
 
-// Debug logs a debug message if the level is set to DEBUG
+// Debug logs a debug message
 func Debug(message string) {
 	if logLevel <= DEBUG {
-		Logger.Println("DEBUG: " + message)
+		Logger.Println("DEBUG:", message)
 	}
 }

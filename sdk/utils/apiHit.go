@@ -89,7 +89,7 @@ func RetryApiCall(
 
 	// Make the HTTP request with retry
 	resp, err := client.Do(req)
-	fmt.Println("Response: ", resp)
+	// utils.Debug(fmt.Sprintf("Response: %v", resp))
 	if err != nil {
 		return nil, fmt.Errorf("error sending request: %v", err)
 	}

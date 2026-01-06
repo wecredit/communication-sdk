@@ -45,6 +45,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 	if shouldHitVendor {
 		switch msg.Vendor {
 		case variables.TIMES:
@@ -79,6 +80,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
+		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for mobile " + msg.Mobile
 		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
 			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}
