@@ -3,6 +3,7 @@ package sdkServices
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/sns"
@@ -12,7 +13,6 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/database"
 	redisInteraction "github.com/wecredit/communication-sdk/internal/redis"
-	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -42,10 +42,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
 	}
 
-	// Convert stage to string for Redis key
 	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
-
-	// check if message already sent for once
 	exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
@@ -57,20 +54,16 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		// Priority: If we have a transactionId, the message was successfully processed before
 		if transactionId != "" {
 			// check if record already exists in output table
-			dataExistsAlready, err := services.CheckIfDataAlreadyExists(*data, redisKey, transactionId)
-			if err != nil {
-				utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
-				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err)
-			}
+			// dataExistsAlready, err := services.CheckIfDataAlreadyExists(*data, redisKey, transactionId)
+			// if err != nil {
+			// 	utils.Error(fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err))
+			// 	return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error checking if data exists for mobile: %s, redisKey: %s, transactionId: %s: %v", data.Mobile, redisKey, transactionId, err)
+			// }
 
-			// for debugging purpose
-			if dataExistsAlready {
-				utils.Debug(fmt.Sprintf("Data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId))
-				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
-			}
-
-			utils.Debug(fmt.Sprintf("Data does not exist in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId))
-			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data does not exist in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
+			// // for debugging purpose
+			// if dataExistsAlready {
+			// 	utils.Debug(fmt.Sprintf("Data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists in output table for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
 		}
 
 		// If we have an error message (and no transactionId), return error
@@ -83,10 +76,30 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	// If not exists, add key with blank value
-	err = redisInteraction.SetMobileChannelKey(redisClient, config.Configs.CommIdempotentKey, redisKey)
-	if err != nil {
-		utils.Error(fmt.Errorf("redis add failed for mobile: %s, redisKey: %s: %v", data.Mobile, redisKey, err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s and channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, err)
+	// Use HSetNX atomically - if key already exists, it will return error
+	redisSetErr := redisInteraction.SetMobileChannelKey(redisClient, config.Configs.CommIdempotentKey, redisKey)
+	if redisSetErr != nil {
+		utils.Error(fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr))
+		// If key already exists, check Redis again to get transactionId/errorMessage for proper error response
+		if strings.Contains(redisSetErr.Error(), "already exists") {
+			// Key was created between our check and set - re-check to get full details
+			exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
+			if err != nil {
+				utils.Error(fmt.Errorf("error re-checking mobile after key creation conflict: %s, redisKey: %s: %v", data.Mobile, redisKey, err))
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("key already exists for mobile: %s and channel: %s, redisKey: %s", data.Mobile, data.Channel, redisKey)
+			}
+			if exists {
+				if transactionId != "" {
+					return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists for mobile: %s and channel: %s, redisKey: %s, transactionId: %s", data.Mobile, data.Channel, redisKey, transactionId)
+				}
+				if errorMessage != "" {
+					return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for mobile: %s and channel: %s, redisKey: %s with error: %s", data.Mobile, data.Channel, redisKey, errorMessage)
+				}
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+			}
+		}
+		utils.Error(fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr)
 	}
 
 	// Set CommId for requested Data
@@ -97,6 +110,8 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	if data.IsPriority {
 		subject = variables.Priority
 	}
+
+	data.AzureIdempotencyKey = fmt.Sprintf("%s_%s", strings.ToLower(data.ProcessName), strings.ToLower(data.Description))
 
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
 	if err != nil {
@@ -130,6 +145,11 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
 	}
+
+	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+	}
 	// Send the map to AWS Queue
 	err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
 	if err != nil {
@@ -138,7 +158,6 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 			Success: false,
 		}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
-
 	utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil

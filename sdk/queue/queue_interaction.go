@@ -20,7 +20,6 @@ const (
 
 // SendMessage sends a message to an AWS SNS topic with the subject as a message attribute
 func SendMessageToAwsQueue(client *sns.SNS, messageMap interface{}, topicARN string, subject string) error {
-
 	// Convert message to JSON
 	messageBytes, err := json.Marshal(messageMap)
 	if err != nil {

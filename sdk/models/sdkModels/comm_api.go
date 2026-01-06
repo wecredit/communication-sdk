@@ -3,8 +3,6 @@ package sdkModels
 import "gorm.io/gorm"
 
 type CommApiRequestBody struct {
-	// DsnAnalytics string
-	// DsnTech      string
 	DbClient            *gorm.DB `json:"-" gorm:-`
 	InputTableName      string   `json:"inputTableName" gorm:-`
 	CommId              string   `json:"commId" gorm:"CommId"`

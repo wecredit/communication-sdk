@@ -33,9 +33,10 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 	var userName, topicArn, redisAddress string
 	var ok bool
 	if ok, userName, channel, topicArn, redisAddress = ValidateClient(username, password, channel, baseUrl); !ok {
-		return nil, fmt.Errorf("client is not authenticated with us for username %s and channel %s. Wrong Username or password", username, channel)
+		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
 
+	// fmt.Println("TopicArn: ", topicArn)
 	// Create redis client from the address
 	redisClient, err := redisHelper.GetSdkRedisClient(redisAddress)
 	if err != nil {
@@ -72,11 +73,7 @@ func ValidateClient(username, password, channel, baseUrl string) (bool, string, 
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		redisAddress, ok := apiResponse["redisAddress"].(string)
-		if !ok {
-			return false, "", "", "", ""
-		}
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), redisAddress
+		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), apiResponse["redisAddress"].(string)
 	}
 	return false, "", "", "", ""
 }
