@@ -146,6 +146,10 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
 	}
 
+	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+	}
 	// Send the map to AWS Queue
 	err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
 	if err != nil {

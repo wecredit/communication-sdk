@@ -80,6 +80,10 @@ func ConsumerService(workerCount int, queueURL string) {
 				continue
 			}
 
+			if len(result.Messages) == 0 {
+				continue
+			}
+
 			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
