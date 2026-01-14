@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 
@@ -65,10 +67,14 @@ func (h *VendorHandler) AddVendor(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&vendor); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input: " + err.Error()})
+		errorMsg := formatVendorValidationError(err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": errorMsg})
 		return
 	}
-
+	if vendor.Name == "" || vendor.Channel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required fields: Name, Channel, or Status"})
+		return
+	}
 	if err := h.Service.AddVendor(&vendor); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -131,4 +137,37 @@ func (h *VendorHandler) DeleteVendor(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "vendor deleted successfully"})
+}
+
+// formatVendorValidationError formats validation errors using field names and validator tags
+func formatVendorValidationError(err error) string {
+	var validationErrors []string
+	var validationErrs validator.ValidationErrors
+
+	if errors.As(err, &validationErrs) {
+		for _, vErr := range validationErrs {
+			field := vErr.Field()
+
+			switch field {
+			case "Name":
+				validationErrors = append(validationErrors, "name is required")
+			case "Channel":
+				validationErrors = append(validationErrors, "channel is required")
+			case "Client":
+				validationErrors = append(validationErrors, "client is required")
+			case "IsHealthy":
+				validationErrors = append(validationErrors, "isHealthy is required")
+			case "Weight":
+				validationErrors = append(validationErrors, "weight is required")
+			default:
+				validationErrors = append(validationErrors, fmt.Sprintf("%s %s", strings.ToLower(field), vErr.Tag()))
+			}
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		return strings.Join(validationErrors, ", ")
+	}
+
+	return "invalid input: " + err.Error()
 }
