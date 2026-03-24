@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	pinnacleWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle"
 	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -78,6 +79,8 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
 		case variables.SINCH:
 			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+		case variables.PINNACLE:
+			response = pinnacleWhatsapp.HitPinnacleWhatsappApi(requestBody)
 		}
 	}
 
@@ -102,7 +105,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
-	
+
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
@@ -112,7 +115,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		}
 		return true, dbMappedData, nil
 	}
-	
+
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
 		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for mobile " + msg.Mobile

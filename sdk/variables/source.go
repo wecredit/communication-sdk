@@ -1,8 +1,9 @@
 package variables
 
 const (
-	SINCH string = "SINCH"
-	TIMES string = "TIMES"
+	SINCH    string = "SINCH"
+	TIMES    string = "TIMES"
+	PINNACLE string = "PINNACLE"
 )
 
 const (
