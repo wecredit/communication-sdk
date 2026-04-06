@@ -41,6 +41,7 @@ type SmsResponse struct {
 
 type WhatsappRequestBody struct {
 	AppId             string
+	CommId            string
 	Mobile            string
 	Process           string
 	TemplateName      string

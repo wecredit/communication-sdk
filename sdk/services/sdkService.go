@@ -22,7 +22,7 @@ import (
 )
 
 // GenerateCommID generates a unique lead ID using the UUID library
-func GenerateCommID() string {
+func GenerateCommID(clientName string) string {
 	// Generate a new UUID
 	newUUID, err := uuid.NewUUID()
 	if err != nil {
@@ -31,7 +31,7 @@ func GenerateCommID() string {
 	// Get current timestamp in nanoseconds
 	timestamp := time.Now().UnixNano()
 	// Combine UUID and timestamp to ensure uniqueness
-	commID := fmt.Sprintf("WC-%s-%d", newUUID.String(), timestamp)
+	commID := fmt.Sprintf("WC-%s-%s-%d", strings.ToUpper(clientName), newUUID.String(), timestamp)
 	return commID
 }
 
@@ -103,7 +103,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	// Set CommId for requested Data
-	data.CommId = GenerateCommID()
+	data.CommId = GenerateCommID(data.Client)
 
 	subject := variables.NonPriority
 

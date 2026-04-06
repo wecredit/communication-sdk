@@ -7,7 +7,7 @@ import (
 	"time"
 
 	// "github.com/wecredit/communication-sdk/config"
-	"github.com/wecredit/communication-sdk/helper"
+
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
@@ -115,7 +115,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"type":              "template",
 		"messaging_product": "whatsapp",
 		"biz_opaque_callback_data": map[string]interface{}{
-			"lead_id":  fmt.Sprintf("zap_%d", helper.GenerateRandomID(10000000, 99999999)),
+			"lead_id":  pinnacleApiModel.CommId,
 			"campaign": fmt.Sprintf("%s_%s", pinnacleApiModel.Process, pinnacleApiModel.Description),
 			"source":   pinnacleApiModel.Client,
 		},
