@@ -56,6 +56,7 @@ type WhatsappRequestBody struct {
 	LoanId            string // Variables
 	ApplicationNumber string // Variables
 	DueDate           string // Variables
+	Description       string // Variables
 }
 
 type WhatsappResponse struct {

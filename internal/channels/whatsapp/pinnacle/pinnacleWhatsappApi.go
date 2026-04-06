@@ -3,6 +3,7 @@ package pinnacleWhatsapp
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -40,7 +41,7 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
-	// fmt.Println("WHatsapp payload:", apiPayload)
+	fmt.Println("Pinnacle Whatsapp payload:", apiPayload)
 
 	jsonBytes, _ := json.Marshal(apiPayload)
 	utils.Debug(fmt.Sprintf("Pinnacle Whatsapp payload for mobile: %s and templateName: %s is: %s", pinnacleApiModel.Mobile, pinnacleApiModel.TemplateName, string(jsonBytes)))
@@ -55,44 +56,87 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		return responseBody
 	}
 
-	success, ok := apiResponse["success"].(string)
-	if !ok {
-		utils.Error(fmt.Errorf("success field is missing or not a string in API response"))
-		responseBody.IsSent = false
-		responseBody.ResponseMessage = "failed to send message due to missing success field"
-		return responseBody
-	}
-
-	if success == "true" {
+	statusCode := apiResponse["ApistatusCode"].(int)
+	if statusCode == http.StatusOK {
 		responseBody.IsSent = true
 		responseBody.ResponseMessage = "Message submitted successfully"
-		responseBody.TransactionId = apiResponse["responseId"].(string)
+		if msgID, ok := pinnacleWhatsappMessageID(apiResponse); ok {
+			responseBody.TransactionId = msgID
+		}
 	} else {
 		responseBody.IsSent = false
-		description, ok := apiResponse["description"].([]interface{})
-		if ok && len(description) > 0 {
-			firstDesc, ok := description[0].(map[string]interface{})
-			if ok {
-				errorCode, _ := firstDesc["errorCode"].(string)
-				errorDesc, _ := firstDesc["errorDescription"].(string)
-				responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s", errorCode, errorDesc)
-			}
-		} else {
-			responseBody.ResponseMessage = "failed to send message"
-		}
+		responseBody.ResponseMessage = pinnacleWhatsappErrorBodyMessage(apiResponse)
 	}
 
 	fmt.Println("PINNACLE FINAL WHATSAPP RESPONSE:", responseBody)
-
+	responseBody.ResponseMessage = responseBody.ResponseMessage + " | " + apiPayload["biz_opaque_callback_data"].(map[string]interface{})["lead_id"].(string)
 	return responseBody
 }
 
+func pinnacleWhatsappMessageID(apiResponse map[string]interface{}) (string, bool) {
+	messages, ok := apiResponse["messages"].([]interface{})
+	if !ok || len(messages) == 0 {
+		return "", false
+	}
+	first, ok := messages[0].(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	id, ok := first["id"].(string)
+	if !ok || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	return id, true
+}
+
+// pinnacleWhatsappErrorBodyMessage parses 4xx/5xx JSON bodies: nested `error` (OAuth) or top-level failed payload.
+func pinnacleWhatsappErrorBodyMessage(apiResponse map[string]interface{}) string {
+	if errObj, ok := apiResponse["error"].(map[string]interface{}); ok {
+		return formatPinnacleMessageAndDetails(
+			errObj["message"].(string),
+			pinnacleErrorDataDetails(errObj),
+		)
+	}
+	if status, _ := apiResponse["status"].(string); status == "failed" {
+		details := ""
+		if data, ok := apiResponse["data"].(map[string]interface{}); ok {
+			details = data["details"].(string)
+		}
+		return formatPinnacleMessageAndDetails(apiResponse["message"].(string), details)
+	}
+	return "failed to send message"
+}
+
+func pinnacleErrorDataDetails(errObj map[string]interface{}) string {
+	ed, ok := errObj["error_data"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return ed["details"].(string)
+}
+
+func formatPinnacleMessageAndDetails(message, details string) string {
+	message = strings.TrimSpace(message)
+	details = strings.TrimSpace(details)
+	if message == "" && details == "" {
+		return "failed to send message"
+	}
+	if details == "" {
+		return message
+	}
+	if message == "" {
+		return details
+	}
+	return fmt.Sprintf("%s, details: %s", message, details)
+}
+
 func getPayload(pinnacleApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(pinnacleApiModel.TemplateName, "utility") {
+	if strings.Contains(pinnacleApiModel.TemplateName, "utility") || strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
 		// For Utility Payload
-		fmt.Println("Generating Utility Payload for Pinnacle WhatsApp API")
 		return pinnaclepayloads.GetPinnacleUtilityPayload(pinnacleApiModel), nil
-	} else {
+	} else if strings.Contains(pinnacleApiModel.TemplateName, "media") {
 		return pinnaclepayloads.GetPinnacleMediaPayload(pinnacleApiModel), nil
+	} else {
+		return nil, fmt.Errorf("invalid template name: %s", pinnacleApiModel.TemplateName)
 	}
 }

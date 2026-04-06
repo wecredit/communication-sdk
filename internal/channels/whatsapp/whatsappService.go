@@ -40,6 +40,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		LoanId:            msg.LoanId,
 		ApplicationNumber: msg.ApplicationNumber,
 		DueDate:           msg.DueDate,
+		Description:       msg.Description,
 	}
 
 	utils.Debug("Fetching WHATSAPP process data from cache")

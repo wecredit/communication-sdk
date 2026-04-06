@@ -103,7 +103,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"parameters": []map[string]interface{}{
 			{
 				"type":    "payload",
-				"payload": buttonURL,
+				"payload": fmt.Sprintf("cta/919218115984/%s/0/%s", pinnacleApiModel.Mobile, buttonURL),
 			},
 		},
 	})
@@ -116,13 +116,13 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"messaging_product": "whatsapp",
 		"biz_opaque_callback_data": map[string]interface{}{
 			"lead_id":  fmt.Sprintf("zap_%d", helper.GenerateRandomID(10000000, 99999999)),
-			"campaign": pinnacleApiModel.Process,
+			"campaign": fmt.Sprintf("%s_%s", pinnacleApiModel.Process, pinnacleApiModel.Description),
 			"source":   pinnacleApiModel.Client,
 		},
 		"template": map[string]interface{}{
 			"name": pinnacleApiModel.TemplateName,
 			"language": map[string]interface{}{
-				"code": "en_US",
+				"code": "en",
 			},
 			"components": components,
 		},

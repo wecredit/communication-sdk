@@ -4,11 +4,19 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 func main() {
+
+	if err := config.LoadConfigs(); err != nil {
+		utils.Error(fmt.Errorf("failed to load configs: %v", err))
+	}
+
 	// For Creditsea local testing
 	// username := "wecredit"
 	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
@@ -16,8 +24,14 @@ func main() {
 	// baseUrl := "http://localhost:8080"
 
 	// For Creditsea UAT testing
-	username := "creditsea"
-	password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	// username := "creditsea"
+	// password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
+	// channel := "WHATSAPP"
+	// baseUrl := "http://localhost:8080"
+
+	// For Zapcash UAT testing
+	username := "zapcash"
+	password := "T9#vL2!qZ8@rX5$kM1^pW7&cF4*hY"
 	channel := "WHATSAPP"
 	baseUrl := "http://localhost:8080"
 
@@ -37,7 +51,7 @@ func main() {
 
 	// All stage values
 	stages := []float64{
-		1.02, //1.02, 1.03, 1.04,
+		1.01, //1.02, 1.03, 1.04,
 		// 2.01, 2.02, 2.03, 2.04, 2.05, 2.06,
 		// 3.01, 3.02, 3.03, 3.04,
 		// 4.01, 4.02, 4.03, 4.04,
@@ -58,10 +72,12 @@ func main() {
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			Mobile:            "7570897034",
+			DbClient:          database.DBtechWrite,
+			InputTableName:    "WhatsappInputAuditTable",
+			Mobile:            "9220146969",
 			Email:             "nikhil@wecredit.co.in",
 			Channel:           "WHATSAPP",
-			ProcessName:       "CREDITSEA",
+			ProcessName:       "ZAPCASH",
 			Stage:             stage,
 			IsPriority:        true,
 			EmiAmount:         "25000",
