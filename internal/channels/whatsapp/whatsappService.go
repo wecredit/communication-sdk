@@ -32,16 +32,20 @@ var paymentLinkStages = map[int]bool{
 
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
-		Mobile:            msg.Mobile,
-		Process:           msg.ProcessName,
-		Client:            msg.Client,
-		EmiAmount:         msg.EmiAmount,
-		CustomerName:      msg.CustomerName,
-		LoanId:            msg.LoanId,
-		ApplicationNumber: msg.ApplicationNumber,
-		DueDate:           msg.DueDate,
-		Description:       msg.Description,
-		CommId:            msg.CommId,
+		Mobile:             msg.Mobile,
+		Process:            msg.ProcessName,
+		Client:             msg.Client,
+		EmiAmount:          msg.EmiAmount,
+		CustomerName:       msg.CustomerName,
+		LoanId:             msg.LoanId,
+		ApplicationNumber:  msg.ApplicationNumber,
+		DueDate:            msg.DueDate,
+		Description:        msg.Description,
+		TotalPayableAmount: msg.TotalPayableAmount,
+		TodayPayableAmount: msg.TodayPayableAmount,
+		SavingAmount:       msg.SavingAmount,
+		BounceCharge:       msg.BounceCharge,
+		CommId:             msg.CommId,
 	}
 
 	utils.Debug("Fetching WHATSAPP process data from cache")

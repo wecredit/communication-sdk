@@ -25,6 +25,11 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 	var components []map[string]interface{}
 	var bodyParams []map[string]interface{}
 
+	languageCode := "en"
+	if strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
+		languageCode = "en_US"
+	}	
+
 	// Add dynamic text values to a single body component
 	if pinnacleApiModel.TemplateVariables != "" {
 		keys := strings.Split(pinnacleApiModel.TemplateVariables, ",")
@@ -74,6 +79,18 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 			case "EmiAmount":
 				textValue = pinnacleApiModel.EmiAmount
 
+			case "TotalPayableAmount":
+				textValue = pinnacleApiModel.TotalPayableAmount
+
+			case "TodayPayableAmount":
+				textValue = pinnacleApiModel.TodayPayableAmount
+
+			case "SavingAmount":
+				textValue = pinnacleApiModel.SavingAmount
+
+			case "BounceCharge":
+				textValue = pinnacleApiModel.BounceCharge
+
 			default:
 				textValue = "" // ignore unknown fields
 			}
@@ -122,7 +139,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"template": map[string]interface{}{
 			"name": pinnacleApiModel.TemplateName,
 			"language": map[string]interface{}{
-				"code": "en",
+				"code": languageCode,
 			},
 			"components": components,
 		},
