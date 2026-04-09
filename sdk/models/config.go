@@ -20,6 +20,9 @@ type Config struct {
 	DbUserTech        string `envconfig:"DB_USER_TECH"`
 	DbPasswordTech    string `envconfig:"DB_PASSWORD_TECH"`
 	DbNameTech        string `envconfig:"DB_NAME_TECH"`
+	DbMaxOpenConns    string `envconfig:"DB_MAX_OPEN_CONNS"`
+	DbMaxIdleConns    string `envconfig:"DB_MAX_IDLE_CONNS"`
+	DbConnMaxLifetime string `envconfig:"DB_CONN_MAX_LIFETIME_MINUTES"`
 
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`

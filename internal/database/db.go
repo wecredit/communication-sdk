@@ -2,6 +2,8 @@ package database
 
 import (
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -58,6 +60,10 @@ func connectAnalyticsDB(config models.Config) error {
 		return fmt.Errorf("failed to connect to Analytical DB: %w", err)
 	}
 
+	if err := applyPoolConfig(DBanalytics, config, "Analytical DB"); err != nil {
+		return err
+	}
+
 	utils.Info("Database connection established for Analytical DB.")
 	return nil
 }
@@ -102,6 +108,10 @@ func connectTechDB(connectionType string, config models.Config) error {
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to connect to %s: %w", dbName, err)
+	}
+
+	if err := applyPoolConfig(db, config, dbName); err != nil {
+		return err
 	}
 
 	*varDB = db
@@ -159,4 +169,53 @@ func PingTechWriteDB() error {
 // PingAnalyticsDB pings the Analytics database connection
 func PingAnalyticsDB() error {
 	return pingDatabase(DBanalytics, "Analytics DB")
+}
+
+func applyPoolConfig(db *gorm.DB, config models.Config, dbName string) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get sql.DB for %s: %w", dbName, err)
+	}
+
+	maxOpen := 15
+	if config.DbMaxOpenConns != "" {
+		parsed, err := strconv.Atoi(config.DbMaxOpenConns)
+		if err != nil {
+			utils.Info(fmt.Sprintf("Invalid DB_MAX_OPEN_CONNS for %s, using default %d", dbName, maxOpen))
+		} else {
+			maxOpen = parsed
+		}
+	} else {
+		utils.Info(fmt.Sprintf("DB_MAX_OPEN_CONNS not set for %s, using default %d", dbName, maxOpen))
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+
+	maxIdle := 5
+	if config.DbMaxIdleConns != "" {
+		parsed, err := strconv.Atoi(config.DbMaxIdleConns)
+		if err != nil {
+			utils.Info(fmt.Sprintf("Invalid DB_MAX_IDLE_CONNS for %s, using default %d", dbName, maxIdle))
+		} else {
+			maxIdle = parsed
+		}
+	} else {
+		utils.Info(fmt.Sprintf("DB_MAX_IDLE_CONNS not set for %s, using default %d", dbName, maxIdle))
+	}
+	sqlDB.SetMaxIdleConns(maxIdle)
+
+	maxLifetime := 15 * time.Minute
+	if config.DbConnMaxLifetime != "" {
+		parsed, err := strconv.Atoi(config.DbConnMaxLifetime)
+		if err != nil {
+			utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for %s, using default %s", dbName, maxLifetime))
+		} else {
+			maxLifetime = time.Duration(parsed) * time.Minute
+		}
+	} else {
+		utils.Info(fmt.Sprintf("DB_CONN_MAX_LIFETIME_MINUTES not set for %s, using default %s", dbName, maxLifetime))
+	}
+	sqlDB.SetConnMaxLifetime(maxLifetime)
+	utils.Debug(fmt.Sprintf("DB pool configured for %s: max_open=%d max_idle=%d max_lifetime=%s", dbName, maxOpen, maxIdle, maxLifetime))
+
+	return nil
 }
