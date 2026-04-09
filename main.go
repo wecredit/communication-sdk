@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
@@ -17,29 +18,11 @@ func main() {
 		utils.Error(fmt.Errorf("failed to load configs: %v", err))
 	}
 
-	// For Creditsea local testing
-	// username := "wecredit"
-	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
-	// channel := "SMS"
-	// baseUrl := "http://localhost:8080"
-
-	// For Creditsea UAT testing
-	// username := "creditsea"
-	// password := "FvQyZzTp8ckR2wL9gnO7bXEoHVQ5Ijf0A4KmsNt8J2pry1Ba6d9"
-	// channel := "WHATSAPP"
-	// baseUrl := "http://localhost:8080"
-
 	// For Zapcash UAT testing
-	username := "zapcash"
-	password := "T9#vL2!qZ8@rX5$kM1^pW7&cF4*hY"
+	username := os.Getenv("ZAPCASH_USERNAME")
+	password := os.Getenv("ZAPCASH_PASSWORD")
 	channel := "WHATSAPP"
 	baseUrl := "http://localhost:8080"
-
-	// For Nurture Engine local testing
-	// username := "wecredit"
-	// password := "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU="
-	// channel := "SMS"
-	// baseUrl := "http://172.16.23.114:8080"
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseUrl)
 	// client, err := sdk.NewSdkClient("wecredit", "Q29tbXVuaWNhdGlvbkNsaWVudE51cnR1cmVFbmdpbmU=", "SMS")
@@ -79,20 +62,20 @@ func main() {
 	// Loop through each stage and send email
 	for _, stage := range stages {
 		request := &sdkModels.CommApiRequestBody{
-			DbClient:          database.DBtechWrite,
-			InputTableName:    "WhatsappInputAuditTable",
-			Mobile:            "7976819143",
-			Email:             "nikhil@wecredit.co.in",
-			Channel:           "WHATSAPP",
-			ProcessName:       "ZAPCASH",
-			Stage:             stage,
-			IsPriority:        true,
-			EmiAmount:         "25000",
-			CustomerName:      "Vaibhav",
-			LoanId:            "1234616232324",
-			ApplicationNumber: "2696944656976",
-			DueDate:           "2026-04-20",
-			Description:       fmt.Sprintf("TEST for stage %.2f", stage),
+			DbClient:           database.DBtechWrite,
+			InputTableName:     "WhatsappInputAuditTable",
+			Mobile:             "7976819143",
+			Email:              "nikhil@wecredit.co.in",
+			Channel:            "WHATSAPP",
+			ProcessName:        "ZAPCASH",
+			Stage:              stage,
+			IsPriority:         true,
+			EmiAmount:          "25000",
+			CustomerName:       "Vaibhav",
+			LoanId:             "1234616232324",
+			ApplicationNumber:  "2696944656976",
+			DueDate:            "2026-04-20",
+			Description:        fmt.Sprintf("TEST for stage %.2f", stage),
 			TotalPayableAmount: "100000",
 			TodayPayableAmount: "90000",
 			SavingAmount:       "10000",
