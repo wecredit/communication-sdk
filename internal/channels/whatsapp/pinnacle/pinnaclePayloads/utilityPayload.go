@@ -90,6 +90,10 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 
 			case "BounceCharge":
 				textValue = pinnacleApiModel.BounceCharge
+				
+			case "ZapcashApp":
+				textValue = "ZapCash App"
+
 
 			default:
 				textValue = "" // ignore unknown fields
