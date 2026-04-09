@@ -19,19 +19,22 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 
-	sendMessageURL := config.Configs.PinnacleWhatsappMessageApiUrl
-	if sendMessageURL == "" {
-		utils.Error(fmt.Errorf("PINNACLE_WHATSAPP_MESSAGE_API_URL is not set"))
-		responseBody.ResponseMessage = "PINNACLE_WHATSAPP_MESSAGE_API_URL is not set"
+	var apiUrl, apiKey string
+
+	if pinnacleApiModel.Client == variables.ZapCash {
+		apiUrl = config.Configs.PinnacleZapcashWhatsappMessageApiUrl
+		apiKey = config.Configs.PinnacleZapcashWhatsappApiKey
+	}
+
+	if apiUrl == "" || apiKey == "" {
+		utils.Error(fmt.Errorf("%s or %s is not set", apiUrl, apiKey))
+		responseBody.ResponseMessage = fmt.Sprintf("%s or %s is not set", apiUrl, apiKey)
 		return responseBody
 	}
 
-	// Getting the API URL
-	apiUrl := sendMessageURL
-
 	// Setting the API header
 	apiHeader := map[string]string{
-		"apikey":       config.Configs.PinnacleWhatsappApiKey,
+		"apikey":       apiKey,
 		"Content-Type": "application/json",
 	}
 

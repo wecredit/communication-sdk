@@ -19,6 +19,7 @@ const (
 const (
 	WeCredit  string = "wecredit"
 	CreditSea string = "creditsea"
+	ZapCash   string = "zapcash"
 )
 
 const (

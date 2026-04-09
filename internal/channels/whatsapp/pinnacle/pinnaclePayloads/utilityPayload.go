@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	// "github.com/wecredit/communication-sdk/config"
-
+	"github.com/wecredit/communication-sdk/config"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
@@ -28,7 +27,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 	languageCode := "en"
 	if strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
 		languageCode = "en_US"
-	}	
+	}
 
 	// Add dynamic text values to a single body component
 	if pinnacleApiModel.TemplateVariables != "" {
@@ -90,10 +89,9 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 
 			case "BounceCharge":
 				textValue = pinnacleApiModel.BounceCharge
-				
+
 			case "ZapcashApp":
 				textValue = "ZapCash App"
-
 
 			default:
 				textValue = "" // ignore unknown fields
@@ -124,7 +122,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"parameters": []map[string]interface{}{
 			{
 				"type":    "payload",
-				"payload": fmt.Sprintf("cta/919218115984/%s/0/%s", pinnacleApiModel.Mobile, buttonURL),
+				"payload": fmt.Sprintf("cta/%s/%s/0/%s", config.Configs.PinnacleZapcashWabaId, pinnacleApiModel.Mobile, buttonURL),
 			},
 		},
 	})
