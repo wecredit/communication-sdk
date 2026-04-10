@@ -22,9 +22,9 @@ import (
 // paymentLinkStages defines which stages should use payment link instead of template button link
 // Add new stages here as needed - this is created once at package initialization
 var paymentLinkStages = map[int]bool{
-	4: true,
-	5: true,
-	6: true,
+	11: true,
+	12: true,
+	// 6: true,
 	// Add more stages here in the future
 	// 7: true,
 	// 8: true,
