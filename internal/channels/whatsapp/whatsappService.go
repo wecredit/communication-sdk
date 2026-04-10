@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	pinnacleWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle"
 	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -21,9 +22,9 @@ import (
 // paymentLinkStages defines which stages should use payment link instead of template button link
 // Add new stages here as needed - this is created once at package initialization
 var paymentLinkStages = map[int]bool{
-	4: true,
-	5: true,
-	6: true,
+	11: true,
+	12: true,
+	// 6: true,
 	// Add more stages here in the future
 	// 7: true,
 	// 8: true,
@@ -31,14 +32,20 @@ var paymentLinkStages = map[int]bool{
 
 func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
-		Mobile:            msg.Mobile,
-		Process:           msg.ProcessName,
-		Client:            msg.Client,
-		EmiAmount:         msg.EmiAmount,
-		CustomerName:      msg.CustomerName,
-		LoanId:            msg.LoanId,
-		ApplicationNumber: msg.ApplicationNumber,
-		DueDate:           msg.DueDate,
+		Mobile:             msg.Mobile,
+		Process:            msg.ProcessName,
+		Client:             msg.Client,
+		EmiAmount:          msg.EmiAmount,
+		CustomerName:       msg.CustomerName,
+		LoanId:             msg.LoanId,
+		ApplicationNumber:  msg.ApplicationNumber,
+		DueDate:            msg.DueDate,
+		Description:        msg.Description,
+		TotalPayableAmount: msg.TotalPayableAmount,
+		TodayPayableAmount: msg.TodayPayableAmount,
+		SavingAmount:       msg.SavingAmount,
+		BounceCharge:       msg.BounceCharge,
+		CommId:             msg.CommId,
 	}
 
 	utils.Debug("Fetching WHATSAPP process data from cache")
@@ -78,6 +85,8 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
 		case variables.SINCH:
 			response = sinchWhatsapp.HitSinchWhatsappApi(requestBody)
+		case variables.PINNACLE:
+			response = pinnacleWhatsapp.HitPinnacleWhatsappApi(requestBody)
 		}
 	}
 
@@ -102,7 +111,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
-	
+
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
@@ -112,7 +121,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		}
 		return true, dbMappedData, nil
 	}
-	
+
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
 		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for mobile " + msg.Mobile

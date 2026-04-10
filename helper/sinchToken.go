@@ -16,7 +16,6 @@ import (
 
 const (
 	authURL  = "https://auth.aclwhatsapp.com/realms/ipmessaging/protocol/openid-connect/token"
-	clientID = "ipmessaging-client"
 	username = "YOUR_USERNAME"
 	password = "YOUR_PASSWORD"
 )

@@ -40,22 +40,28 @@ type SmsResponse struct {
 }
 
 type WhatsappRequestBody struct {
-	AppId             string
-	Mobile            string
-	Process           string
-	TemplateName      string
-	ImageUrl          string
-	ImageID           string
-	ButtonLink        string
-	TemplateVariables string
-	TemplateCategory  string
-	AccessToken       string
-	Client            string
-	EmiAmount         string // Variables
-	CustomerName      string // Variables
-	LoanId            string // Variables
-	ApplicationNumber string // Variables
-	DueDate           string // Variables
+	AppId              string
+	CommId             string
+	Mobile             string
+	Process            string
+	TemplateName       string
+	ImageUrl           string
+	ImageID            string
+	ButtonLink         string
+	TemplateVariables  string
+	TemplateCategory   string
+	AccessToken        string
+	Client             string
+	EmiAmount          string // Variables
+	CustomerName       string // Variables
+	LoanId             string // Variables
+	ApplicationNumber  string // Variables
+	DueDate            string // Variables
+	Description        string // Variables
+	TotalPayableAmount string // Variables
+	TodayPayableAmount string // Variables
+	SavingAmount       string // Variables
+	BounceCharge       string // Variables
 }
 
 type WhatsappResponse struct {

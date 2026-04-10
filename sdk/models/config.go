@@ -112,4 +112,9 @@ type Config struct {
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
 	SinchEmailApiToken string `envconfig:"SINCH_EMAIL_API_TOKEN"`
+
+	// ZapCash Pinnacle Whatsapp Variables
+	PinnacleZapcashWhatsappApiKey        string `envconfig:"PINNACLE_ZAPCASH_WHATSAPP_API_KEY"`
+	PinnacleZapcashWhatsappMessageApiUrl string `envconfig:"PINNACLE_ZAPCASH_WHATSAPP_MESSAGE_API_URL"`
+	PinnacleZapcashWabaId                 string `envconfig:"PINNACLE_ZAPCASH_WABA_ID"`
 }

@@ -76,7 +76,7 @@ func main() {
 
 	// Generate 1000 test keys (you can change this number as needed)
 	for i := 1; i <= 100; i++ {
-		testKeys = append(testKeys, sdkServices.GenerateCommID())
+		testKeys = append(testKeys, sdkServices.GenerateCommID("creditsea"))
 	}
 
 	sinchCount := 0
