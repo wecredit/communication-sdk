@@ -1,8 +1,9 @@
 package variables
 
 const (
-	SINCH string = "SINCH"
-	TIMES string = "TIMES"
+	SINCH    string = "SINCH"
+	TIMES    string = "TIMES"
+	PINNACLE string = "PINNACLE"
 )
 
 const (
@@ -18,6 +19,7 @@ const (
 const (
 	WeCredit  string = "wecredit"
 	CreditSea string = "creditsea"
+	ZapCash   string = "zapcash"
 )
 
 const (
