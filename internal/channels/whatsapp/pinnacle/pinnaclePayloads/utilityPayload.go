@@ -122,7 +122,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"parameters": []map[string]interface{}{
 			{
 				"type":    "payload",
-				"payload": fmt.Sprintf("cta/%s/%s/0/%s", config.Configs.PinnacleZapcashWabaId, pinnacleApiModel.Mobile, buttonURL),
+				"payload": fmt.Sprintf("cta/%s/%s/0/1/%s", config.Configs.PinnacleZapcashWabaId, pinnacleApiModel.Mobile, buttonURL),
 			},
 		},
 	})
