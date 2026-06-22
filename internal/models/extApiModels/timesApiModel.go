@@ -76,13 +76,28 @@ type WhatsappResponse struct {
 }
 
 type RcsRequestBody struct {
-	Mobile       string
-	Process      string
-	TemplateName string
-	AppId        string
-	AppIdKey     string
-	ProjectId    string
-	ApiKey       string
+	Mobile                string
+	Process               string
+	Client                string
+	CommId                string
+	TemplateName          string
+	AppId                 string
+	AppIdKey              string
+	ProjectId             string
+	ApiKey                string
+	TemplateVariables     string
+	TemplateCategory      string
+	EmiAmount             string
+	CustomerName          string
+	LoanId                string
+	ApplicationNumber     string
+	DueDate               string
+	Description           string
+	TotalPayableAmount    string
+	TodayPayableAmount    string
+	SavingAmount          string
+	BounceCharge          string
+	IsSmsFallbackRequired bool
 }
 
 type RcsResponse struct {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	pinnacleRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/pinnacle"
 	sinchRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/sinch"
 	timesRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/times"
 	"github.com/wecredit/communication-sdk/internal/database"
@@ -31,23 +32,36 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	msg.Vendor = matchedVendor
 
 	req := extapimodels.RcsRequestBody{
-		Mobile:  msg.Mobile,
-		Process: msg.ProcessName,
+		Mobile:             msg.Mobile,
+		Process:            msg.ProcessName,
+		Client:             msg.Client,
+		CommId:             msg.CommId,
+		EmiAmount:          msg.EmiAmount,
+		CustomerName:       msg.CustomerName,
+		LoanId:             msg.LoanId,
+		ApplicationNumber:  msg.ApplicationNumber,
+		DueDate:            msg.DueDate,
+		Description:        msg.Description,
+		TotalPayableAmount: msg.TotalPayableAmount,
+		TodayPayableAmount: msg.TodayPayableAmount,
+		SavingAmount:       msg.SavingAmount,
+		BounceCharge:       msg.BounceCharge,
 	}
 	channelHelper.PopulateRcsFields(&req, templateData)
 
-	rcsAppIdData, err := database.GetRcsAppId(database.DBtechRead, req.AppId)
-	if err != nil {
-		utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
-		return false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
-	}
-
-	if val, ok := rcsAppIdData["AppIdKey"].(string); ok {
-		req.AppIdKey = val
-	}
-	if val, ok := rcsAppIdData["ProjectId"].(string); ok {
-		req.ProjectId = val
-		req.ApiKey = val
+	if msg.Vendor == variables.SINCH {
+		rcsAppIdData, err := database.GetRcsAppId(database.DBtechRead, req.AppId)
+		if err != nil {
+			utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
+			return false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
+		}
+		if val, ok := rcsAppIdData["AppIdKey"].(string); ok {
+			req.AppIdKey = val
+		}
+		if val, ok := rcsAppIdData["ProjectId"].(string); ok {
+			req.ProjectId = val
+			req.ApiKey = val
+		}
 	}
 
 	var response extapimodels.RcsResponse
@@ -60,6 +74,8 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 			response = timesRcs.HitTimesRcsApi(req)
 		case variables.SINCH:
 			response = sinchRcs.HitSinchRcsApi(req)
+		case variables.PINNACLE:
+			response = pinnacleRcs.HitPinnacleRcsApi(req)
 		}
 	}
 

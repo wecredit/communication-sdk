@@ -116,5 +116,11 @@ type Config struct {
 	// ZapCash Pinnacle Whatsapp Variables
 	PinnacleZapcashWhatsappApiKey        string `envconfig:"PINNACLE_ZAPCASH_WHATSAPP_API_KEY"`
 	PinnacleZapcashWhatsappMessageApiUrl string `envconfig:"PINNACLE_ZAPCASH_WHATSAPP_MESSAGE_API_URL"`
-	PinnacleZapcashWabaId                 string `envconfig:"PINNACLE_ZAPCASH_WABA_ID"`
+	PinnacleZapcashWabaId                string `envconfig:"PINNACLE_ZAPCASH_WABA_ID"`
+
+	// ZapCash Pinnacle RCS Variables
+	PinnacleZapcashRcsApiUrl string `envconfig:"PINNACLE_ZAPCASH_RCS_API_URL"`
+	PinnacleZapcashRcsApiKey string `envconfig:"PINNACLE_ZAPCASH_RCS_API_KEY"`
+	PinnacleZapcashRcsBotId  string `envconfig:"PINNACLE_ZAPCASH_RCS_BOT_ID"`
+	PinnacleZapcashRcsTtl    string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
 }
