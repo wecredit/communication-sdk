@@ -1,6 +1,8 @@
 package pinnacleRcs
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +16,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+const pinnacleRcsCorrelationIDLen = 20
+
 func HitPinnacleRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsResponse {
 	var responseBody extapimodels.RcsResponse
 	responseBody.IsSent = false
@@ -21,7 +25,11 @@ func HitPinnacleRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsRespons
 	if data.Client == variables.ZapCash {
 		apiURL = config.Configs.PinnacleZapcashRcsApiUrl
 		apiKey = config.Configs.PinnacleZapcashRcsApiKey
-		botID = config.Configs.PinnacleZapcashRcsBotId
+		if data.TemplateCategory == variables.TransactionalTemplateCategory {
+			botID = config.Configs.PinnacleZapcashRcsTransactionalBotId
+		} else {
+			botID = config.Configs.PinnacleZapcashRcsPromotionalBotId
+		}
 	}
 	if apiURL == "" || apiKey == "" || botID == "" {
 		utils.Error(fmt.Errorf("Pinnacle RCS URL, API key, or bot id is not set for client %s", data.Client))
@@ -64,41 +72,38 @@ func HitPinnacleRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsRespons
 }
 
 func buildPinnacleRcsSendPayload(data extapimodels.RcsRequestBody, ttl string) map[string]interface{} {
-	spec, hasSpec := lookupPinnacleRCSVarSpec(data.TemplateName)
-	isSmsFallback := data.IsSmsFallbackRequired
 	rcsKeys := splitCommaVariableKeys(data.TemplateVariables)
-	smsKeys := rcsKeys
-	if hasSpec {
-		isSmsFallback = spec.IsSmsFallbackRequired
-		rcsKeys = spec.RcsKeys
-		if len(spec.SmsKeys) > 0 {
-			smsKeys = spec.SmsKeys
-		} else {
-			smsKeys = rcsKeys
-		}
-	}
+	smsKeys := splitCommaVariableKeys(data.SmsFallbackVariables)
+
 	msg := map[string]interface{}{
 		"to":                    formatPinnacleRcsTo(data.Mobile),
 		"templateId":            data.TemplateName,
 		"ttl":                   ttl,
-		"isSMSFallbackRequired": isSmsFallback,
+		"isSMSFallbackRequired": true,
 		"variables":             buildPinnacleRcsVariablePairs(rcsKeys, data),
-	}
-	if isSmsFallback {
-		msg["smsVariables"] = buildPinnacleRcsVariablePairs(smsKeys, data)
+		"smsVariables":          buildPinnacleRcsVariablePairs(smsKeys, data),
 	}
 	return map[string]interface{}{
 		"category":      pinnacleRcsCategory(data.TemplateCategory),
-		"correlationId": data.CommId,
+		"correlationId": pinnacleRcsCorrelationID(),
 		"messages":      []map[string]interface{}{msg},
 	}
 }
 
+func pinnacleRcsCorrelationID() string {
+	b := make([]byte, pinnacleRcsCorrelationIDLen/2)
+	if _, err := rand.Read(b); err != nil {
+		utils.Error(fmt.Errorf("failed to generate pinnacle RCS correlation id: %v", err))
+		return fmt.Sprintf("%0*d", pinnacleRcsCorrelationIDLen, time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
 func pinnacleRcsCategory(templateCategory string) string {
 	switch templateCategory {
-	case variables.UtilityTemplateCategory:
-		return "utility"
-	case variables.MarketingTemplateCategory:
+	case variables.TransactionalTemplateCategory:
+		return "transactional"
+	case variables.PromotionalTemplateCategory:
 		return "promotional"
 	default:
 		return "promotional"
@@ -195,40 +200,54 @@ func resolvePinnacleRcsVariableValue(key string, data extapimodels.RcsRequestBod
 		return "ZapCash App"
 	case "Description":
 		return data.Description
+	case "Link":
+		return data.PaymentLink
 	default:
 		return ""
 	}
 }
 
 func pinnacleRcsMessageID(apiResponse map[string]interface{}) (string, bool) {
-	if id, ok := apiResponse["messageId"].(string); ok && strings.TrimSpace(id) != "" {
-		return id, true
-	}
-	if id, ok := apiResponse["id"].(string); ok && strings.TrimSpace(id) != "" {
-		return id, true
-	}
-	if data, ok := apiResponse["data"].(map[string]interface{}); ok {
-		if id, ok := data["messageId"].(string); ok && strings.TrimSpace(id) != "" {
+	if data, ok := apiResponse["data"].([]interface{}); ok && len(data) > 0 {
+		if id, ok := pinnacleRcsIDFromMessage(data[0]); ok {
 			return id, true
 		}
-		if id, ok := data["id"].(string); ok && strings.TrimSpace(id) != "" {
+	}
+	if data, ok := apiResponse["data"].(map[string]interface{}); ok {
+		if id, ok := pinnacleRcsIDFromMessage(data); ok {
+			return id, true
+		}
+	}
+	for _, key := range []string{"uniqueId", "messageId", "id", "requestId"} {
+		if id := stringField(apiResponse[key]); id != "" {
 			return id, true
 		}
 	}
 	if msgs, ok := apiResponse["messages"].([]interface{}); ok && len(msgs) > 0 {
-		if first, ok := msgs[0].(map[string]interface{}); ok {
-			if id, ok := first["id"].(string); ok && strings.TrimSpace(id) != "" {
-				return id, true
-			}
-			if id, ok := first["messageId"].(string); ok && strings.TrimSpace(id) != "" {
-				return id, true
-			}
+		if id, ok := pinnacleRcsIDFromMessage(msgs[0]); ok {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+func pinnacleRcsIDFromMessage(v interface{}) (string, bool) {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return "", false
+	}
+	for _, key := range []string{"uniqueId", "messageId", "id"} {
+		if id := stringField(m[key]); id != "" {
+			return id, true
 		}
 	}
 	return "", false
 }
 
 func pinnacleRcsErrorBodyMessage(apiResponse map[string]interface{}) string {
+	if code := stringField(apiResponse["code"]); code != "" {
+		return formatPinnacleRcsMessageAndDetails(code, stringField(apiResponse["status"]))
+	}
 	if errObj, ok := apiResponse["error"].(map[string]interface{}); ok {
 		return formatPinnacleRcsMessageAndDetails(
 			stringField(errObj["message"]),

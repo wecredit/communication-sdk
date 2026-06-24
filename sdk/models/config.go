@@ -119,8 +119,9 @@ type Config struct {
 	PinnacleZapcashWabaId                string `envconfig:"PINNACLE_ZAPCASH_WABA_ID"`
 
 	// ZapCash Pinnacle RCS Variables
-	PinnacleZapcashRcsApiUrl string `envconfig:"PINNACLE_ZAPCASH_RCS_API_URL"`
-	PinnacleZapcashRcsApiKey string `envconfig:"PINNACLE_ZAPCASH_RCS_API_KEY"`
-	PinnacleZapcashRcsBotId  string `envconfig:"PINNACLE_ZAPCASH_RCS_BOT_ID"`
-	PinnacleZapcashRcsTtl    string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
+	PinnacleZapcashRcsApiUrl             string `envconfig:"PINNACLE_ZAPCASH_RCS_API_URL"`
+	PinnacleZapcashRcsApiKey             string `envconfig:"PINNACLE_ZAPCASH_RCS_API_KEY"`
+	PinnacleZapcashRcsTransactionalBotId string `envconfig:"PINNACLE_ZAPCASH_RCS_TRANSACTIONAL_BOT_ID"`
+	PinnacleZapcashRcsPromotionalBotId   string `envconfig:"PINNACLE_ZAPCASH_RCS_PROMOTIONAL_BOT_ID"`
+	PinnacleZapcashRcsTtl                string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
 }

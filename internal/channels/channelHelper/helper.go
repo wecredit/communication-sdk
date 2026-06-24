@@ -164,8 +164,8 @@ func PopulateRcsFields(req *extapimodels.RcsRequestBody, data map[string]interfa
 	if val, ok := data["TemplateCategory"].(int64); ok {
 		req.TemplateCategory = fmt.Sprintf("%d", val)
 	}
-	if val, ok := data["IsSmsFallbackRequired"].(int64); ok && val == variables.Active {
-		req.IsSmsFallbackRequired = true
+	if val, ok := data["SmsFallbackVariables"].(string); ok {
+		req.SmsFallbackVariables = val
 	}
 }
 
