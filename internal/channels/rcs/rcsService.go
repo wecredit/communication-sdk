@@ -46,6 +46,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		TodayPayableAmount: msg.TodayPayableAmount,
 		SavingAmount:       msg.SavingAmount,
 		BounceCharge:       msg.BounceCharge,
+		PaymentLink:        msg.PaymentLink,
 	}
 	channelHelper.PopulateRcsFields(&req, templateData)
 
@@ -82,6 +83,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	response.CommId = msg.CommId
 	response.TemplateName = req.TemplateName
 	response.Vendor = msg.Vendor
+	response.MobileNumber = msg.Mobile
 
 	dbMappedData, err := dbservices.MapIntoDbModel(response)
 	if err != nil {

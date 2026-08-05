@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,14 +75,15 @@ func HitPinnacleRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsRespons
 func buildPinnacleRcsSendPayload(data extapimodels.RcsRequestBody, ttl string) map[string]interface{} {
 	rcsKeys := splitCommaVariableKeys(data.TemplateVariables)
 	smsKeys := splitCommaVariableKeys(data.SmsFallbackVariables)
+	now := time.Now()
 
 	msg := map[string]interface{}{
 		"to":                    formatPinnacleRcsTo(data.Mobile),
 		"templateId":            data.TemplateName,
 		"ttl":                   ttl,
 		"isSMSFallbackRequired": true,
-		"variables":             buildPinnacleRcsVariablePairs(rcsKeys, data),
-		"smsVariables":          buildPinnacleRcsVariablePairs(smsKeys, data),
+		"variables":             buildPinnacleRcsVariablePairs(rcsKeys, data, now),
+		"smsVariables":          buildPinnacleRcsVariablePairs(smsKeys, data, now),
 	}
 	return map[string]interface{}{
 		"category":      pinnacleRcsCategory(data.TemplateCategory),
@@ -138,13 +140,13 @@ func splitCommaVariableKeys(csv string) []string {
 	return keys
 }
 
-func buildPinnacleRcsVariablePairs(keys []string, data extapimodels.RcsRequestBody) []map[string]interface{} {
+func buildPinnacleRcsVariablePairs(keys []string, data extapimodels.RcsRequestBody, now time.Time) []map[string]interface{} {
 	var out []map[string]interface{}
 	for _, key := range keys {
 		if key == "" {
 			continue
 		}
-		val := resolvePinnacleRcsVariableValue(key, data)
+		val := resolvePinnacleRcsVariableValue(key, data, now)
 		if val == "" {
 			continue
 		}
@@ -156,7 +158,7 @@ func buildPinnacleRcsVariablePairs(keys []string, data extapimodels.RcsRequestBo
 	return out
 }
 
-func resolvePinnacleRcsVariableValue(key string, data extapimodels.RcsRequestBody) string {
+func resolvePinnacleRcsVariableValue(key string, data extapimodels.RcsRequestBody, now time.Time) string {
 	switch key {
 	case "CustomerName", "Customer_Name":
 		if data.CustomerName != "" {
@@ -192,6 +194,8 @@ func resolvePinnacleRcsVariableValue(key string, data extapimodels.RcsRequestBod
 		return data.TotalPayableAmount
 	case "TodayPayableAmount":
 		return data.TodayPayableAmount
+	case "OverDueDays":
+		return pinnacleRcsOverdueDays(data.DueDate, now)
 	case "SavingAmount":
 		return data.SavingAmount
 	case "BounceCharge":
@@ -205,6 +209,40 @@ func resolvePinnacleRcsVariableValue(key string, data extapimodels.RcsRequestBod
 	default:
 		return ""
 	}
+}
+
+func pinnacleRcsOverdueDays(dueDate string, now time.Time) string {
+	dueDate = strings.TrimSpace(dueDate)
+	if dueDate == "" {
+		return ""
+	}
+
+	ist := time.FixedZone("IST", 5*60*60+30*60)
+	var due time.Time
+	var err error
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	} {
+		due, err = time.ParseInLocation(layout, dueDate, ist)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		utils.Error(fmt.Errorf("invalid DueDate format for OverDueDays: %s", dueDate))
+		return ""
+	}
+
+	dueInIST := due.In(ist)
+	nowInIST := now.In(ist)
+	dueDay := time.Date(dueInIST.Year(), dueInIST.Month(), dueInIST.Day(), 0, 0, 0, 0, ist)
+	today := time.Date(nowInIST.Year(), nowInIST.Month(), nowInIST.Day(), 0, 0, 0, 0, ist)
+	return strconv.Itoa(int(today.Sub(dueDay).Hours() / 24))
 }
 
 func pinnacleRcsMessageID(apiResponse map[string]interface{}) (string, bool) {
