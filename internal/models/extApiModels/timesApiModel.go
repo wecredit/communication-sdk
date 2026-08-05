@@ -106,6 +106,7 @@ type RcsResponse struct {
 	CommId          string `json:"CommId" gorm:"CommId"`
 	IsSent          bool   `json:"isSent" gorm:"IsSent"`
 	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }
