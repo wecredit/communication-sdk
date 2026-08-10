@@ -28,8 +28,11 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return pinnacleSmsResponse
 	}
 
-	// Sender fallback: use Times sender if no explicit Pinnacle sender configured
-	sender := strings.TrimSpace(config.Configs.TimesSmsApiSender)
+	// The DLT-approved template header is the sender for this template.
+	sender := strings.TrimSpace(data.TemplateHeader)
+	if sender == "" {
+		sender = strings.TrimSpace(config.Configs.TimesSmsApiSender)
+	}
 	if sender == "" {
 		sender = "WECRPL"
 	}

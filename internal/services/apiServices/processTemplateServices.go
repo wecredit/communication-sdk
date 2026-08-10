@@ -220,8 +220,8 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		ImageId:           getStr("ImageId"),
 		ImageUrl:          getStr("ImageUrl"),
 		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
-		TemplateEntityId: getStr("TemplateEntityId"),
-		TemplateHeader:   getStr("TemplateHeader"),
+		TemplateEntityId:  int64(getInt("TemplateEntityId")),
+		TemplateHeader:    getStr("TemplateHeader"),
 		IsActive:          getBool("IsActive"),
 		TemplateText:      getStr("TemplateText"),
 		TemplateCategory:  int64(getInt("TemplateCategory")),
