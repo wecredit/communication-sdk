@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
 
-	// "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
@@ -324,7 +324,11 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if err != nil {
 			utils.Error(fmt.Errorf("redis error: %v", err))
 		}
-		data.Vendor = variables.SINCH
+		if strings.TrimSpace(data.Vendor) == "" {
+			data.Vendor = variables.SINCH
+		} else if !AssignVendor(&data) {
+			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+		}
 		if count > maxCountInt {
 			utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
 			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, map[string]interface{}{
@@ -343,7 +347,9 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
-		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
+		if !AssignVendor(&data) {
+			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+		}
 	}
 	var deleted bool
 	var delErr error
@@ -385,7 +391,9 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
 	isMessageProcessed, err := rcs.SendRcsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
@@ -417,7 +425,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
 	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
@@ -455,7 +465,9 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending Email: %v", data.Client, data.CommId, err))
@@ -531,11 +543,31 @@ func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg
 	return false, err
 }
 
-func AssignVendor(data *sdkModels.CommApiRequestBody) {
+func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
+	requestedVendor := strings.ToUpper(strings.TrimSpace(data.Vendor))
+	if requestedVendor != "" {
+		data.Vendor = requestedVendor
+		if channelHelper.IsVendorActive(data.Client, requestedVendor, data.Channel) {
+			utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+			return true
+		}
+		utils.Error(fmt.Errorf("requested vendor is not active for client: %s, channel: %s, commId: %s", data.Client, data.Channel, data.CommId))
+		return false
+	}
+
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
+	return true
+}
+
+func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
+	}
+	return true, deleted
 }

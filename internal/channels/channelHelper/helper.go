@@ -146,6 +146,12 @@ func PopulateSmsFields(req *extapimodels.SmsRequestBody, data map[string]interfa
 	if val, ok := data["DltTemplateId"].(int64); ok {
 		req.DltTemplateId = val
 	}
+	if val, ok := data["TemplateEntityId"].(string); ok {
+		req.TemplateEntityId = val
+	}
+	if val, ok := data["TemplateHeader"].(string); ok {
+		req.TemplateHeader = val
+	}
 	if val, ok := data["TemplateCategory"].(int64); ok {
 		req.TemplateCategory = fmt.Sprintf("%d", val)
 	}

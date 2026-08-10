@@ -17,6 +17,8 @@ type SmsRequestBody struct {
 	Client            string
 	Process           string
 	DltTemplateId     int64
+	TemplateEntityId  string
+	TemplateHeader    string
 	TemplateText      string
 	TemplateCategory  string
 	TemplateVariables string

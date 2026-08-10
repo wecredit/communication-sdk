@@ -124,4 +124,9 @@ type Config struct {
 	PinnacleZapcashRcsTransactionalBotId string `envconfig:"PINNACLE_ZAPCASH_RCS_TRANSACTIONAL_BOT_ID"`
 	PinnacleZapcashRcsPromotionalBotId   string `envconfig:"PINNACLE_ZAPCASH_RCS_PROMOTIONAL_BOT_ID"`
 	PinnacleZapcashRcsTtl                string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
+	
+	// Pinnacle SMS API
+	PinnacleSmsApiUrl    string `envconfig:"PINNACLE_SMS_API_URL"`
+	PinnacleSmsAccessKey string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
+	PinnacleSmsDltEntityId string `envconfig:"PINNACLE_SMS_DLT_ENTITY_ID"`
 }

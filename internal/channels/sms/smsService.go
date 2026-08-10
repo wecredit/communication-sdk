@@ -8,6 +8,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
 	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
+	pinnacleSms "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/pkg/cache"
@@ -52,6 +53,8 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interf
 			response = timesSms.HitTimesSmsApi(req)
 		case variables.SINCH:
 			response = sinchSms.HitSinchSmsApi(req)
+		case variables.PINNACLE:
+			response = pinnacleSms.HitPinnacleApi(req)
 		}
 	}
 
