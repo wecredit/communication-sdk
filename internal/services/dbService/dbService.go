@@ -38,8 +38,8 @@ func MapIntoDbModel(data any) (map[string]interface{}, error) {
 
 		// Get the GORM tag value (if present)
 		gormTag := fieldType.Tag.Get("gorm")
-		if gormTag == "" {
-			continue // Skip if no GORM tag is present
+		if gormTag == "" || gormTag == "-" {
+			continue // Skip fields without a DB column mapping
 		}
 
 		// Use the GORM tag as the map key, convert boolean values to 1/0

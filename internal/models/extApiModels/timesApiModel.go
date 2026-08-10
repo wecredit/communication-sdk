@@ -76,13 +76,29 @@ type WhatsappResponse struct {
 }
 
 type RcsRequestBody struct {
-	Mobile       string
-	Process      string
-	TemplateName string
-	AppId        string
-	AppIdKey     string
-	ProjectId    string
-	ApiKey       string
+	Mobile               string
+	Process              string
+	Client               string
+	CommId               string
+	TemplateName         string
+	AppId                string
+	AppIdKey             string
+	ProjectId            string
+	ApiKey               string
+	TemplateVariables    string
+	SmsFallbackVariables string
+	TemplateCategory     string
+	EmiAmount            string
+	CustomerName         string
+	LoanId               string
+	ApplicationNumber    string
+	DueDate              string
+	Description          string
+	TotalPayableAmount   string
+	TodayPayableAmount   string
+	SavingAmount         string
+	BounceCharge         string
+	PaymentLink          string
 }
 
 type RcsResponse struct {
@@ -90,6 +106,7 @@ type RcsResponse struct {
 	CommId          string `json:"CommId" gorm:"CommId"`
 	IsSent          bool   `json:"isSent" gorm:"IsSent"`
 	Vendor          string `json:"Vendor" gorm:"Vendor"`
+	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 }

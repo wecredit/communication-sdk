@@ -23,6 +23,6 @@ const (
 )
 
 const (
-	UtilityTemplateCategory   string = "1"
-	MarketingTemplateCategory string = "2"
+	TransactionalTemplateCategory string = "1"
+	PromotionalTemplateCategory   string = "2"
 )

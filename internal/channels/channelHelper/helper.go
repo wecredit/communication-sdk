@@ -158,6 +158,15 @@ func PopulateRcsFields(req *extapimodels.RcsRequestBody, data map[string]interfa
 	if val, ok := data["ImageId"].(string); ok {
 		req.AppId = val
 	}
+	if val, ok := data["TemplateVariables"].(string); ok {
+		req.TemplateVariables = val
+	}
+	if val, ok := data["TemplateCategory"].(int64); ok {
+		req.TemplateCategory = fmt.Sprintf("%d", val)
+	}
+	if val, ok := data["SmsFallbackVariables"].(string); ok {
+		req.SmsFallbackVariables = val
+	}
 }
 
 func PopulateEmailFields(req *extapimodels.EmailRequestBody, data map[string]interface{}) {
