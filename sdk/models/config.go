@@ -104,10 +104,13 @@ type Config struct {
 	SinchSmsApiUrl       string `envconfig:"SINCH_SMS_API_URL"`
 
 	// CreditSea Sinch SMS API Variables
-	CreditSeaSinchSmsApiAppID    string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
-	CreditSeaSinchSmsApiUserName string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
-	CreditSeaSinchSmsApiPassword string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
-	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+	CreditSeaSinchSmsApiAppID     string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
+	CreditSeaSinchSmsApiUserName  string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
+	CreditSeaSinchSmsApiPassword  string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
+	CreditSeaSinchSmsApiSender    string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+	ConsumerDefaultClientWorkers  string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
+	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
+	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
@@ -124,9 +127,9 @@ type Config struct {
 	PinnacleZapcashRcsTransactionalBotId string `envconfig:"PINNACLE_ZAPCASH_RCS_TRANSACTIONAL_BOT_ID"`
 	PinnacleZapcashRcsPromotionalBotId   string `envconfig:"PINNACLE_ZAPCASH_RCS_PROMOTIONAL_BOT_ID"`
 	PinnacleZapcashRcsTtl                string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
-	
+
 	// Pinnacle SMS API
-	PinnacleSmsApiUrl    string `envconfig:"PINNACLE_SMS_API_URL"`
-	PinnacleSmsAccessKey string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
+	PinnacleSmsApiUrl      string `envconfig:"PINNACLE_SMS_API_URL"`
+	PinnacleSmsAccessKey   string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
 	PinnacleSmsDltEntityId string `envconfig:"PINNACLE_SMS_DLT_ENTITY_ID"`
 }

@@ -19,12 +19,11 @@ func verifyMobile(mobile string) string {
 }
 
 func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) (map[string]interface{}, error) {
-	var username, password, appId, sender string
-	if data.Client == variables.CreditSea {
-		username = config.CreditSeaSinchSmsApiUserName
-		password = config.CreditSeaSinchSmsApiPassword
-		appId = config.CreditSeaSinchSmsApiAppID
-		sender = config.CreditSeaSinchSmsApiSender
+	username, password, appId, sender, err := sinchSMSCredentials(data.Client, config)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(data.Client, variables.CreditSea) {
 
 		if strings.Contains(data.TemplateText, "{#var#}") {
 			var keys = strings.Split(data.TemplateVariables, ",")
@@ -108,11 +107,6 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 				return nil, replacementErr
 			}
 		}
-	} else {
-		username = config.SinchSmsApiUserName
-		password = config.SinchSmsApiPassword
-		appId = config.SinchSmsApiAppID
-		sender = config.SinchSmsApiSender
 	}
 
 	templatePayload := map[string]interface{}{
@@ -132,7 +126,20 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 		"userId":      username,
 	}
 
-	fmt.Println("Sinch SMS Template Payload:", templatePayload)
-
 	return templatePayload, nil
+}
+
+func sinchSMSCredentials(client string, config models.Config) (username, password, appID, sender string, err error) {
+	switch strings.ToLower(strings.TrimSpace(client)) {
+	case "wecredit":
+		username, password, appID, sender = config.SinchSmsApiUserName, config.SinchSmsApiPassword, config.SinchSmsApiAppID, config.SinchSmsApiSender
+	case variables.CreditSea:
+		username, password, appID, sender = config.CreditSeaSinchSmsApiUserName, config.CreditSeaSinchSmsApiPassword, config.CreditSeaSinchSmsApiAppID, config.CreditSeaSinchSmsApiSender
+	default:
+		return "", "", "", "", fmt.Errorf("Sinch SMS credentials are not configured for client: %s", client)
+	}
+	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" || strings.TrimSpace(appID) == "" || strings.TrimSpace(sender) == "" {
+		return "", "", "", "", fmt.Errorf("Sinch SMS credentials are incomplete for client: %s", client)
+	}
+	return username, password, appID, sender, nil
 }

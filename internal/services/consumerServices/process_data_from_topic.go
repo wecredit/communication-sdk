@@ -44,12 +44,18 @@ type clientRoutine struct {
 }
 
 var (
-	clientHandlers           = make(map[string]*clientRoutine)
-	clientMux                sync.Mutex
-	defaultClientWorkerCount = 5
+	clientHandlers = make(map[string]*clientRoutine)
+	clientMux      sync.Mutex
 )
 
-func ConsumerService(workerCount int, queueURL string) {
+const (
+	defaultClientWorkers = 5
+	defaultClientBuffer  = 100
+	maxClientWorkers     = 500
+	maxClientBuffer      = 10000
+)
+
+func ConsumerService(queueURL string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -88,7 +94,7 @@ func ConsumerService(workerCount int, queueURL string) {
 			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
-				go routeMessageToClient(ctx, msg, queueURL)
+				routeMessageToClient(ctx, msg, queueURL)
 			}
 		}
 	}
@@ -122,10 +128,12 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	clientMux.Lock()
 	handler, exists := clientHandlers[client]
 	if !exists {
+		workerCount := clientWorkerCount(client)
+		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
-			msgChan: make(chan MessageWrapper, 100),
+			msgChan: make(chan MessageWrapper, bufferSize),
 			wg:      &sync.WaitGroup{},
-			workers: defaultClientWorkerCount,
+			workers: workerCount,
 		}
 		clientHandlers[client] = handler
 
@@ -138,6 +146,33 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	clientMux.Unlock()
 
 	handler.msgChan <- MessageWrapper{Message: msg, Payload: data}
+}
+
+func clientWorkerCount(client string) int {
+	workers := boundedConsumerConfigInt(config.Configs.ConsumerDefaultClientWorkers, defaultClientWorkers, maxClientWorkers)
+	client = strings.ToLower(strings.TrimSpace(client))
+	for _, entry := range strings.Split(config.Configs.ConsumerClientWorkerOverrides, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err == nil && value > 0 && value <= maxClientWorkers {
+			return value
+		}
+	}
+	return workers
+}
+
+func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 1 {
+		return fallback
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
 }
 
 func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, queueURL string, wg *sync.WaitGroup) {
