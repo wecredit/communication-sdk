@@ -31,10 +31,14 @@ type Config struct {
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// AWS Credentials
-	AWSRegion        string `envconfig:"AWS_REGION"`
-	AwsSnsArn        string `envconfig:"AWS_COMM_TOPIC_ARN"`
-	AwsQueueUrl      string `envconfig:"AWS_QUEUE_URL"`
-	AwsErrorQueueUrl string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
+	AWSRegion string `envconfig:"AWS_REGION"`
+	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
+	// WeCredit SMS: prefer SQS-direct (plan A). When set, SDK Send skips SNS for wecredit+SMS.
+	AwsWeCreditSmsQueueUrl string `envconfig:"AWS_WECREDIT_SMS_QUEUE_URL"`
+	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
+	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
+	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
+	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
@@ -111,6 +115,11 @@ type Config struct {
 	ConsumerDefaultClientWorkers  string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
 	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
 	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
+
+	// Per-provider SMS outbound rate limits (token bucket; no external deps).
+	// Overrides format: vendor:client:rps or vendor:rps (comma-separated).
+	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
+	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`

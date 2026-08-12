@@ -35,14 +35,22 @@ func GenerateCommID(clientName string) string {
 	return commID
 }
 
-func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn string, redisClient *redis.Client) (sdkModels.CommApiResponseBody, error) {
+// ResolveCommID keeps a caller-supplied CommId (durable event identity) or generates one.
+func ResolveCommID(existing, clientName string) string {
+	if id := strings.TrimSpace(existing); id != "" {
+		return id
+	}
+	return GenerateCommID(clientName)
+}
+
+func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn, queueURL string, redisClient *redis.Client) (sdkModels.CommApiResponseBody, error) {
 	isValidate, message := sdkHelper.ValidateCommRequest(*data)
 
 	if !isValidate {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
 	}
 
-	redisKey := channelHelper.GenerateRedisKey(data.Mobile, data.Channel, data.Stage)
+	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)
 	exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in checking mobile: %s, redisKey: %s on redis: %v", data.Mobile, redisKey, err))
@@ -102,8 +110,9 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr)
 	}
 
-	// Set CommId for requested Data
-	data.CommId = GenerateCommID(data.Client)
+	// Preserve caller-supplied CommId when present; otherwise generate WC-<CLIENT>-UUID-ts
+	// (same path used by ZapCash / CreditSea / legacy lenders).
+	data.CommId = ResolveCommID(data.CommId, data.Client)
 
 	subject := variables.NonPriority
 
@@ -146,15 +155,27 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
 	}
 
-	// Send the map to AWS Queue
-	err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
-	if err != nil {
-		utils.Error(fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
-		return sdkModels.CommApiResponseBody{
-			Success: false,
-		}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
+	// Enqueue for async provider workers: SQS-direct (WeCredit SMS) or SNS (legacy).
+	queueURL = strings.TrimSpace(queueURL)
+	topicArn = strings.TrimSpace(topicArn)
+	if queueURL != "" {
+		if queue.SQSClient == nil {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("SQS client is not initialized for direct enqueue")
+		}
+		err = queue.SendMessageToSqsQueue(queue.SQSClient, dataMap, queueURL, subject)
+		if err != nil {
+			utils.Error(fmt.Errorf("error occurred while sending data to SQS for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to SQS for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
+		}
+		utils.Info(fmt.Sprintf("Message sent to AWS SQS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
+	} else {
+		err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
+		if err != nil {
+			utils.Error(fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
+		}
+		utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 	}
-	utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
 }

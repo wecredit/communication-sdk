@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus"
@@ -57,6 +58,48 @@ func SendMessageToAwsQueue(client *sns.SNS, messageMap interface{}, topicARN str
 	return nil
 }
 
+// SendMessageToSqsQueue publishes the payload body directly to SQS (no SNS hop).
+// Body is the raw JSON map so consumers can parse CommApiRequestBody without an SNS envelope.
+func SendMessageToSqsQueue(sqsClient *sqs.SQS, messageMap interface{}, queueURL, subject string) error {
+	if sqsClient == nil {
+		return fmt.Errorf("SQS client is not initialized")
+	}
+	queueURL = strings.TrimSpace(queueURL)
+	if queueURL == "" {
+		return fmt.Errorf("SQS queue URL is empty")
+	}
+
+	messageBytes, err := json.Marshal(messageMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message to JSON: %w", err)
+	}
+
+	attrs := map[string]*sqs.MessageAttributeValue{}
+	if subject != "" {
+		attrs["SubjectKey"] = &sqs.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(subject),
+		}
+	}
+
+	input := &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(string(messageBytes)),
+	}
+	if len(attrs) > 0 {
+		input.MessageAttributes = attrs
+	}
+
+	resp, err := sqsClient.SendMessage(input)
+	if err != nil {
+		return fmt.Errorf("failed to send message to SQS: %w", err)
+	}
+	if resp == nil || resp.MessageId == nil || *resp.MessageId == "" {
+		return fmt.Errorf("SQS SendMessage returned empty MessageId")
+	}
+	return nil
+}
+
 // SendMessage allows putting data in Azure Topic with a subject for a specific subscription
 func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topicName, subject, messageId string) error {
 	// Serialize the map to JSON
@@ -100,18 +143,48 @@ func SendMessage(queueClient *azservicebus.Client, messageMap interface{}, topic
 	return fmt.Errorf("failed to send message after %d attempts: %w", maxRetries, lastErr)
 }
 
-// SendMessageToErrorQueue moves the message to an error queue in case of processing failure with a subject like inputInsertionFails, outputInsertionFails, apihitsFails
+// SendMessageWithSubject moves the message to the shared error queue for inspection.
+// Subject is the failure class (e.g. apiHitsFails). Client is always written into the
+// body and as an SQS message attribute so ops can identify the originating process
+// without creating per-client error queues.
 func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL string, subject, errMsg string) error {
 	if sqsClient == nil {
 		return fmt.Errorf("SQS client is not initialized")
 	}
-	// Convert message to JSON
-	messageBytes, err := json.Marshal(messageMap)
+
+	payload, err := normalizeErrorPayload(messageMap)
+	if err != nil {
+		return err
+	}
+
+	client := firstNonEmptyString(payload, "Client", "client")
+	process := firstNonEmptyString(payload, "Process", "process", "ProcessName", "processName")
+	channel := firstNonEmptyString(payload, "Channel", "channel")
+	commID := firstNonEmptyString(payload, "CommId", "commId")
+
+	if client == "" {
+		client = process
+	}
+	if client == "" {
+		client = "unknown"
+		utils.Error(fmt.Errorf("error queue payload missing Client/Process; subject=%s", subject))
+	}
+	payload["Client"] = client
+	if process != "" {
+		payload["Process"] = process
+	}
+	if channel != "" {
+		payload["Channel"] = channel
+	}
+	if commID != "" {
+		payload["CommId"] = commID
+	}
+
+	messageBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message to JSON: %w", err)
 	}
 
-	// Prepare message attributes (for filtering)
 	messageAttributes := map[string]*sqs.MessageAttributeValue{
 		"Subject": {
 			DataType:    aws.String("String"),
@@ -121,9 +194,30 @@ func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL
 			DataType:    aws.String("String"),
 			StringValue: aws.String(errMsg),
 		},
+		"Client": {
+			DataType:    aws.String("String"),
+			StringValue: aws.String(client),
+		},
+	}
+	if process != "" {
+		messageAttributes["Process"] = &sqs.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(process),
+		}
+	}
+	if channel != "" {
+		messageAttributes["Channel"] = &sqs.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(channel),
+		}
+	}
+	if commID != "" {
+		messageAttributes["CommId"] = &sqs.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(commID),
+		}
 	}
 
-	// Send message to the queue
 	_, err = SQSClient.SendMessage(&sqs.SendMessageInput{
 		QueueUrl:          aws.String(queueURL),
 		MessageBody:       aws.String(string(messageBytes)),
@@ -134,4 +228,43 @@ func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL
 	}
 
 	return nil
+}
+
+func normalizeErrorPayload(messageMap interface{}) (map[string]interface{}, error) {
+	if messageMap == nil {
+		return map[string]interface{}{}, nil
+	}
+	if asMap, ok := messageMap.(map[string]interface{}); ok {
+		out := make(map[string]interface{}, len(asMap)+4)
+		for k, v := range asMap {
+			out[k] = v
+		}
+		return out, nil
+	}
+	messageBytes, err := json.Marshal(messageMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message to JSON: %w", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(messageBytes, &payload); err != nil {
+		return nil, fmt.Errorf("failed to convert message to map: %w", err)
+	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	return payload, nil
+}
+
+func firstNonEmptyString(payload map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if raw, ok := payload[key]; ok {
+			switch v := raw.(type) {
+			case string:
+				if s := strings.TrimSpace(v); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
 }

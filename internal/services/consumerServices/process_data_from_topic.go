@@ -55,25 +55,64 @@ const (
 	maxClientBuffer      = 10000
 )
 
-func ConsumerService(queueURL string) {
+func consumerQueueURLs() []string {
+	seen := make(map[string]struct{})
+	urls := make([]string, 0, 2)
+	add := func(raw string) {
+		u := strings.TrimSpace(raw)
+		if u == "" {
+			return
+		}
+		if _, ok := seen[u]; ok {
+			return
+		}
+		seen[u] = struct{}{}
+		urls = append(urls, u)
+	}
+	// Legacy SNS→SQS priority/non-priority subscription queue.
+	add(config.Configs.AwsQueueUrl)
+	// WeCredit SMS SQS-direct publish target (validate-client + Send).
+	add(config.Configs.AwsWeCreditSmsQueueUrl)
+	return urls
+}
+
+// ConsumerService long-polls every configured SDK work queue and routes into shared
+// per-client worker pools. Polls AWS_QUEUE_URL (legacy SNS hop) and
+// AWS_WECREDIT_SMS_QUEUE_URL (WeCredit SMS direct) when both are set and distinct.
+func ConsumerService(_ string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go handleShutdown(cancel)
 
+	queueURLs := consumerQueueURLs()
+	if len(queueURLs) == 0 {
+		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL)"))
+		return
+	}
+	for _, queueURL := range queueURLs {
+		url := queueURL
+		utils.Info(fmt.Sprintf("starting communication SQS consumer for queue: %s", url))
+		go pollCommunicationQueue(ctx, url)
+	}
+
+	<-ctx.Done()
+	utils.Warn("Context cancelled. Shutting down all client handlers.")
+	clientMux.Lock()
+	for client, handler := range clientHandlers {
+		handler.closeOnce.Do(func() {
+			close(handler.msgChan)
+		})
+		handler.wg.Wait()
+		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", client))
+	}
+	clientMux.Unlock()
+}
+
+func pollCommunicationQueue(ctx context.Context, queueURL string) {
 	for {
 		select {
 		case <-ctx.Done():
-			utils.Warn("Context cancelled. Shutting down all client handlers.")
-			clientMux.Lock()
-			for client, handler := range clientHandlers {
-				handler.closeOnce.Do(func() {
-					close(handler.msgChan)
-				})
-				handler.wg.Wait()
-				utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", client))
-			}
-			clientMux.Unlock()
 			return
 		default:
 			result, err := queue.SQSClient.ReceiveMessage(&sqs.ReceiveMessageInput{
@@ -83,7 +122,7 @@ func ConsumerService(queueURL string) {
 				VisibilityTimeout:   aws.Int64(300),
 			})
 			if err != nil {
-				utils.Error(fmt.Errorf("error receiving messages: %v", err))
+				utils.Error(fmt.Errorf("error receiving messages from %s: %v", queueURL, err))
 				continue
 			}
 
@@ -107,15 +146,9 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		}
 	}()
 
-	var snsWrapper awsModels.SnsMessageWrapper
-	if err := json.Unmarshal([]byte(*msg.Body), &snsWrapper); err != nil {
-		utils.Error(fmt.Errorf("failed to unmarshal SNS wrapper: %v", err))
-		return
-	}
-
-	var data sdkModels.CommApiRequestBody
-	if err := json.Unmarshal([]byte(snsWrapper.Message), &data); err != nil {
-		utils.Error(fmt.Errorf("failed to unmarshal inner message: %v", err))
+	data, err := parseSQSCommPayload(*msg.Body)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to parse SQS message body: %v", err))
 		return
 	}
 
@@ -146,6 +179,27 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	clientMux.Unlock()
 
 	handler.msgChan <- MessageWrapper{Message: msg, Payload: data}
+}
+
+// parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
+func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
+	var data sdkModels.CommApiRequestBody
+
+	var snsWrapper awsModels.SnsMessageWrapper
+	if err := json.Unmarshal([]byte(body), &snsWrapper); err == nil && strings.TrimSpace(snsWrapper.Message) != "" {
+		if err := json.Unmarshal([]byte(snsWrapper.Message), &data); err != nil {
+			return data, fmt.Errorf("inner SNS message: %w", err)
+		}
+		return data, nil
+	}
+
+	if err := json.Unmarshal([]byte(body), &data); err != nil {
+		return data, err
+	}
+	if strings.TrimSpace(data.Client) == "" && strings.TrimSpace(data.Channel) == "" {
+		return data, fmt.Errorf("unrecognized SQS body (not SNS envelope or CommApiRequestBody)")
+	}
+	return data, nil
 }
 
 func clientWorkerCount(client string) int {
@@ -455,40 +509,37 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 }
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
-	// if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into sms input table for mobile %s: %v", data.Mobile, err))
-	// }
 	var deleted bool
 	var delErr error
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
-	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
+	result, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
-		// If processing failed, don't delete message - let it retry after visibility timeout
-		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
-		if isMessageProcessed {
+		if result.Processed && result.AckSQS {
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial SMS processing: %v", delErr))
 			}
 		}
-		return isMessageProcessed, deleted
+		return result.Processed, deleted
 	}
 
-	if isMessageProcessed {
+	if result.AckSQS {
 		deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
-			utils.Error(fmt.Errorf("failed to delete message after successful SMS processing: %v", err))
+			utils.Error(fmt.Errorf("failed to delete message after SMS processing: %v", err))
 		}
+	} else {
+		utils.Info(fmt.Sprintf("[Client:%s CommId:%s] retaining SQS message for non-terminal SMS outcome", data.Client, data.CommId))
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
 	}
 
-	return isMessageProcessed, deleted
+	return result.Processed, deleted
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
