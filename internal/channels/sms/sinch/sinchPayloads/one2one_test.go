@@ -3,8 +3,41 @@ package sinchSmsPayload
 import (
 	"testing"
 
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	models "github.com/wecredit/communication-sdk/sdk/models"
 )
+
+func TestGetTemplatePayloadUsesTemplateHeader(t *testing.T) {
+	config := models.Config{
+		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password",
+		SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRPL",
+	}
+	payload, err := GetTemplatePayload(extapimodels.SmsRequestBody{
+		Client: "wecredit", Process: "fatakpay", Description: "test",
+		TemplateHeader: "WECRQT", DltTemplateId: 1707177200722881790,
+		TemplateCategory: "3", TemplateText: "hello", Mobile: "9876543210",
+	}, config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["from"] != "WECRQT" {
+		t.Fatalf("from = %v, want WECRQT", payload["from"])
+	}
+}
+
+func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
+	text, err := applySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Apply here {#var#} WeCredit",
+		TemplateVariables: "PaymentLink",
+		PaymentLink:       "https://example.com/apply",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Apply here https://example.com/apply WeCredit" {
+		t.Fatalf("text = %q", text)
+	}
+}
 
 func TestSinchSMSCredentialsByClient(t *testing.T) {
 	config := models.Config{

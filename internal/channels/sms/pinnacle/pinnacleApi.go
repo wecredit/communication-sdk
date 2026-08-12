@@ -1,13 +1,16 @@
 package pinnacleApi
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -18,6 +21,7 @@ import (
 func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	var pinnacleSmsResponse extapimodels.SmsResponse
 	pinnacleSmsResponse.IsSent = false
+	pinnacleSmsResponse.Outcome = outcome.FailedFinal
 
 	apiBase := strings.TrimRight(config.Configs.PinnacleSmsApiUrl, "/")
 	apiKey := strings.TrimSpace(config.Configs.PinnacleSmsAccessKey)
@@ -25,6 +29,7 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if apiBase == "" || apiKey == "" {
 		utils.Error(fmt.Errorf("Pinnacle SMS URL or Access Key is missing for client: %s", data.Client))
 		pinnacleSmsResponse.ResponseMessage = "Pinnacle SMS URL or Access Key is missing"
+		pinnacleSmsResponse.Outcome = outcome.FailedFinal
 		return pinnacleSmsResponse
 	}
 
@@ -57,6 +62,7 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	u, err := url.Parse(fullPath)
 	if err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("invalid url: %v", err)
+		pinnacleSmsResponse.Outcome = outcome.FailedFinal
 		return pinnacleSmsResponse
 	}
 
@@ -78,12 +84,15 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	}
 	u.RawQuery = q.Encode()
 	finalURL := u.String()
-	utils.Info(fmt.Sprintf("Pinnacle SMS curl: curl --get '%s'", finalURL))
+	// Never log the full URL: it includes apikey and the SMS path (mobile/message).
+	utils.Info(fmt.Sprintf("Pinnacle SMS request prepared host=%s path=%s dltTemplateSet=%t entitySet=%t",
+		u.Host, u.EscapedPath(), data.DltTemplateId != 0, entityID != ""))
 
 	// Call API
 	apiResponse, err := callPinnacle(finalURL, data)
 	if err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("error calling pinnacle api: %v", err)
+		pinnacleSmsResponse.Outcome = outcome.ClassifyTransportError(err)
 		return pinnacleSmsResponse
 	}
 
@@ -91,8 +100,9 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	pinnacleSmsResponse.TransactionId = extractTransactionId(apiResponse)
 
 	// Classify
-	isSent, respMsg := classifyPinnacleResponse(apiResponse)
-	pinnacleSmsResponse.IsSent = isSent
+	status, respMsg := classifyPinnacleResponse(apiResponse)
+	pinnacleSmsResponse.Outcome = status
+	pinnacleSmsResponse.IsSent = outcome.IsSentDerived(status)
 	pinnacleSmsResponse.ResponseMessage = respMsg
 	pinnacleSmsResponse.MobileNumber = data.Mobile
 	return pinnacleSmsResponse
@@ -132,6 +142,9 @@ func BuildPinnacleURL(base, apiKey, sender, mobile, message string, dltTemplateI
 
 // callPinnacle executes the GET request and returns parsed JSON map. On error, also send to error queue.
 func callPinnacle(urlStr string, data extapimodels.SmsRequestBody) (map[string]interface{}, error) {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
+		return nil, err
+	}
 	apiResponse, err := utils.ApiHit("GET", urlStr, map[string]string{}, "", "", nil, variables.ContentTypeJSON)
 	if err != nil {
 		// Push to error queue for further inspection
@@ -163,24 +176,34 @@ func extractTransactionId(apiResponse map[string]interface{}) string {
 	return ""
 }
 
-// classifyPinnacleResponse returns (isSent, sanitizedMessage)
-func classifyPinnacleResponse(apiResponse map[string]interface{}) (bool, string) {
+// classifyPinnacleResponse returns (providerOutcome, sanitizedMessage).
+func classifyPinnacleResponse(apiResponse map[string]interface{}) (string, string) {
 	if apiResponse == nil {
-		return false, "empty response"
+		return outcome.Unknown, "empty response"
 	}
 	var code int
 	if v, ok := apiResponse["ApistatusCode"].(int); ok {
 		code = v
+	} else if v, ok := apiResponse["ApistatusCode"].(float64); ok {
+		code = int(v)
 	}
 	status := fmt.Sprint(apiResponse["status"])
 	msg := fmt.Sprint(apiResponse["message"])
 	combined := strings.ToLower(status + " " + msg + " " + fmt.Sprint(code))
-	isSent := false
-	if code >= 200 && code < 300 {
-		isSent = true
-	} else if strings.Contains(combined, "submitted") || strings.Contains(combined, "success") || strings.Contains(combined, "ok") {
-		isSent = true
-	}
 	sanitized := fmt.Sprintf("status:%s message:%s code:%d", status, msg, code)
-	return isSent, sanitized
+
+	if code >= 200 && code < 300 {
+		return outcome.Submitted, sanitized
+	}
+	if strings.Contains(combined, "submitted") || strings.Contains(combined, "success") || strings.Contains(combined, "ok") {
+		return outcome.Submitted, sanitized
+	}
+	if code == 429 || code >= 500 {
+		return outcome.FailedRetryable, sanitized
+	}
+	if code >= 400 && code < 500 {
+		return outcome.FailedFinal, sanitized
+	}
+	// Ambiguous body without a clear success/failure contract.
+	return outcome.Unknown, sanitized
 }
