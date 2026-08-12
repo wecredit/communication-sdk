@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,12 +136,16 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		keyStr := fmt.Sprintf("%s:%v", columnNameToBeUsedAsKey, keyVal)
 		if suffixColumnName != "" {
 			if suffixVal, ok := row[suffixColumnName]; ok && tableName == config.Configs.TemplateDetailsTable {
-				// stageFloat, _ := strconv.ParseFloat(string(suffixVal.([]uint8)), 64)
-				// stageFloat, _ := strconv.ParseFloat(suffixVal.(string), 64)
-
-				// Stage is now already parsed as float64 from database function
-				stageFloat := suffixVal.(float64)
-				keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
+				stageFloat, err := parseStageFloat(suffixVal)
+				if err != nil {
+					// Keep the row for TemplateName/Id lookups; Process+Stage keys cannot use a nil Stage.
+					// Include Id so multiple NULL-Stage rows do not overwrite each other in the map.
+					utils.Warn(fmt.Sprintf("template row cached without Stage float key (Process=%v Id=%v): %v",
+						row["Process"], row["Id"], err))
+					keyStr = fmt.Sprintf("%s|%s:%v|Id:%v", keyStr, suffixColumnName, suffixVal, row["Id"])
+				} else {
+					keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
+				}
 			} else if suffixVal, ok := row[suffixColumnName]; ok {
 				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)
 			} else {
@@ -181,6 +186,40 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		TransformAndCacheVendors(mappedData)
 	}
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
+}
+
+// parseStageFloat converts TemplateDetails.Stage from common DB/driver shapes to float64.
+// NULL Stage values are common for TemplateName-keyed rows and must not panic cache init.
+func parseStageFloat(val interface{}) (float64, error) {
+	if val == nil {
+		return 0, fmt.Errorf("Stage is nil")
+	}
+	switch v := val.(type) {
+	case float64:
+		return v, nil
+	case float32:
+		return float64(v), nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case int32:
+		return float64(v), nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return 0, fmt.Errorf("cannot parse Stage string %q: %w", v, err)
+		}
+		return f, nil
+	case []byte:
+		f, err := strconv.ParseFloat(strings.TrimSpace(string(v)), 64)
+		if err != nil {
+			return 0, fmt.Errorf("cannot parse Stage bytes %q: %w", string(v), err)
+		}
+		return f, nil
+	default:
+		return 0, fmt.Errorf("unsupported Stage type %T", val)
+	}
 }
 
 func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
