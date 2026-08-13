@@ -106,6 +106,44 @@ func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) 
 	return nil
 }
 
+// ReclaimBlankMobileChannelKey deletes a hash field only when it is still an
+// orphan blank claim (empty string or JSON with no transactionId/errorMessage).
+// Used for EventId-keyed marketing sends so a crash after HSetNX does not
+// permanently block retries. Returns true when the field was deleted.
+func ReclaimBlankMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) (bool, error) {
+	ctx := context.Background()
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false then
+  return 0
+end
+if val == '' then
+  return redis.call('HDEL', KEYS[1], ARGV[1])
+end
+-- Non-JSON non-empty values are legacy transactionId strings; keep them.
+if string.sub(val, 1, 1) ~= '{' then
+  return 0
+end
+-- Keep keys that already recorded a provider/error outcome.
+if string.match(val, '"transactionId"%s*:%s*"[^"]+"') then
+  return 0
+end
+if string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then
+  return 0
+end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+	result, err := RDB.Eval(ctx, script, []string{commIdempotentKey}, redisKey).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to reclaim blank redis key %s: %w", redisKey, err)
+	}
+	if result > 0 {
+		utils.Info(fmt.Sprintf("Reclaimed orphan blank redis key %s from hash %s", redisKey, commIdempotentKey))
+		return true, nil
+	}
+	return false, nil
+}
+
 // 2. Update the value (e.g. responseId) for an existing mobile_channel key
 // This function is kept for backward compatibility
 func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, responseId string) error {

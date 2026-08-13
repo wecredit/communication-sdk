@@ -79,8 +79,22 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for mobile: %s and channel: %s, redisKey: %s with error: %s", data.Mobile, data.Channel, redisKey, errorMessage)
 		}
 
-		// Redis key exists but no transactionId or errorMessage - return error
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+		// Blank claim with EventId (marketing-<id>): reclaim orphan and continue.
+		// Crash after HSetNX previously left keys that blocked all retries forever.
+		if strings.TrimSpace(data.EventId) != "" {
+			reclaimed, reclaimErr := redisInteraction.ReclaimBlankMobileChannelKey(redisClient, config.Configs.CommIdempotentKey, redisKey)
+			if reclaimErr != nil {
+				utils.Error(fmt.Errorf("error reclaiming blank redisKey %s: %v", redisKey, reclaimErr))
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error reclaiming blank redisKey: %s: %v", redisKey, reclaimErr)
+			}
+			if !reclaimed {
+				return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+			}
+			utils.Info(fmt.Sprintf("Proceeding after reclaiming orphan blank redisKey: %s", redisKey))
+		} else {
+			// Legacy mobile_CHANNEL_stage keys: keep previous fail-closed behavior.
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("message already processed for redisKey: %s (key exists but no transactionId/errorMessage)", redisKey)
+		}
 	}
 
 	// If not exists, add key with blank value
