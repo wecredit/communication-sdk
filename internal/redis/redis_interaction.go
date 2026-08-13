@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
@@ -216,4 +217,46 @@ func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMes
 	}
 	utils.Info(fmt.Sprintf("Key %s in hash %s updated with errorMessage %s", redisKey, commIdempotentKey, errorMessage))
 	return nil
+}
+
+// ClaimMarketingCampaignDedupKey atomically claims a campaign-level dedup slot (SET NX, no TTL). Key persists until daily FlushAll.
+// Returns true when the key was created, false when it already exists (duplicate).
+func ClaimMarketingCampaignDedupKey(rdb *redis.Client, key, value string) (bool, error) {
+	if rdb == nil {
+		return false, fmt.Errorf("redis client is not initialized")
+	}
+
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, fmt.Errorf("campaign dedup key is required")
+	}
+
+	ctx := context.Background()
+	ok, err := rdb.SetNX(ctx, key, value, 0).Result()
+
+	if err != nil {
+		return false, fmt.Errorf("campaign dedup claim: %w", err)
+	}
+
+	return ok, nil
+}
+
+// ReleaseMarketingCampaignDedupKey deletes a campaign dedup string key (rollback helper).
+func ReleaseMarketingCampaignDedupKey(rdb *redis.Client, key string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	ctx := context.Background()
+	return rdb.Del(ctx, key).Err()
+}
+
+// ReleaseMobileChannelHashField removes one field from the idempotency hash (EventId rollback).
+func ReleaseMobileChannelHashField(rdb *redis.Client, commIdempotentKey, field string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	ctx := context.Background()
+	return rdb.HDel(ctx, commIdempotentKey, field).Err()
 }

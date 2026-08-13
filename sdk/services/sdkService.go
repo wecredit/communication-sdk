@@ -124,6 +124,37 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr)
 	}
 
+	if channelHelper.IsMarketingCampaignRequest(*data) {
+		campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(*data)
+		eventID := strings.TrimSpace(data.EventId)
+		claimed, claimErr := redisInteraction.ClaimMarketingCampaignDedupKey(redisClient, campaignKey, eventID)
+		
+		if claimErr != nil {
+			if releaseErr := redisInteraction.ReleaseMobileChannelHashField(redisClient, config.Configs.CommIdempotentKey, redisKey); releaseErr != nil {
+				utils.Error(fmt.Errorf("failed to rollback event id hash field after campaign dedup error dedup_type=campaign event_id=%s: %v", eventID, releaseErr))
+			}
+
+			utils.Error(fmt.Errorf("campaign dedup claim failed dedup_type=campaign event_id=%s: %v", eventID, claimErr))
+			return sdkModels.CommApiResponseBody{Success: false}, claimErr
+		}
+
+		if !claimed {
+			if releaseErr := redisInteraction.ReleaseMobileChannelHashField(redisClient, config.Configs.CommIdempotentKey, redisKey); releaseErr != nil {
+				utils.Error(fmt.Errorf("failed to rollback event id hash field after campaign duplicate dedup_type=campaign event_id=%s: %v", eventID, releaseErr))
+			}
+
+			dupErr := fmt.Errorf(
+				"campaign duplicate: channel %s process %s event_id %s already sent today",
+				strings.ToUpper(strings.TrimSpace(data.Channel)),
+				strings.ToLower(strings.TrimSpace(data.ProcessName)),
+				eventID,
+			)
+			
+			utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
+			return sdkModels.CommApiResponseBody{Success: false}, dupErr
+		}
+	}
+
 	// Preserve caller-supplied CommId when present; otherwise generate WC-<CLIENT>-UUID-ts
 	// (same path used by ZapCash / CreditSea / legacy lenders).
 	data.CommId = ResolveCommID(data.CommId, data.Client)

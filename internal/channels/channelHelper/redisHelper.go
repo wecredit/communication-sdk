@@ -10,6 +10,26 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
+// IsMarketingCampaignRequest is true for CommMarketingInput dispatch (EventId marketing-{id}).
+func IsMarketingCampaignRequest(data sdkModels.CommApiRequestBody) bool {
+	return strings.HasPrefix(strings.TrimSpace(data.EventId), "marketing-")
+}
+
+// GenerateMarketingCampaignDedupKey builds the standalone Redis string key for
+// same-day mobile+campaign+channel dedup (cleared by daily FlushAll). Stage omitted when Stage is 0.
+func GenerateMarketingCampaignDedupKey(data sdkModels.CommApiRequestBody) string {
+	mobile := strings.TrimSpace(data.Mobile)
+	campaign := strings.ToLower(strings.TrimSpace(data.ProcessName))
+	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
+	key := fmt.Sprintf("%s_%s_%s", mobile, campaign, channel)
+
+	if data.Stage != 0 {
+		key += "_" + fmt.Sprintf("%.0f", data.Stage)
+	}
+	
+	return key
+}
+
 // GenerateRedisKey creates the legacy Redis field: mobile_CHANNEL_stageInt.
 // Prefer GenerateRedisKeyForRequest for new call sites.
 func GenerateRedisKey(mobile, channel string, stage float64) string {

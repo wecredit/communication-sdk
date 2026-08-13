@@ -75,3 +75,29 @@ func TestGenerateRedisKeyForRequestLegacyStage(t *testing.T) {
 		t.Fatalf("got %q, want %q", key, want)
 	}
 }
+
+func TestIsMarketingCampaignRequest(t *testing.T) {
+	if !IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: "marketing-10"}) {
+		t.Fatal("expected marketing- prefix to match")
+	}
+	if IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: ""}) {
+		t.Fatal("empty EventId must not match")
+	}
+}
+
+func TestGenerateMarketingCampaignDedupKey(t *testing.T) {
+	base := sdkModels.CommApiRequestBody{
+		Mobile:      "7014850582",
+		ProcessName: "FatakPay",
+		Channel:     "sms",
+		Stage:       0,
+	}
+	if got := GenerateMarketingCampaignDedupKey(base); got != "7014850582_fatakpay_SMS" {
+		t.Fatalf("got %q, want 7014850582_fatakpay_SMS", got)
+	}
+	withStage := base
+	withStage.Stage = 1.02
+	if got := GenerateMarketingCampaignDedupKey(withStage); got != "7014850582_fatakpay_SMS_1" {
+		t.Fatalf("got %q, want 7014850582_fatakpay_SMS_1", got)
+	}
+}
