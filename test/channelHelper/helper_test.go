@@ -1,9 +1,10 @@
-package channelHelper
+package channelHelper_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -11,7 +12,7 @@ import (
 
 func TestPopulateSmsFieldsConvertsTemplateEntityID(t *testing.T) {
 	request := extapimodels.SmsRequestBody{}
-	PopulateSmsFields(&request, map[string]interface{}{
+	channelHelper.PopulateSmsFields(&request, map[string]interface{}{
 		"TemplateEntityId": int64(1001234567890123456),
 		"TemplateHeader":   "WECRPL",
 	})
@@ -45,7 +46,7 @@ func TestFetchTemplateDataByReference(t *testing.T) {
 		},
 	}
 
-	data, vendor, err := FetchTemplateDataByReference(msg, templates)
+	data, vendor, err := channelHelper.FetchTemplateDataByReference(msg, templates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestResolveTemplateDataUsesReferenceWhenPresent(t *testing.T) {
 		},
 	}
 
-	data, _, err := ResolveTemplateData(msg, templates)
+	data, _, err := channelHelper.ResolveTemplateData(msg, templates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +110,7 @@ func TestFetchTemplateDataByReferenceUsesTemplateNameForRCS(t *testing.T) {
 		},
 	}
 
-	data, vendor, err := FetchTemplateDataByReference(msg, templates)
+	data, vendor, err := channelHelper.FetchTemplateDataByReference(msg, templates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestFetchTemplateDataDoesNotCrossVendorWhenVendorExplicit(t *testing.T) {
 		},
 	}
 
-	_, vendor, err := FetchTemplateData(msg, templates)
+	_, vendor, err := channelHelper.FetchTemplateData(msg, templates)
 	if err == nil {
 		t.Fatal("expected error when explicit vendor template is missing")
 	}
@@ -163,7 +164,7 @@ func TestFetchTemplateDataSameVendorStageFallback(t *testing.T) {
 		},
 	}
 
-	data, vendor, err := FetchTemplateData(msg, templates)
+	data, vendor, err := channelHelper.FetchTemplateData(msg, templates)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

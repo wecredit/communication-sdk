@@ -1,9 +1,10 @@
-package services
+package consumerServices_test
 
 import (
 	"testing"
 
 	"github.com/wecredit/communication-sdk/config"
+	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 )
 
 func TestClientWorkerCountUsesDefaultAndOverrides(t *testing.T) {
@@ -21,8 +22,8 @@ func TestClientWorkerCountUsesDefaultAndOverrides(t *testing.T) {
 		{client: "creditsea", want: 7},
 		{client: "trustfin", want: 5},
 	} {
-		if got := clientWorkerCount(test.client); got != test.want {
-			t.Fatalf("clientWorkerCount(%q) = %d, want %d", test.client, got, test.want)
+		if got := services.ClientWorkerCount(test.client); got != test.want {
+			t.Fatalf("ClientWorkerCount(%q) = %d, want %d", test.client, got, test.want)
 		}
 	}
 }

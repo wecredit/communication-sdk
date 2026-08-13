@@ -1,4 +1,4 @@
-package ratelimit
+package ratelimit_test
 
 import (
 	"context"
@@ -6,30 +6,31 @@ import (
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 )
 
 func TestKey(t *testing.T) {
-	if got := Key("SINCH", "WeCredit"); got != "sinch:wecredit" {
+	if got := ratelimit.Key("SINCH", "WeCredit"); got != "sinch:wecredit" {
 		t.Fatalf("Key = %q", got)
 	}
 }
 
 func TestParseOverrides(t *testing.T) {
-	got := parseOverrides("sinch:wecredit:100,pinnacle:80,times:default:25")
+	got := ratelimit.ParseOverrides("sinch:wecredit:100,pinnacle:80,times:default:25")
 	if got["sinch:wecredit"] != 100 || got["pinnacle"] != 80 || got["times:default"] != 25 {
 		t.Fatalf("unexpected overrides: %#v", got)
 	}
 }
 
 func TestTokenBucketAllowsBurstThenWaits(t *testing.T) {
-	ResetForTest()
+	ratelimit.ResetForTest()
 	config.Configs.ProviderRPSDefault = "5"
 	config.Configs.ProviderRPSOverrides = "test:unit:20"
 
 	ctx := context.Background()
 	start := time.Now()
 	for i := 0; i < 5; i++ {
-		if err := WaitFor(ctx, "test:unit"); err != nil {
+		if err := ratelimit.WaitFor(ctx, "test:unit"); err != nil {
 			t.Fatalf("WaitFor: %v", err)
 		}
 	}
@@ -39,14 +40,14 @@ func TestTokenBucketAllowsBurstThenWaits(t *testing.T) {
 }
 
 func TestWaitForCancelled(t *testing.T) {
-	ResetForTest()
+	ratelimit.ResetForTest()
 	config.Configs.ProviderRPSDefault = "1"
 	config.Configs.ProviderRPSOverrides = "slow:client:1"
 
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = WaitFor(ctx, "slow:client") // consume burst token
+	_ = ratelimit.WaitFor(ctx, "slow:client") // consume burst token
 	cancel()
-	if err := WaitFor(ctx, "slow:client"); err == nil {
+	if err := ratelimit.WaitFor(ctx, "slow:client"); err == nil {
 		t.Fatal("expected cancelled wait error")
 	}
 }

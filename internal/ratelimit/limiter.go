@@ -107,7 +107,7 @@ func getBucket(key string) *TokenBucket {
 }
 
 func rpsForKey(key string) float64 {
-	overrides := parseOverrides(config.Configs.ProviderRPSOverrides)
+	overrides := ParseOverrides(config.Configs.ProviderRPSOverrides)
 	if rps, ok := overrides[key]; ok {
 		return rps
 	}
@@ -120,7 +120,7 @@ func rpsForKey(key string) float64 {
 	return positiveFloat(config.Configs.ProviderRPSDefault, 50)
 }
 
-func parseOverrides(raw string) map[string]float64 {
+func ParseOverrides(raw string) map[string]float64 {
 	out := map[string]float64{}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

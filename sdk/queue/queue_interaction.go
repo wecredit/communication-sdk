@@ -152,15 +152,15 @@ func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL
 		return fmt.Errorf("SQS client is not initialized")
 	}
 
-	payload, err := normalizeErrorPayload(messageMap)
+	payload, err := NormalizeErrorPayload(messageMap)
 	if err != nil {
 		return err
 	}
 
-	client := firstNonEmptyString(payload, "Client", "client")
-	process := firstNonEmptyString(payload, "Process", "process", "ProcessName", "processName")
-	channel := firstNonEmptyString(payload, "Channel", "channel")
-	commID := firstNonEmptyString(payload, "CommId", "commId")
+	client := FirstNonEmptyString(payload, "Client", "client")
+	process := FirstNonEmptyString(payload, "Process", "process", "ProcessName", "processName")
+	channel := FirstNonEmptyString(payload, "Channel", "channel")
+	commID := FirstNonEmptyString(payload, "CommId", "commId")
 
 	if client == "" {
 		client = process
@@ -230,7 +230,7 @@ func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL
 	return nil
 }
 
-func normalizeErrorPayload(messageMap interface{}) (map[string]interface{}, error) {
+func NormalizeErrorPayload(messageMap interface{}) (map[string]interface{}, error) {
 	if messageMap == nil {
 		return map[string]interface{}{}, nil
 	}
@@ -255,7 +255,7 @@ func normalizeErrorPayload(messageMap interface{}) (map[string]interface{}, erro
 	return payload, nil
 }
 
-func firstNonEmptyString(payload map[string]interface{}, keys ...string) string {
+func FirstNonEmptyString(payload map[string]interface{}, keys ...string) string {
 	for _, key := range keys {
 		if raw, ok := payload[key]; ok {
 			switch v := raw.(type) {

@@ -1,9 +1,10 @@
-package sinchSmsPayload
+package sinchPayloads_test
 
 import (
 	"testing"
 
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	sinchSmsPayload "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
 	models "github.com/wecredit/communication-sdk/sdk/models"
 )
 
@@ -12,7 +13,7 @@ func TestGetTemplatePayloadUsesTemplateHeader(t *testing.T) {
 		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password",
 		SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRPL",
 	}
-	payload, err := GetTemplatePayload(extapimodels.SmsRequestBody{
+	payload, err := sinchSmsPayload.GetTemplatePayload(extapimodels.SmsRequestBody{
 		Client: "wecredit", Process: "fatakpay", Description: "test",
 		TemplateHeader: "WECRQT", DltTemplateId: 1707177200722881790,
 		TemplateCategory: "3", TemplateText: "hello", Mobile: "9876543210",
@@ -26,7 +27,7 @@ func TestGetTemplatePayloadUsesTemplateHeader(t *testing.T) {
 }
 
 func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
-	text, err := applySinchTemplateVariables(extapimodels.SmsRequestBody{
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
 		TemplateText:      "Apply here {#var#} WeCredit",
 		TemplateVariables: "PaymentLink",
 		PaymentLink:       "https://example.com/apply",
@@ -50,7 +51,7 @@ func TestSinchSMSCredentialsByClient(t *testing.T) {
 		{"creditsea", "creditsea-user"},
 	} {
 		t.Run(test.client, func(t *testing.T) {
-			username, _, _, _, err := sinchSMSCredentials(test.client, config)
+			username, _, _, _, err := sinchSmsPayload.SinchSMSCredentials(test.client, config)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -62,10 +63,10 @@ func TestSinchSMSCredentialsByClient(t *testing.T) {
 }
 
 func TestSinchSMSCredentialsRejectUnknownOrIncompleteClient(t *testing.T) {
-	if _, _, _, _, err := sinchSMSCredentials("unknown", models.Config{}); err == nil {
+	if _, _, _, _, err := sinchSmsPayload.SinchSMSCredentials("unknown", models.Config{}); err == nil {
 		t.Fatal("expected unknown client to be rejected")
 	}
-	if _, _, _, _, err := sinchSMSCredentials("creditsea", models.Config{}); err == nil {
+	if _, _, _, _, err := sinchSmsPayload.SinchSMSCredentials("creditsea", models.Config{}); err == nil {
 		t.Fatal("expected incomplete credentials to be rejected")
 	}
 }

@@ -1,13 +1,14 @@
-package channelHelper
+package channelHelper_test
 
 import (
 	"testing"
 
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
 func TestGenerateRedisKeyForRequestUsesEventId(t *testing.T) {
-	key := GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
+	key := channelHelper.GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
 		Mobile:            "7014850582",
 		Channel:           "SMS",
 		Stage:             0,
@@ -20,7 +21,7 @@ func TestGenerateRedisKeyForRequestUsesEventId(t *testing.T) {
 		t.Fatalf("got %q, want marketing-10", key)
 	}
 
-	other := GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
+	other := channelHelper.GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
 		Mobile:            "7014850582",
 		Channel:           "SMS",
 		Stage:             0,
@@ -37,7 +38,7 @@ func TestGenerateRedisKeyForRequestUsesEventId(t *testing.T) {
 }
 
 func TestGenerateRedisKeyForRequestIgnoresCommId(t *testing.T) {
-	key := GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
+	key := channelHelper.GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
 		Mobile:  "7014850582",
 		Channel: "SMS",
 		Stage:   1.02,
@@ -50,7 +51,7 @@ func TestGenerateRedisKeyForRequestIgnoresCommId(t *testing.T) {
 }
 
 func TestGenerateRedisKeyForRequestTemplateReferenceWithoutEventId(t *testing.T) {
-	key := GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
+	key := channelHelper.GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
 		Mobile:            "7014850582",
 		Channel:           "sms",
 		Stage:             0,
@@ -64,7 +65,7 @@ func TestGenerateRedisKeyForRequestTemplateReferenceWithoutEventId(t *testing.T)
 }
 
 func TestGenerateRedisKeyForRequestLegacyStage(t *testing.T) {
-	key := GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
+	key := channelHelper.GenerateRedisKeyForRequest(sdkModels.CommApiRequestBody{
 		Mobile:  "7014850582",
 		Channel: "SMS",
 		Stage:   1.02,
@@ -77,10 +78,10 @@ func TestGenerateRedisKeyForRequestLegacyStage(t *testing.T) {
 }
 
 func TestIsMarketingCampaignRequest(t *testing.T) {
-	if !IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: "marketing-10"}) {
+	if !channelHelper.IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: "marketing-10"}) {
 		t.Fatal("expected marketing- prefix to match")
 	}
-	if IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: ""}) {
+	if channelHelper.IsMarketingCampaignRequest(sdkModels.CommApiRequestBody{EventId: ""}) {
 		t.Fatal("empty EventId must not match")
 	}
 }
@@ -92,12 +93,12 @@ func TestGenerateMarketingCampaignDedupKey(t *testing.T) {
 		Channel:     "sms",
 		Stage:       0,
 	}
-	if got := GenerateMarketingCampaignDedupKey(base); got != "7014850582_fatakpay_SMS" {
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(base); got != "7014850582_fatakpay_SMS" {
 		t.Fatalf("got %q, want 7014850582_fatakpay_SMS", got)
 	}
 	withStage := base
 	withStage.Stage = 1.02
-	if got := GenerateMarketingCampaignDedupKey(withStage); got != "7014850582_fatakpay_SMS_1" {
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(withStage); got != "7014850582_fatakpay_SMS_1" {
 		t.Fatalf("got %q, want 7014850582_fatakpay_SMS_1", got)
 	}
 }

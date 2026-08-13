@@ -55,7 +55,7 @@ const (
 	maxClientBuffer      = 10000
 )
 
-func consumerQueueURLs() []string {
+func ConsumerQueueURLs() []string {
 	seen := make(map[string]struct{})
 	urls := make([]string, 0, 2)
 	add := func(raw string) {
@@ -85,7 +85,7 @@ func ConsumerService(_ string) {
 
 	go handleShutdown(cancel)
 
-	queueURLs := consumerQueueURLs()
+	queueURLs := ConsumerQueueURLs()
 	if len(queueURLs) == 0 {
 		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL)"))
 		return
@@ -161,7 +161,7 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	clientMux.Lock()
 	handler, exists := clientHandlers[client]
 	if !exists {
-		workerCount := clientWorkerCount(client)
+		workerCount := ClientWorkerCount(client)
 		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
 			msgChan: make(chan MessageWrapper, bufferSize),
@@ -202,7 +202,7 @@ func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
 	return data, nil
 }
 
-func clientWorkerCount(client string) int {
+func ClientWorkerCount(client string) int {
 	workers := boundedConsumerConfigInt(config.Configs.ConsumerDefaultClientWorkers, defaultClientWorkers, maxClientWorkers)
 	client = strings.ToLower(strings.TrimSpace(client))
 	for _, entry := range strings.Split(config.Configs.ConsumerClientWorkerOverrides, ",") {

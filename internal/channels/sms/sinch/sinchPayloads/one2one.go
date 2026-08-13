@@ -19,7 +19,7 @@ func verifyMobile(mobile string) string {
 }
 
 func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) (map[string]interface{}, error) {
-	username, password, appId, sender, err := sinchSMSCredentials(data.Client, config)
+	username, password, appId, sender, err := SinchSMSCredentials(data.Client, config)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 
 	if strings.Contains(data.TemplateText, "{#var#}") {
 		var err error
-		data.TemplateText, err = applySinchTemplateVariables(data)
+		data.TemplateText, err = ApplySinchTemplateVariables(data)
 		if err != nil {
 			return nil, err
 		}
@@ -55,7 +55,7 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 	return templatePayload, nil
 }
 
-func applySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, error) {
+func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, error) {
 	keys := strings.Split(data.TemplateVariables, ",")
 	variableMap := map[string]string{
 		"EmiAmount":         data.EmiAmount,
@@ -151,7 +151,7 @@ func applySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 	return text, nil
 }
 
-func sinchSMSCredentials(client string, config models.Config) (username, password, appID, sender string, err error) {
+func SinchSMSCredentials(client string, config models.Config) (username, password, appID, sender string, err error) {
 	switch strings.ToLower(strings.TrimSpace(client)) {
 	case "wecredit":
 		username, password, appID, sender = config.SinchSmsApiUserName, config.SinchSmsApiPassword, config.SinchSmsApiAppID, config.SinchSmsApiSender

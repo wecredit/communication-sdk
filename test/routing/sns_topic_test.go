@@ -1,9 +1,10 @@
-package routing
+package routing_test
 
 import (
 	"testing"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/routing"
 )
 
 func TestResolveEnqueueTargetWeCreditSMSUsesQueue(t *testing.T) {
@@ -20,20 +21,20 @@ func TestResolveEnqueueTargetWeCreditSMSUsesQueue(t *testing.T) {
 	config.Configs.AwsWeCreditSmsTopicArn = "arn:aws:sns:wecredit-sms"
 	config.Configs.AwsWeCreditSmsQueueUrl = "https://sqs.example/comm-wecredit-sms-staging"
 
-	got := ResolveEnqueueTarget("wecredit", "SMS")
+	got := routing.ResolveEnqueueTarget("wecredit", "SMS")
 	if got.QueueURL == "" || got.TopicArn != "" {
 		t.Fatalf("expected SQS-direct only, got %+v", got)
 	}
 
-	gotZap := ResolveEnqueueTarget("zapcash", "SMS")
+	gotZap := routing.ResolveEnqueueTarget("zapcash", "SMS")
 	if gotZap.QueueURL != "" || gotZap.TopicArn != "arn:aws:sns:legacy" {
 		t.Fatalf("zapcash should stay on legacy SNS, got %+v", gotZap)
 	}
 }
 
 func TestResolveSnsTopicArnFallsBackToDefault(t *testing.T) {
-	gotZap := ResolveSnsTopicArn("zapcash", "SMS")
-	if gotZap != ResolveSnsTopicArn("zapcash", "WHATSAPP") {
+	gotZap := routing.ResolveSnsTopicArn("zapcash", "SMS")
+	if gotZap != routing.ResolveSnsTopicArn("zapcash", "WHATSAPP") {
 		t.Fatalf("non-WeCredit topics should resolve the same default")
 	}
 }
