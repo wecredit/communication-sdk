@@ -240,13 +240,8 @@ func PopulateSmsFields(req *extapimodels.SmsRequestBody, data map[string]interfa
 	if val, ok := data["DltTemplateId"].(int64); ok {
 		req.DltTemplateId = val
 	}
-	switch val := data["TemplateEntityId"].(type) {
-	case int64:
+	if val, ok := data["TemplateEntityId"].(int64); ok {
 		req.TemplateEntityId = strconv.FormatInt(val, 10)
-	case int:
-		req.TemplateEntityId = strconv.Itoa(val)
-	case string:
-		req.TemplateEntityId = strings.TrimSpace(val)
 	}
 	if val, ok := data["TemplateHeader"].(string); ok {
 		req.TemplateHeader = val
