@@ -24,6 +24,14 @@ type Config struct {
 	DbMaxIdleConns    string `envconfig:"DB_MAX_IDLE_CONNS"`
 	DbConnMaxLifetime string `envconfig:"DB_CONN_MAX_LIFETIME_MINUTES"`
 
+	// Marketing SQL Server (same DB as CommMarketingInput / dbo.CommDispatchTracking).
+	DbServerMarketing         string `envconfig:"DB_SERVER_MARKETING"`
+	DbPortMarketing           string `envconfig:"DB_PORT_MARKETING"`
+	DbUserMarketing           string `envconfig:"DB_USER_MARKETING"`
+	DbPasswordMarketing       string `envconfig:"DB_PASSWORD_MARKETING"`
+	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
+	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
+
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
 	QueueTopicName        string `envconfig:"AZURE_TOPIC_NAME"`

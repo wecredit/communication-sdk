@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/models"
@@ -16,11 +17,13 @@ var (
 	DBanalytics *gorm.DB
 	DBtechRead  *gorm.DB
 	DBtechWrite *gorm.DB
+	DBMarketing *gorm.DB
 )
 
 const (
 	Tech      string = "tech"
 	Analytics string = "analytics"
+	Marketing string = "marketing"
 )
 
 // Database connection types
@@ -119,6 +122,49 @@ func connectTechDB(connectionType string, config models.Config) error {
 	return nil
 }
 
+func connectMarketingDB(config models.Config) error {
+	if strings.TrimSpace(config.DbNameMarketing) == "" {
+		utils.Info("Marketing DB name not set, skipping Marketing SQL Server connection.")
+		return nil
+	}
+	if DBMarketing != nil {
+		utils.Info("Marketing DB already connected, skipping initialization.")
+		return nil
+	}
+
+	server := strings.TrimSpace(config.DbServerMarketing)
+	if server == "" {
+		server = config.DbServerAnalytical
+	}
+	port := strings.TrimSpace(config.DbPortMarketing)
+	if port == "" {
+		port = config.DbPortAnalytical
+	}
+	if port == "" {
+		port = "1433"
+	}
+	user := strings.TrimSpace(config.DbUserMarketing)
+	if user == "" {
+		user = config.DbUserAnalytical
+	}
+	password := strings.TrimSpace(config.DbPasswordMarketing)
+	if password == "" {
+		password = config.DbPasswordAnalytical
+	}
+
+	dsn := GetDSN(user, password, server, port, config.DbNameMarketing)
+	db, err := gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to Marketing DB: %w", err)
+	}
+	if err := applyPoolConfig(db, config, "Marketing DB"); err != nil {
+		return err
+	}
+	DBMarketing = db
+	utils.Info("Database connection established for Marketing DB.")
+	return nil
+}
+
 // ConnectDB initializes the database connection pool for the given database type
 func ConnectDB(dbType string, config models.Config) error {
 	switch dbType {
@@ -133,6 +179,8 @@ func ConnectDB(dbType string, config models.Config) error {
 			return err
 		}
 		return nil
+	case Marketing:
+		return connectMarketingDB(config)
 	default:
 		return fmt.Errorf("invalid database type: %s", dbType)
 	}
@@ -164,6 +212,13 @@ func PingTechReadDB() error {
 // PingTechWriteDB pings the Tech Write database connection
 func PingTechWriteDB() error {
 	return pingDatabase(DBtechWrite, "Tech Write DB")
+}
+
+func PingMarketingDB() error {
+	if DBMarketing == nil {
+		return nil
+	}
+	return pingDatabase(DBMarketing, "Marketing DB")
 }
 
 // PingAnalyticsDB pings the Analytics database connection

@@ -32,6 +32,10 @@ type CommApiRequestBody struct {
 	// EventId is an optional durable duplicate-prevention identity (e.g. marketing-<rowId>).
 	// It is not CommId — CommId stays WC-<CLIENT>-UUID-ts like ZapCash/legacy when empty.
 	EventId string `json:"eventId,omitempty" gorm:"-"`
+	// Source and SourceRowId identify the CommMarketingInput row for WeCredit SMS single-hop.
+	// Poller sets Source=marketing and SourceRowId=CommMarketingInput.Id. ZapCash/legacy leave both empty.
+	Source      string `json:"source,omitempty" gorm:"-"`
+	SourceRowId int64  `json:"sourceRowId,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {

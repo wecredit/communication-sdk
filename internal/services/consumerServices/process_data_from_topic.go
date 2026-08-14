@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -27,6 +28,7 @@ import (
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
+	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -511,19 +513,74 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
 	var deleted bool
 	var delErr error
+	marketing := isMarketingSMSDispatch(data)
+
+	if marketing {
+		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingSMS(data)
+		if claimErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] marketing SMS redis claim failed: %v", data.Client, data.EventId, claimErr))
+			return false, false
+		}
+
+		if skipSend {
+			recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete duplicate in-flight marketing SMS: %v", delErr))
+			}
+			return true, deleted
+		}
+
+		if campaignDuplicate {
+			recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
+				"", campaignDuplicateError(data))
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete campaign-duplicate marketing SMS: %v", delErr))
+			}
+			return true, deleted
+		}
+
+		data.CommId = sdkServices.ResolveCommID(data.CommId, data.Client)
+	}
+
 	if !AssignVendor(&data) {
+		if marketing {
+			recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active")
+		}
+
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
+
+	if marketing {
+		dbMappedData["CommId"] = data.CommId
+		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting sms input audit: %v", data.Client, data.CommId, err))
+		}
+	}
+
 	result, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
+		if marketing && result.AckSQS {
+			recordMarketingSMSTrackingFromSend(data, result, err)
+		}
+
 		if result.Processed && result.AckSQS {
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial SMS processing: %v", delErr))
 			}
+		} else if marketing && !result.AckSQS {
+			releaseMarketingSMSClaims(data)
 		}
 		return result.Processed, deleted
+	}
+
+	if marketing && result.AckSQS {
+		recordMarketingSMSTrackingFromSend(data, result, nil)
+	} else if marketing && !result.AckSQS {
+		releaseMarketingSMSClaims(data)
 	}
 
 	if result.AckSQS {
@@ -656,4 +713,120 @@ func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBod
 		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
 	}
 	return true, deleted
+}
+
+func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
+	return strings.EqualFold(strings.TrimSpace(data.Source), "marketing") && data.SourceRowId != 0
+}
+
+func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	exists, txn, errMsg, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		return false, false, "", "", err
+	}
+
+	if exists {
+		return true, false, txn, errMsg, nil
+	}
+
+	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
+		if strings.Contains(setErr.Error(), "already exists") {
+			_, txn, errMsg, _ := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			return true, false, txn, errMsg, nil
+		}
+		return false, false, "", "", setErr
+	}
+	if !channelHelper.IsMarketingCampaignRequest(data) {
+		return false, false, "", "", nil
+	}
+
+	eventID := strings.TrimSpace(data.EventId)
+	campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(data)
+	claimed, claimErr := redis.ClaimMarketingCampaignDedupKey(redis.RDB, campaignKey, eventID)
+	if claimErr != nil {
+		_ = redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+		return false, false, "", "", claimErr
+	}
+	if claimed {
+		return false, false, "", "", nil
+	}
+	if redis.RDB != nil {
+		existing, getErr := redis.RDB.Get(context.Background(), campaignKey).Result()
+		if getErr == nil && strings.TrimSpace(existing) == eventID {
+			return false, false, "", "", nil
+		}
+	}
+	return false, true, "", "", nil
+}
+
+func releaseMarketingSMSClaims(data sdkModels.CommApiRequestBody) {
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	_, _ = redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+	if channelHelper.IsMarketingCampaignRequest(data) {
+		_ = redis.ReleaseMarketingCampaignDedupKey(redis.RDB, channelHelper.GenerateMarketingCampaignDedupKey(data))
+	}
+}
+
+func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
+	return fmt.Sprintf("campaign duplicate: channel %s process %s event_id %s already sent today",
+		strings.ToUpper(strings.TrimSpace(data.Channel)),
+		strings.ToLower(strings.TrimSpace(data.ProcessName)),
+		strings.TrimSpace(data.EventId))
+}
+
+// recordMarketingSMSTrackingFromRedisSkip writes tracking when Redis already has a
+// terminal result from an earlier send (no vendor call). Blank Redis is in-flight:
+// the first copy still owns the tracking insert.
+func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) {
+	txn := strings.TrimSpace(redisTxn)
+	errMsg := strings.TrimSpace(redisErr)
+	if txn == "" && errMsg == "" {
+		return
+	}
+	outcome := database.DispatchTrackingSent
+	if txn == "" {
+		outcome = database.DispatchTrackingFailed
+	} else {
+		errMsg = ""
+	}
+	recordMarketingSMSTracking(data, outcome, txn, errMsg)
+}
+
+func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) {
+	txn, _ := result.DBData["TransactionId"].(string)
+	errMsg, _ := result.DBData["ResponseMessage"].(string)
+	if sendErr != nil && errMsg == "" {
+		errMsg = sendErr.Error()
+	}
+	status := database.DispatchTrackingFailed
+	if result.DBData["IsSent"] == 1 {
+		status = database.DispatchTrackingSent
+		errMsg = ""
+	}
+	recordMarketingSMSTracking(data, status, txn, errMsg)
+}
+
+func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) {
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+		Source:            data.Source,
+		SourceRowId:       data.SourceRowId,
+		Channel:           "SMS",
+		Client:            data.Client,
+		Vendor:            data.Vendor,
+		Process:           data.ProcessName,
+		EventId:           data.EventId,
+		CommId:            data.CommId,
+		TransactionId:     transactionId,
+		Outcome:           outcome,
+		ErrorMessage:      errorMessage,
+		TemplateReference: data.TemplateReference,
+	})
+	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
+		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
+		return
+	}
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
+	}
 }
