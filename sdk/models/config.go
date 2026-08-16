@@ -46,6 +46,8 @@ type Config struct {
 	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
 	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
+	// ZapCash single-hop: set this to the existing ZapCash queue URL.
+	AwsZapCashQueueUrl     string `envconfig:"AWS_ZAPCASH_QUEUE_URL"`
 	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
 	// Redis Credentials

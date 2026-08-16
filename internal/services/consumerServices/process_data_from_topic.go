@@ -59,7 +59,7 @@ const (
 
 func ConsumerQueueURLs() []string {
 	seen := make(map[string]struct{})
-	urls := make([]string, 0, 2)
+	urls := make([]string, 0, 3)
 	add := func(raw string) {
 		u := strings.TrimSpace(raw)
 		if u == "" {
@@ -75,12 +75,15 @@ func ConsumerQueueURLs() []string {
 	add(config.Configs.AwsQueueUrl)
 	// WeCredit SMS SQS-direct publish target (validate-client + Send).
 	add(config.Configs.AwsWeCreditSmsQueueUrl)
+	// ZapCash SQS-direct publish target.
+	add(config.Configs.AwsZapCashQueueUrl)
 	return urls
 }
 
 // ConsumerService long-polls every configured SDK work queue and routes into shared
 // per-client worker pools. Polls AWS_QUEUE_URL (legacy SNS hop) and
 // AWS_WECREDIT_SMS_QUEUE_URL (WeCredit SMS direct) when both are set and distinct.
+// AWS_ZAPCASH_QUEUE_URL (ZapCash SMS direct) when set.
 func ConsumerService(_ string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -89,7 +92,7 @@ func ConsumerService(_ string) {
 
 	queueURLs := ConsumerQueueURLs()
 	if len(queueURLs) == 0 {
-		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL)"))
+		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL and/or AWS_ZAPCASH_QUEUE_URL)"))
 		return
 	}
 	for _, queueURL := range queueURLs {
@@ -380,6 +383,36 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 
 	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
 
+	// ZapCash single-hop: sdk.Send no longer claims Redis or writes *InputAuditTable.
+	// Only run this on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through sdk.Send;
+	// claiming here would see that key and skip the vendor send. WeCredit SMS claims in handleSMS.
+	if !isMarketingSMSDispatch(data) && isZapCashDirectQueue(queueURL) {
+		skipSend, claimErr := claimOrSkipLenderSend(data)
+		if claimErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed: %v", data.Client, data.Channel, claimErr))
+			return false, false
+		}
+		if skipSend {
+			deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete duplicate in-flight zapcash message: %v", delErr))
+			}
+			return true, deleted
+		}
+
+		data.CommId = sdkServices.ResolveCommID(data.CommId, data.Client)
+		dbMappedData["CommId"] = data.CommId
+		if data.Channel == variables.Email {
+			delete(dbMappedData, "Mobile")
+			dbMappedData["Email"] = data.Email
+		}
+		if table := lenderInputAuditTable(data.Channel); table != "" {
+			if insErr := database.InsertData(table, database.DBtechWrite, dbMappedData); insErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting input audit: %v", data.Client, data.CommId, insErr))
+			}
+		}
+	}
+
 	switch data.Channel {
 	case variables.WhatsApp:
 		isMessageProcessed, deleted := handleWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg)
@@ -456,6 +489,8 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial whatsapp processing: %v", delErr))
 			}
+		} else {
+			releaseMarketingSMSClaims(data)
 		}
 		return isMessageProcessed, deleted
 	}
@@ -466,6 +501,8 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful whatsapp processing: %v", err))
 		}
+	} else {
+		releaseMarketingSMSClaims(data)
 	}
 
 	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
@@ -496,6 +533,8 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial RCS processing: %v", delErr))
 			}
+		} else {
+			releaseMarketingSMSClaims(data)
 		}
 		return isMessageProcessed, deleted
 	}
@@ -505,6 +544,8 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful RCS processing: %v", err))
 		}
+	} else {
+		releaseMarketingSMSClaims(data)
 	}
 
 	return isMessageProcessed, deleted
@@ -571,7 +612,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial SMS processing: %v", delErr))
 			}
-		} else if marketing && !result.AckSQS {
+		} else if !result.AckSQS {
 			releaseMarketingSMSClaims(data)
 		}
 		return result.Processed, deleted
@@ -579,7 +620,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	if marketing && result.AckSQS {
 		recordMarketingSMSTrackingFromSend(data, result, nil)
-	} else if marketing && !result.AckSQS {
+	} else if !result.AckSQS {
 		releaseMarketingSMSClaims(data)
 	}
 
@@ -621,6 +662,8 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial Email processing: %v", delErr))
 			}
+		} else {
+			releaseMarketingSMSClaims(data)
 		}
 		return isMessageProcessed, deleted
 	}
@@ -630,6 +673,8 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful Email processing: %v", err))
 		}
+	} else {
+		releaseMarketingSMSClaims(data)
 	}
 
 	delete(dbMappedData, "MobileNumber")
@@ -717,6 +762,44 @@ func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBod
 
 func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
 	return strings.EqualFold(strings.TrimSpace(data.Source), "marketing") && data.SourceRowId != 0
+}
+
+func isZapCashDirectQueue(queueURL string) bool {
+	z := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
+	return z != "" && strings.TrimSpace(queueURL) == z
+}
+
+func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, err error) {
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	exists, _, _, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return true, nil
+	}
+	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
+		if strings.Contains(setErr.Error(), "already exists") {
+			return true, nil
+		}
+		return false, setErr
+	}
+	return false, nil
+}
+
+func lenderInputAuditTable(channel string) string {
+	switch channel {
+	case variables.SMS:
+		return config.Configs.SdkSmsInputTable
+	case variables.WhatsApp:
+		return config.Configs.SdkWhatsappInputTable
+	case variables.RCS:
+		return config.Configs.SdkRcsInputTable
+	case variables.Email:
+		return config.Configs.SdkEmailInputTable
+	default:
+		return ""
+	}
 }
 
 func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
