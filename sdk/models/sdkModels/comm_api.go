@@ -27,8 +27,11 @@ type CommApiRequestBody struct {
 	SavingAmount        string   `json:"savingAmount,omitempty" gorm:"-"`       // savings amount for the message
 	BounceCharge        string   `json:"bounceCharge,omitempty" gorm:"-"`       // bounce charge for the message
 	// TemplateReference is set only for CommMarketingInput dispatch rows; when present the SDK
-	// resolves TemplateDetails by TemplateName instead of Process+Stage.
+	// resolves TemplateDetails by DltTemplateId (SMS) or TemplateName (other channels).
 	TemplateReference string `json:"templateReference,omitempty" gorm:"-"`
+	// TemplateVariableValues is the positional CSV from CommMarketingInput.VariablesValue.
+	// ZapCash/CreditSea/Olyv/SnapIt leave this empty; they already send named fields.
+	TemplateVariableValues string `json:"templateVariableValues,omitempty" gorm:"-"`
 	// EventId is an optional durable duplicate-prevention identity (e.g. marketing-<rowId>).
 	// It is not CommId — CommId stays WC-<CLIENT>-UUID-ts like ZapCash/legacy when empty.
 	EventId string `json:"eventId,omitempty" gorm:"-"`

@@ -40,6 +40,34 @@ func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
 	}
 }
 
+func TestApplySinchTemplateVariablesUsesPositionalCsv(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "Hi {#var#} pay {#var#}",
+		TemplateVariables:      "CustomerName,PaymentLink",
+		TemplateVariableValues: "Asha, https://pay.example/1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Hi Asha pay https://pay.example/1" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestApplySinchTemplateVariablesNamedFieldsWinWhenCsvEmpty(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Hi {#var#}",
+		TemplateVariables: "CustomerName",
+		CustomerName:      "ZapCash User",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Hi ZapCash User" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
 func TestSinchSMSCredentialsByClient(t *testing.T) {
 	config := models.Config{
 		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password", SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRED",
