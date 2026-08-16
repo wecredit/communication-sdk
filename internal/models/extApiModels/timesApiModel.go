@@ -33,6 +33,9 @@ type SmsRequestBody struct {
 	DueDate           string `json:"DueDate,omitempty"`
 	Description       string `json:"Description,omitempty"`
 	PaymentLink       string `json:"PaymentLink,omitempty"`
+	// TemplateVariableValues is optional positional CSV (CommMarketingInput.VariablesValue).
+	// ZapCash/legacy leave this empty and already set named fields above.
+	TemplateVariableValues string `json:"TemplateVariableValues,omitempty"`
 }
 
 type SmsResponse struct {
