@@ -46,19 +46,20 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 	msg.Vendor = matchedVendor
 
 	req := extapimodels.SmsRequestBody{
-		Mobile:            msg.Mobile,
-		Process:           msg.ProcessName,
-		Client:            msg.Client,
-		Channel:           msg.Channel,
-		CommId:            msg.CommId,
-		Vendor:            msg.Vendor,
-		EmiAmount:         msg.EmiAmount,
-		CustomerName:      msg.CustomerName,
-		LoanId:            msg.LoanId,
-		ApplicationNumber: msg.ApplicationNumber,
-		DueDate:           msg.DueDate,
-		Description:       msg.Description,
-		PaymentLink:       msg.PaymentLink,
+		Mobile:                 msg.Mobile,
+		Process:                msg.ProcessName,
+		Client:                 msg.Client,
+		Channel:                msg.Channel,
+		CommId:                 msg.CommId,
+		Vendor:                 msg.Vendor,
+		EmiAmount:              msg.EmiAmount,
+		CustomerName:           msg.CustomerName,
+		LoanId:                 msg.LoanId,
+		ApplicationNumber:      msg.ApplicationNumber,
+		DueDate:                msg.DueDate,
+		Description:            msg.Description,
+		PaymentLink:            msg.PaymentLink,
+		TemplateVariableValues: msg.TemplateVariableValues,
 	}
 	channelHelper.PopulateSmsFields(&req, templateData)
 

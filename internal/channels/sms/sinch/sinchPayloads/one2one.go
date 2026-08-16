@@ -56,6 +56,9 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 }
 
 func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, error) {
+	if err := overlayPositionalTemplateValues(&data); err != nil {
+		return "", err
+	}
 	keys := strings.Split(data.TemplateVariables, ",")
 	variableMap := map[string]string{
 		"EmiAmount":         data.EmiAmount,
@@ -149,6 +152,51 @@ func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 		return "", replacementErr
 	}
 	return text, nil
+}
+
+// overlayPositionalTemplateValues fills named fields from CommMarketingInput.VariablesValue.
+// ZapCash/legacy already set CustomerName/PaymentLink/etc and leave TemplateVariableValues empty.
+func overlayPositionalTemplateValues(data *extapimodels.SmsRequestBody) error {
+	if data == nil || strings.TrimSpace(data.TemplateVariableValues) == "" {
+		return nil
+	}
+	keys := splitCSV(data.TemplateVariables)
+	values := splitCSV(data.TemplateVariableValues)
+	if len(keys) != len(values) {
+		return fmt.Errorf("template variable count does not match supplied values")
+	}
+	for i, key := range keys {
+		value := values[i]
+		switch strings.ToLower(key) {
+		case "customername":
+			data.CustomerName = value
+		case "emiamount":
+			data.EmiAmount = value
+		case "loanid", "applicationnumber":
+			data.LoanId = value
+			data.ApplicationNumber = value
+		case "duedate":
+			data.DueDate = value
+		case "description":
+			data.Description = value
+		case "paymentlink", "link":
+			data.PaymentLink = value
+		default:
+			return fmt.Errorf("unsupported template variable: %s", key)
+		}
+	}
+	return nil
+}
+
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
 }
 
 func SinchSMSCredentials(client string, config models.Config) (username, password, appID, sender string, err error) {
