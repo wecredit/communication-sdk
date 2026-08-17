@@ -42,11 +42,10 @@ func LoadSDKConfigs() (*sns.SNS, error) {
 		}
 	}
 
-	// Initiate Default quueue client
-	client, err := queue.GetSdkSnsClient(SdkConfigs.AWSRegion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize SDK Client: %v", err)
+	// Initiate SNS + SQS clients (SQS needed for WeCredit SMS direct enqueue).
+	if err := queue.InitAWSClients(SdkConfigs.AWSRegion); err != nil {
+		return nil, fmt.Errorf("failed to initialize SDK AWS clients: %v", err)
 	}
 
-	return client, nil
+	return queue.SNSClient, nil
 }

@@ -24,7 +24,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 	if !found {
 		return false, errors.New("template data not found in cache")
 	}
-	templateData, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
+	templateData, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
 		return true, nil // message processed but not sent as Template not found

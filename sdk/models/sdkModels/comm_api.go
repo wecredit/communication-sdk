@@ -26,6 +26,19 @@ type CommApiRequestBody struct {
 	TodayPayableAmount  string   `json:"todayPayableAmount,omitempty" gorm:"-"` // today payable amount for the message
 	SavingAmount        string   `json:"savingAmount,omitempty" gorm:"-"`       // savings amount for the message
 	BounceCharge        string   `json:"bounceCharge,omitempty" gorm:"-"`       // bounce charge for the message
+	// TemplateReference is set only for CommMarketingInput dispatch rows; when present the SDK
+	// resolves TemplateDetails by DltTemplateId (SMS) or TemplateName (other channels).
+	TemplateReference string `json:"templateReference,omitempty" gorm:"-"`
+	// TemplateVariableValues is the positional CSV from CommMarketingInput.VariablesValue.
+	// ZapCash/CreditSea/Olyv/SnapIt leave this empty; they already send named fields.
+	TemplateVariableValues string `json:"templateVariableValues,omitempty" gorm:"-"`
+	// EventId is an optional durable duplicate-prevention identity (e.g. marketing-<rowId>).
+	// It is not CommId — CommId stays WC-<CLIENT>-UUID-ts like ZapCash/legacy when empty.
+	EventId string `json:"eventId,omitempty" gorm:"-"`
+	// Source and SourceRowId identify the CommMarketingInput row for WeCredit SMS single-hop.
+	// Poller sets Source=marketing and SourceRowId=CommMarketingInput.Id. ZapCash/legacy leave both empty.
+	Source      string `json:"source,omitempty" gorm:"-"`
+	SourceRowId int64  `json:"sourceRowId,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {

@@ -13,7 +13,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-// RetryApiCall handles retries for an API call
+// RetryApiCall handles retries for an API call using the shared HTTP client/transport.
 func RetryApiCall(
 	method, apiURL string,
 	headers map[string]string,
@@ -23,51 +23,52 @@ func RetryApiCall(
 	retryMax int,
 	retryWaitMin, retryWaitMax time.Duration,
 ) (map[string]interface{}, error) {
-	client := retryablehttp.NewClient()
-	client.RetryMax = retryMax
-	client.RetryWaitMin = retryWaitMin
-	client.RetryWaitMax = retryWaitMax
+	client := SharedHTTPClient(retryMax, retryWaitMin, retryWaitMax)
 
-	var bodyBuffer *bytes.Buffer
-	// Prepare the request body
-	if reqType == variables.ContentTypeFormEncoded {
-		formData, ok := data.(map[string]string)
-		if !ok {
-			return nil, fmt.Errorf("data must be of type map[string]string for form encoding")
+	var bodyReader io.Reader
+	if method != "GET" && method != "get" {
+		switch reqType {
+		case variables.ContentTypeFormEncoded:
+			formData, ok := data.(map[string]string)
+			if !ok {
+				return nil, fmt.Errorf("data must be of type map[string]string for form encoding")
+			}
+			formValues := url.Values{}
+			for key, value := range formData {
+				formValues.Set(key, value)
+			}
+			bodyReader = bytes.NewBufferString(formValues.Encode())
+		case variables.ContentTypeText:
+			rawData, ok := data.(string)
+			if !ok {
+				return nil, fmt.Errorf("data must be a string for Content-Type text/plain")
+			}
+			bodyReader = bytes.NewBufferString(rawData)
+		default:
+			if data == nil {
+				bodyReader = bytes.NewBuffer(nil)
+			} else {
+				jsonData, err := json.Marshal(data)
+				if err != nil {
+					return nil, fmt.Errorf("error marshalling data: %v", err)
+				}
+				bodyReader = bytes.NewBuffer(jsonData)
+			}
 		}
-		formValues := url.Values{}
-		for key, value := range formData {
-			formValues.Set(key, value)
-		}
-		bodyBuffer = bytes.NewBufferString(formValues.Encode())
-	} else if reqType == variables.ContentTypeText {
-		rawData, ok := data.(string)
-		if !ok {
-			return nil, fmt.Errorf("data must be a string for Content-Type text/plain")
-		}
-		bodyBuffer = bytes.NewBufferString(rawData)
-	} else {
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			return nil, fmt.Errorf("error marshalling data: %v", err)
-		}
-		bodyBuffer = bytes.NewBuffer(jsonData)
 	}
 
-	// Create the request based on the HTTP method
 	var req *retryablehttp.Request
 	var err error
 	switch method {
 	case "POST", "post":
-		req, err = retryablehttp.NewRequest(http.MethodPost, apiURL, bodyBuffer)
+		req, err = retryablehttp.NewRequest(http.MethodPost, apiURL, bodyReader)
 	case "PUT", "put":
-		req, err = retryablehttp.NewRequest(http.MethodPut, apiURL, bodyBuffer)
+		req, err = retryablehttp.NewRequest(http.MethodPut, apiURL, bodyReader)
 	case "GET", "get":
 		req, err = retryablehttp.NewRequest(http.MethodGet, apiURL, nil)
 	default:
 		return nil, fmt.Errorf("invalid HTTP method: %s", method)
 	}
-
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
@@ -103,34 +104,15 @@ func RetryApiCall(
 
 	// Parse JSON response
 	var result map[string]interface{}
-	err = json.Unmarshal(body, &result)
-	if err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshalling response: %v", err)
 	}
-	Info(fmt.Sprintf("API_RESPONSE: %v", result))
+	Info(fmt.Sprintf("API_RESPONSE status=%d keys=%d", resp.StatusCode, len(result)))
 	result["ApistatusCode"] = int(resp.StatusCode)
 	return result, nil
 }
 
-// ApiHit makes an API call with optional retries
+// ApiHit makes an API call using the shared HTTP client (no per-call goroutine/client).
 func ApiHit(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int) (map[string]interface{}, error) {
-	// Handle retry logic in a goroutine
-	resultChan := make(chan map[string]interface{})
-	errChan := make(chan error)
-	go func() {
-		result, err := RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0*time.Second, 0*time.Second) //TODO: Retry api call is paused for now
-		if err != nil {
-			errChan <- err
-			return
-		}
-		resultChan <- result
-	}()
-
-	// Wait for the result or error
-	select {
-	case result := <-resultChan:
-		return result, nil
-	case err := <-errChan:
-		return nil, err
-	}
+	return RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0, 0)
 }

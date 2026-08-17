@@ -34,7 +34,7 @@ func main() {
 
 	// All stage values
 	stages := []float64{
-		11.01,
+		// 11.01,
 		// 1.01, 1.02, 1.03, 1.04, 1.05,
 		// 2.01, 2.02, 2.03, 2.04, 2.05, 2.06, 2.07, 2.08,
 		// 3.01, 3.02,
@@ -43,7 +43,8 @@ func main() {
 		// 6.01, 6.02, 6.03, 6.04,
 		// 7.01, 7.02, 7.03, 7.04,
 		// 8.01, 8.02, 8.03, 8.04,
-		// 9.01, 9.02, 9.03, 9.04, 9.05,
+		9.01,
+		// 9.02, 9.03, 9.04, 9.05,
 		// 10.01, 10.02, 10.03, 10.04, 10.05,
 		// 11.01, 11.02, 11.03, 11.04, 11.05, 11.06, 11.07,
 		// 12.01, 12.02, 12.03, 12.04, 12.05, 12.06, 12.07, 12.08, 12.09, 12.10,
@@ -65,7 +66,7 @@ func main() {
 		request := &sdkModels.CommApiRequestBody{
 			DbClient:           database.DBtechWrite,
 			InputTableName:     "RcsInputAuditTable",
-			Mobile:             "9220146969",
+			Mobile:             "7014850582",
 			Email:              "nikhil@wecredit.co.in",
 			Channel:            "RCS",
 			ProcessName:        "ZAPCASH",

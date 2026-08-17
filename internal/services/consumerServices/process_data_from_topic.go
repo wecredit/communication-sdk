@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
 
-	// "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
@@ -27,13 +28,15 @@ import (
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
+	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 type MessageWrapper struct {
-	Message *sqs.Message
-	Payload sdkModels.CommApiRequestBody
+	Message  *sqs.Message
+	Payload  sdkModels.CommApiRequestBody
+	QueueURL string
 }
 
 type clientRoutine struct {
@@ -44,30 +47,81 @@ type clientRoutine struct {
 }
 
 var (
-	clientHandlers           = make(map[string]*clientRoutine)
-	clientMux                sync.Mutex
-	defaultClientWorkerCount = 5
+	clientHandlers = make(map[string]*clientRoutine)
+	clientMux      sync.Mutex
 )
 
-func ConsumerService(workerCount int, queueURL string) {
+const (
+	defaultClientWorkers = 5
+	defaultClientBuffer  = 100
+	maxClientWorkers     = 500
+	maxClientBuffer      = 10000
+)
+
+func ConsumerQueueURLs() []string {
+	seen := make(map[string]struct{})
+	urls := make([]string, 0, 2)
+	add := func(raw string) {
+		u := strings.TrimSpace(raw)
+		if u == "" {
+			return
+		}
+		if _, ok := seen[u]; ok {
+			return
+		}
+		seen[u] = struct{}{}
+		urls = append(urls, u)
+	}
+	// Legacy SNS→SQS priority/non-priority subscription queue.
+	add(config.Configs.AwsQueueUrl)
+	// WeCredit SMS SQS-direct publish target (validate-client + Send).
+	add(config.Configs.AwsWeCreditSmsQueueUrl)
+	return urls
+}
+
+// ConsumerService long-polls every configured SDK work queue and routes into shared
+// per-client worker pools. Each work item carries its originating queue URL so
+// DeleteMessage targets the queue the message was received from.
+func ConsumerService(_ string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go handleShutdown(cancel)
 
+	queueURLs := ConsumerQueueURLs()
+	if len(queueURLs) == 0 {
+		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL)"))
+		return
+	}
+	for _, queueURL := range queueURLs {
+		url := queueURL
+		utils.Info(fmt.Sprintf("starting communication SQS consumer for queue: %s", url))
+		go pollCommunicationQueue(ctx, url)
+	}
+
+	<-ctx.Done()
+	utils.Warn("Context cancelled. Shutting down all client handlers.")
+	clientMux.Lock()
+	handlers := make([]*clientRoutine, 0, len(clientHandlers))
+	clients := make([]string, 0, len(clientHandlers))
+	for client, handler := range clientHandlers {
+		handler.closeOnce.Do(func() {
+			close(handler.msgChan)
+		})
+		handlers = append(handlers, handler)
+		clients = append(clients, client)
+	}
+	clientMux.Unlock()
+	for i, handler := range handlers {
+		handler.wg.Wait()
+		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", clients[i]))
+	}
+}
+
+func pollCommunicationQueue(ctx context.Context, queueURL string) {
 	for {
 		select {
 		case <-ctx.Done():
-			utils.Warn("Context cancelled. Shutting down all client handlers.")
-			clientMux.Lock()
-			for client, handler := range clientHandlers {
-				handler.closeOnce.Do(func() {
-					close(handler.msgChan)
-				})
-				handler.wg.Wait()
-				utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", client))
-			}
-			clientMux.Unlock()
 			return
 		default:
 			result, err := queue.SQSClient.ReceiveMessage(&sqs.ReceiveMessageInput{
@@ -77,7 +131,7 @@ func ConsumerService(workerCount int, queueURL string) {
 				VisibilityTimeout:   aws.Int64(300),
 			})
 			if err != nil {
-				utils.Error(fmt.Errorf("error receiving messages: %v", err))
+				utils.Error(fmt.Errorf("error receiving messages from %s: %v", queueURL, err))
 				continue
 			}
 
@@ -88,7 +142,7 @@ func ConsumerService(workerCount int, queueURL string) {
 			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
-				go routeMessageToClient(ctx, msg, queueURL)
+				routeMessageToClient(ctx, msg, queueURL)
 			}
 		}
 	}
@@ -101,46 +155,96 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		}
 	}()
 
-	var snsWrapper awsModels.SnsMessageWrapper
-	if err := json.Unmarshal([]byte(*msg.Body), &snsWrapper); err != nil {
-		utils.Error(fmt.Errorf("failed to unmarshal SNS wrapper: %v", err))
-		return
-	}
-
-	var data sdkModels.CommApiRequestBody
-	if err := json.Unmarshal([]byte(snsWrapper.Message), &data); err != nil {
-		utils.Error(fmt.Errorf("failed to unmarshal inner message: %v", err))
+	data, err := parseSQSCommPayload(*msg.Body)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to parse SQS message body: %v", err))
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, sdkModels.CommApiRequestBody{}); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete unparseable SQS message: %v", delErr))
+		}
 		return
 	}
 
 	client := strings.ToLower(data.Client)
 	if client == "" {
 		utils.Warn("Empty client found in payload. Skipping.")
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, data); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete SQS message with empty client: %v", delErr))
+		}
 		return
 	}
 
 	clientMux.Lock()
 	handler, exists := clientHandlers[client]
 	if !exists {
+		workerCount := ClientWorkerCount(client)
+		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
-			msgChan: make(chan MessageWrapper, 100),
+			msgChan: make(chan MessageWrapper, bufferSize),
 			wg:      &sync.WaitGroup{},
-			workers: defaultClientWorkerCount,
+			workers: workerCount,
 		}
 		clientHandlers[client] = handler
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, queueURL, handler.wg)
+			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for client: %s", handler.workers, client))
 	}
 	clientMux.Unlock()
 
-	handler.msgChan <- MessageWrapper{Message: msg, Payload: data}
+	handler.msgChan <- MessageWrapper{Message: msg, Payload: data, QueueURL: queueURL}
 }
 
-func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, queueURL string, wg *sync.WaitGroup) {
+// parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
+func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
+	var data sdkModels.CommApiRequestBody
+
+	var snsWrapper awsModels.SnsMessageWrapper
+	if err := json.Unmarshal([]byte(body), &snsWrapper); err == nil && strings.TrimSpace(snsWrapper.Message) != "" {
+		if err := json.Unmarshal([]byte(snsWrapper.Message), &data); err != nil {
+			return data, fmt.Errorf("inner SNS message: %w", err)
+		}
+		return data, nil
+	}
+
+	if err := json.Unmarshal([]byte(body), &data); err != nil {
+		return data, err
+	}
+	if strings.TrimSpace(data.Client) == "" && strings.TrimSpace(data.Channel) == "" {
+		return data, fmt.Errorf("unrecognized SQS body (not SNS envelope or CommApiRequestBody)")
+	}
+	return data, nil
+}
+
+func ClientWorkerCount(client string) int {
+	workers := boundedConsumerConfigInt(config.Configs.ConsumerDefaultClientWorkers, defaultClientWorkers, maxClientWorkers)
+	client = strings.ToLower(strings.TrimSpace(client))
+	for _, entry := range strings.Split(config.Configs.ConsumerClientWorkerOverrides, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		value, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err == nil && value > 0 && value <= maxClientWorkers {
+			return value
+		}
+	}
+	return workers
+}
+
+func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 1 {
+		return fallback
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", client, r))
@@ -163,7 +267,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				<-timeout.C
 			}
 			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, queueURL, msgWrapper)
+			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
 			// Note: Message deletion is handled inside processMessage and channel handlers
 			// Only delete here if processMessage explicitly indicates it should be deleted
 			// but wasn't already deleted (e.g., on fatal errors)
@@ -174,7 +278,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				// For now, we let SQS handle retries via visibility timeout
 				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
 			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload)
+				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
 				if !deleted {
 					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 				}
@@ -324,7 +428,11 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if err != nil {
 			utils.Error(fmt.Errorf("redis error: %v", err))
 		}
-		data.Vendor = variables.SINCH
+		if strings.TrimSpace(data.Vendor) == "" {
+			data.Vendor = variables.SINCH
+		} else if !AssignVendor(&data) {
+			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+		}
 		if count > maxCountInt {
 			utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
 			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, map[string]interface{}{
@@ -343,7 +451,9 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
-		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
+		if !AssignVendor(&data) {
+			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+		}
 	}
 	var deleted bool
 	var delErr error
@@ -385,7 +495,9 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
 	isMessageProcessed, err := rcs.SendRcsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
@@ -412,38 +524,107 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 }
 
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
-	// if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into sms input table for mobile %s: %v", data.Mobile, err))
-	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
-	isMessageProcessed, dbMappedData, err := sms.SendSmsByProcess(data)
+	marketing := isMarketingSMSDispatch(data)
+
+	if marketing {
+		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingSMS(data)
+		if claimErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] marketing SMS redis claim failed: %v", data.Client, data.EventId, claimErr))
+			return false, false
+		}
+
+		if skipSend {
+			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
+				return false, false
+			}
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete duplicate in-flight marketing SMS: %v", delErr))
+			}
+			return true, deleted
+		}
+
+		if campaignDuplicate {
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
+				"", campaignDuplicateError(data)); trackErr != nil {
+				return false, false
+			}
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete campaign-duplicate marketing SMS: %v", delErr))
+			}
+			return true, deleted
+		}
+
+		data.CommId = sdkServices.ResolveCommID(data.CommId, data.Client)
+	}
+
+	if !AssignVendor(&data) {
+		if marketing {
+			if updErr := channelHelper.UpdateRedisErrorMessage(data, "requested vendor is not active"); updErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record inactive vendor in redis: %v", data.Client, data.EventId, updErr))
+				return false, false
+			}
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active"); trackErr != nil {
+				return false, false
+			}
+		}
+		// Terminal FAILED: keep Redis claims so a replay does not hit the vendor again
+		// after tracking already exists.
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	if marketing {
+		dbMappedData["CommId"] = data.CommId
+		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting sms input audit: %v", data.Client, data.CommId, err))
+		}
+	}
+
+	result, err := sms.SendSmsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
-		// If processing failed, don't delete message - let it retry after visibility timeout
-		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
-		if isMessageProcessed {
+		if marketing && result.AckSQS {
+			if trackErr := recordMarketingSMSTrackingFromSend(data, result, err); trackErr != nil {
+				return false, false
+			}
+		}
+
+		if result.Processed && result.AckSQS {
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial SMS processing: %v", delErr))
 			}
+		} else if marketing && !result.AckSQS {
+			releaseMarketingSMSClaims(data)
 		}
-		return isMessageProcessed, deleted
+		return result.Processed, deleted
 	}
 
-	if isMessageProcessed {
+	if marketing && result.AckSQS {
+		if trackErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackErr != nil {
+			return false, false
+		}
+	} else if marketing && !result.AckSQS {
+		releaseMarketingSMSClaims(data)
+	}
+
+	if result.AckSQS {
 		deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
-			utils.Error(fmt.Errorf("failed to delete message after successful SMS processing: %v", err))
+			utils.Error(fmt.Errorf("failed to delete message after SMS processing: %v", err))
 		}
+	} else {
+		utils.Info(fmt.Sprintf("[Client:%s CommId:%s] retaining SQS message for non-terminal SMS outcome", data.Client, data.CommId))
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
 	}
 
-	return isMessageProcessed, deleted
+	return result.Processed, deleted
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
@@ -455,7 +636,9 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	// }
 	var deleted bool
 	var delErr error
-	AssignVendor(&data)
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
 	isMessageProcessed, dbMappedData, err := email.SendEmailByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending Email: %v", data.Client, data.CommId, err))
@@ -531,11 +714,152 @@ func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg
 	return false, err
 }
 
-func AssignVendor(data *sdkModels.CommApiRequestBody) {
+func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
+	requestedVendor := strings.ToUpper(strings.TrimSpace(data.Vendor))
+	if requestedVendor != "" {
+		data.Vendor = requestedVendor
+		if channelHelper.IsVendorActive(data.Client, requestedVendor, data.Channel) {
+			utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+			return true
+		}
+		utils.Error(fmt.Errorf("requested vendor is not active for client: %s, channel: %s, commId: %s", data.Client, data.Channel, data.CommId))
+		return false
+	}
+
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
+	return true
+}
+
+func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
+	}
+	return true, deleted
+}
+
+func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
+	return strings.EqualFold(strings.TrimSpace(data.Source), "marketing") && data.SourceRowId != 0
+}
+
+func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	exists, txn, errMsg, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	if err != nil {
+		return false, false, "", "", err
+	}
+
+	if exists {
+		return true, false, txn, errMsg, nil
+	}
+
+	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
+		if strings.Contains(setErr.Error(), "already exists") {
+			_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			if getErr != nil {
+				return false, false, "", "", getErr
+			}
+			return true, false, txn, errMsg, nil
+		}
+		return false, false, "", "", setErr
+	}
+	if !channelHelper.IsMarketingCampaignRequest(data) {
+		return false, false, "", "", nil
+	}
+
+	eventID := strings.TrimSpace(data.EventId)
+	campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(data)
+	claimed, claimErr := redis.ClaimMarketingCampaignDedupKey(redis.RDB, campaignKey, eventID)
+	if claimErr != nil {
+		_ = redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+		return false, false, "", "", claimErr
+	}
+	if claimed {
+		return false, false, "", "", nil
+	}
+	if redis.RDB != nil {
+		existing, getErr := redis.RDB.Get(context.Background(), campaignKey).Result()
+		if getErr == nil && strings.TrimSpace(existing) == eventID {
+			return false, false, "", "", nil
+		}
+	}
+	return false, true, "", "", nil
+}
+
+func releaseMarketingSMSClaims(data sdkModels.CommApiRequestBody) {
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	_, _ = redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+	if channelHelper.IsMarketingCampaignRequest(data) {
+		_ = redis.ReleaseMarketingCampaignDedupKey(redis.RDB, channelHelper.GenerateMarketingCampaignDedupKey(data))
+	}
+}
+
+func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
+	return fmt.Sprintf("campaign duplicate: channel %s process %s event_id %s already sent today",
+		strings.ToUpper(strings.TrimSpace(data.Channel)),
+		strings.ToLower(strings.TrimSpace(data.ProcessName)),
+		strings.TrimSpace(data.EventId))
+}
+
+// recordMarketingSMSTrackingFromRedisSkip writes tracking when Redis already has a
+// terminal result from an earlier send (no vendor call). Blank Redis is in-flight:
+// the first copy still owns the tracking insert.
+func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) error {
+	txn := strings.TrimSpace(redisTxn)
+	errMsg := strings.TrimSpace(redisErr)
+	if txn == "" && errMsg == "" {
+		return nil
+	}
+	outcome := database.DispatchTrackingSent
+	if txn == "" {
+		outcome = database.DispatchTrackingFailed
+	} else {
+		errMsg = ""
+	}
+	return recordMarketingSMSTracking(data, outcome, txn, errMsg)
+}
+
+func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) error {
+	txn, _ := result.DBData["TransactionId"].(string)
+	errMsg, _ := result.DBData["ResponseMessage"].(string)
+	if sendErr != nil && errMsg == "" {
+		errMsg = sendErr.Error()
+	}
+	status := database.DispatchTrackingFailed
+	if result.DBData["IsSent"] == 1 {
+		status = database.DispatchTrackingSent
+		errMsg = ""
+	}
+	return recordMarketingSMSTracking(data, status, txn, errMsg)
+}
+
+func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+		Source:            data.Source,
+		SourceRowId:       data.SourceRowId,
+		Channel:           "SMS",
+		Client:            data.Client,
+		Vendor:            data.Vendor,
+		Process:           data.ProcessName,
+		EventId:           data.EventId,
+		CommId:            data.CommId,
+		TransactionId:     transactionId,
+		Outcome:           outcome,
+		ErrorMessage:      errorMessage,
+		TemplateReference: data.TemplateReference,
+	})
+	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
+		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
+		return nil
+	}
+	if err != nil {
+		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
+		return err
+	}
+	return nil
 }

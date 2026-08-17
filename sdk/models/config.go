@@ -24,6 +24,14 @@ type Config struct {
 	DbMaxIdleConns    string `envconfig:"DB_MAX_IDLE_CONNS"`
 	DbConnMaxLifetime string `envconfig:"DB_CONN_MAX_LIFETIME_MINUTES"`
 
+	// Marketing SQL Server (same DB as CommMarketingInput / dbo.CommDispatchTracking).
+	DbServerMarketing         string `envconfig:"DB_SERVER_MARKETING"`
+	DbPortMarketing           string `envconfig:"DB_PORT_MARKETING"`
+	DbUserMarketing           string `envconfig:"DB_USER_MARKETING"`
+	DbPasswordMarketing       string `envconfig:"DB_PASSWORD_MARKETING"`
+	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
+	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
+
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
 	QueueTopicName        string `envconfig:"AZURE_TOPIC_NAME"`
@@ -31,10 +39,14 @@ type Config struct {
 	BasicAuthApiUrl       string `envconfig:"BASIC_AUTH_API_URL"`
 
 	// AWS Credentials
-	AWSRegion        string `envconfig:"AWS_REGION"`
-	AwsSnsArn        string `envconfig:"AWS_COMM_TOPIC_ARN"`
-	AwsQueueUrl      string `envconfig:"AWS_QUEUE_URL"`
-	AwsErrorQueueUrl string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
+	AWSRegion string `envconfig:"AWS_REGION"`
+	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
+	// WeCredit SMS: prefer SQS-direct (plan A). When set, SDK Send skips SNS for wecredit+SMS.
+	AwsWeCreditSmsQueueUrl string `envconfig:"AWS_WECREDIT_SMS_QUEUE_URL"`
+	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
+	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
+	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
+	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
@@ -104,10 +116,18 @@ type Config struct {
 	SinchSmsApiUrl       string `envconfig:"SINCH_SMS_API_URL"`
 
 	// CreditSea Sinch SMS API Variables
-	CreditSeaSinchSmsApiAppID    string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
-	CreditSeaSinchSmsApiUserName string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
-	CreditSeaSinchSmsApiPassword string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
-	CreditSeaSinchSmsApiSender   string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+	CreditSeaSinchSmsApiAppID     string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
+	CreditSeaSinchSmsApiUserName  string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
+	CreditSeaSinchSmsApiPassword  string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
+	CreditSeaSinchSmsApiSender    string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+	ConsumerDefaultClientWorkers  string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
+	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
+	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
+
+	// Per-provider SMS outbound rate limits (token bucket; no external deps).
+	// Overrides format: vendor:client:rps or vendor:rps (comma-separated).
+	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
+	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
@@ -124,4 +144,9 @@ type Config struct {
 	PinnacleZapcashRcsTransactionalBotId string `envconfig:"PINNACLE_ZAPCASH_RCS_TRANSACTIONAL_BOT_ID"`
 	PinnacleZapcashRcsPromotionalBotId   string `envconfig:"PINNACLE_ZAPCASH_RCS_PROMOTIONAL_BOT_ID"`
 	PinnacleZapcashRcsTtl                string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
+
+	// Pinnacle SMS API
+	PinnacleSmsApiUrl      string `envconfig:"PINNACLE_SMS_API_URL"`
+	PinnacleSmsAccessKey   string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
+	PinnacleSmsDltEntityId string `envconfig:"PINNACLE_SMS_DLT_ENTITY_ID"`
 }

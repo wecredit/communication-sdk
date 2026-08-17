@@ -14,19 +14,28 @@ type TimesAPIModel struct {
 }
 
 type SmsRequestBody struct {
-	Client            string
-	Process           string
-	DltTemplateId     int64
-	TemplateText      string
-	TemplateCategory  string
-	TemplateVariables string
-	Mobile            string
-	EmiAmount         string
-	CustomerName      string
-	LoanId            string
-	ApplicationNumber string
-	DueDate           string
-	Description       string
+	Client            string `json:"Client"`
+	Process           string `json:"Process"`
+	Channel           string `json:"Channel,omitempty"`
+	CommId            string `json:"CommId,omitempty"`
+	Vendor            string `json:"Vendor,omitempty"`
+	DltTemplateId     int64  `json:"DltTemplateId,omitempty"`
+	TemplateEntityId  string `json:"TemplateEntityId,omitempty"`
+	TemplateHeader    string `json:"TemplateHeader,omitempty"`
+	TemplateText      string `json:"TemplateText,omitempty"`
+	TemplateCategory  string `json:"TemplateCategory,omitempty"`
+	TemplateVariables string `json:"TemplateVariables,omitempty"`
+	Mobile            string `json:"Mobile,omitempty"`
+	EmiAmount         string `json:"EmiAmount,omitempty"`
+	CustomerName      string `json:"CustomerName,omitempty"`
+	LoanId            string `json:"LoanId,omitempty"`
+	ApplicationNumber string `json:"ApplicationNumber,omitempty"`
+	DueDate           string `json:"DueDate,omitempty"`
+	Description       string `json:"Description,omitempty"`
+	PaymentLink       string `json:"PaymentLink,omitempty"`
+	// TemplateVariableValues is optional positional CSV (CommMarketingInput.VariablesValue).
+	// ZapCash/legacy leave this empty and already set named fields above.
+	TemplateVariableValues string `json:"TemplateVariableValues,omitempty"`
 }
 
 type SmsResponse struct {
@@ -37,6 +46,7 @@ type SmsResponse struct {
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 	MobileNumber    string `json:"mobileNumber" gorm:"MobileNumber"`
+	Outcome         string `json:"ProviderOutcome,omitempty" gorm:"-"`
 }
 
 type WhatsappRequestBody struct {

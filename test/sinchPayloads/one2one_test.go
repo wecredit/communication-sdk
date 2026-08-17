@@ -1,0 +1,125 @@
+package sinchPayloads_test
+
+import (
+	"testing"
+
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	sinchSmsPayload "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
+	models "github.com/wecredit/communication-sdk/sdk/models"
+)
+
+func TestGetTemplatePayloadUsesTemplateHeader(t *testing.T) {
+	config := models.Config{
+		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password",
+		SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRPL",
+	}
+	payload, err := sinchSmsPayload.GetTemplatePayload(extapimodels.SmsRequestBody{
+		Client: "wecredit", Process: "fatakpay", Description: "test",
+		TemplateHeader: "WECRQT", DltTemplateId: 1707177200722881790,
+		TemplateCategory: "3", TemplateText: "hello", Mobile: "9876543210",
+	}, config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["from"] != "WECRQT" {
+		t.Fatalf("from = %v, want WECRQT", payload["from"])
+	}
+}
+
+func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Apply here {#var#} WeCredit",
+		TemplateVariables: "PaymentLink",
+		PaymentLink:       "https://example.com/apply",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Apply here https://example.com/apply WeCredit" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestApplySinchTemplateVariablesUsesPositionalCsv(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "Hi {#var#} pay {#var#}",
+		TemplateVariables:      "CustomerName,PaymentLink",
+		TemplateVariableValues: "Asha, https://pay.example/1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Hi Asha pay https://pay.example/1" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestApplySinchTemplateVariablesNamedFieldsWinWhenCsvEmpty(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Hi {#var#}",
+		TemplateVariables: "CustomerName",
+		CustomerName:      "ZapCash User",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Hi ZapCash User" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestApplySinchTemplateVariablesRejectsPlaceholderCountMismatch(t *testing.T) {
+	_, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Hi {#var#} then {#var#}",
+		TemplateVariables: "CustomerName",
+		CustomerName:      "Asha",
+	})
+	if err == nil {
+		t.Fatal("expected placeholder/key count mismatch")
+	}
+}
+
+func TestOverlayKeepsLoanIdAndApplicationNumberDistinct(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "loan {#var#} app {#var#}",
+		TemplateVariables:      "LoanId,ApplicationNumber",
+		TemplateVariableValues: "L-1,A-9",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "loan L-1 app A-9" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestSinchSMSCredentialsByClient(t *testing.T) {
+	config := models.Config{
+		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password", SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRED",
+		CreditSeaSinchSmsApiUserName: "creditsea-user", CreditSeaSinchSmsApiPassword: "creditsea-password", CreditSeaSinchSmsApiAppID: "creditsea-app", CreditSeaSinchSmsApiSender: "CRDSEA",
+	}
+
+	for _, test := range []struct{ client, wantUser string }{
+		{"wecredit", "wecredit-user"},
+		{"creditsea", "creditsea-user"},
+	} {
+		t.Run(test.client, func(t *testing.T) {
+			username, _, _, _, err := sinchSmsPayload.SinchSMSCredentials(test.client, config)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if username != test.wantUser {
+				t.Fatalf("got username %q, want %q", username, test.wantUser)
+			}
+		})
+	}
+}
+
+func TestSinchSMSCredentialsRejectUnknownOrIncompleteClient(t *testing.T) {
+	if _, _, _, _, err := sinchSmsPayload.SinchSMSCredentials("unknown", models.Config{}); err == nil {
+		t.Fatal("expected unknown client to be rejected")
+	}
+	if _, _, _, _, err := sinchSmsPayload.SinchSMSCredentials("creditsea", models.Config{}); err == nil {
+		t.Fatal("expected incomplete credentials to be rejected")
+	}
+}

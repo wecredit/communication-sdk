@@ -26,16 +26,22 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 	if c.Channel != msg.Channel {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("channel mismatch: expected %s, got %s", c.Channel, msg.Channel)
 	}
-	if c.AwsSnsClient == nil || c.TopicArn == "" {
-		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("aws sns client or topic arn not initialized")
-	}
-
-	msg.Client = c.ClientName
 	if c.RedisClient == nil {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis client not initialized")
 	}
 
-	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, c.TopicArn, c.RedisClient)
+	msg.Client = c.ClientName
+
+	queueURL := strings.TrimSpace(c.QueueURL)
+	topicArn := strings.TrimSpace(c.TopicArn)
+	if queueURL == "" && topicArn == "" {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("aws enqueue target not initialized (queue URL or SNS topic ARN)")
+	}
+	if queueURL == "" && c.AwsSnsClient == nil {
+		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("aws sns client not initialized")
+	}
+
+	response, err := sdkServices.ProcessCommApiData(msg, c.AwsSnsClient, topicArn, queueURL, c.RedisClient)
 	if err != nil {
 		utils.Error(fmt.Errorf("error in processing message for mobile %s and channel %s for stage %f: %v", msg.Mobile, msg.Channel, msg.Stage, err))
 		return &sdkModels.CommApiResponseBody{Success: false}, err
