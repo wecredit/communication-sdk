@@ -3,7 +3,6 @@ package cache
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -188,7 +187,7 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
 }
 
-// parseStageFloat converts TemplateDetails.Stage from common DB/driver shapes to float64.
+// parseStageFloat converts TemplateDetails.Stage after GetDataFromTable (float64, or int64 for whole stages).
 // NULL Stage values are common for TemplateName-keyed rows and must not panic cache init.
 func parseStageFloat(val interface{}) (float64, error) {
 	if val == nil {
@@ -197,26 +196,8 @@ func parseStageFloat(val interface{}) (float64, error) {
 	switch v := val.(type) {
 	case float64:
 		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
 	case int64:
 		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot parse Stage string %q: %w", v, err)
-		}
-		return f, nil
-	case []byte:
-		f, err := strconv.ParseFloat(strings.TrimSpace(string(v)), 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot parse Stage bytes %q: %w", string(v), err)
-		}
-		return f, nil
 	default:
 		return 0, fmt.Errorf("unsupported Stage type %T", val)
 	}
