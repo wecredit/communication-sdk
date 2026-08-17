@@ -75,7 +75,11 @@ func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 	var replacementErr error
 
 	text := re.ReplaceAllStringFunc(data.TemplateText, func(_ string) string {
-		if keyIndex >= len(keys) || replacementErr != nil {
+		if replacementErr != nil {
+			return ""
+		}
+		if keyIndex >= len(keys) {
+			replacementErr = fmt.Errorf("template has more {#var#} placeholders than TemplateVariables entries")
 			return ""
 		}
 
@@ -172,8 +176,9 @@ func overlayPositionalTemplateValues(data *extapimodels.SmsRequestBody) error {
 			data.CustomerName = value
 		case "emiamount":
 			data.EmiAmount = value
-		case "loanid", "applicationnumber":
+		case "loanid":
 			data.LoanId = value
+		case "applicationnumber":
 			data.ApplicationNumber = value
 		case "duedate":
 			data.DueDate = value

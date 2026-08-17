@@ -89,16 +89,22 @@ func TestIsMarketingCampaignRequest(t *testing.T) {
 func TestGenerateMarketingCampaignDedupKey(t *testing.T) {
 	base := sdkModels.CommApiRequestBody{
 		Mobile:      "7014850582",
+		Client:      "wecredit",
 		ProcessName: "FatakPay",
 		Channel:     "sms",
 		Stage:       0,
 	}
-	if got := channelHelper.GenerateMarketingCampaignDedupKey(base); got != "7014850582_fatakpay_SMS" {
-		t.Fatalf("got %q, want 7014850582_fatakpay_SMS", got)
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(base); got != "7014850582_wecredit_fatakpay_SMS" {
+		t.Fatalf("got %q, want 7014850582_wecredit_fatakpay_SMS", got)
 	}
 	withStage := base
 	withStage.Stage = 1.02
-	if got := channelHelper.GenerateMarketingCampaignDedupKey(withStage); got != "7014850582_fatakpay_SMS_1" {
-		t.Fatalf("got %q, want 7014850582_fatakpay_SMS_1", got)
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(withStage); got != "7014850582_wecredit_fatakpay_SMS_1" {
+		t.Fatalf("got %q, want 7014850582_wecredit_fatakpay_SMS_1", got)
+	}
+	otherClient := base
+	otherClient.Client = "zapcash"
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(otherClient); got == channelHelper.GenerateMarketingCampaignDedupKey(base) {
+		t.Fatal("clients must not share a campaign dedup key")
 	}
 }

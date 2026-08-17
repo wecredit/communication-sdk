@@ -65,7 +65,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 
 	var response extapimodels.SmsResponse
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
-	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
+	utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v\n", msg.Channel, msg.CommId, shouldHitVendor))
 
 	if !shouldHitVendor {
 		response.Outcome = outcome.Skipped

@@ -34,8 +34,9 @@ import (
 )
 
 type MessageWrapper struct {
-	Message *sqs.Message
-	Payload sdkModels.CommApiRequestBody
+	Message  *sqs.Message
+	Payload  sdkModels.CommApiRequestBody
+	QueueURL string
 }
 
 type clientRoutine struct {
@@ -81,8 +82,8 @@ func ConsumerQueueURLs() []string {
 }
 
 // ConsumerService long-polls every configured SDK work queue and routes into shared
-// per-client worker pools. Polls AWS_QUEUE_URL (legacy SNS hop) and
-// AWS_WECREDIT_SMS_QUEUE_URL (WeCredit SMS direct) when both are set and distinct.
+// per-client worker pools. Each work item carries its originating queue URL so
+// DeleteMessage targets the queue the message was received from.
 // AWS_ZAPCASH_QUEUE_URL (ZapCash SMS direct) when set.
 func ConsumerService(_ string) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,14 +105,20 @@ func ConsumerService(_ string) {
 	<-ctx.Done()
 	utils.Warn("Context cancelled. Shutting down all client handlers.")
 	clientMux.Lock()
+	handlers := make([]*clientRoutine, 0, len(clientHandlers))
+	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
 		handler.closeOnce.Do(func() {
 			close(handler.msgChan)
 		})
-		handler.wg.Wait()
-		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", client))
+		handlers = append(handlers, handler)
+		clients = append(clients, client)
 	}
 	clientMux.Unlock()
+	for i, handler := range handlers {
+		handler.wg.Wait()
+		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", clients[i]))
+	}
 }
 
 func pollCommunicationQueue(ctx context.Context, queueURL string) {
@@ -154,12 +161,18 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	data, err := parseSQSCommPayload(*msg.Body)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to parse SQS message body: %v", err))
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, sdkModels.CommApiRequestBody{}); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete unparseable SQS message: %v", delErr))
+		}
 		return
 	}
 
 	client := strings.ToLower(data.Client)
 	if client == "" {
 		utils.Warn("Empty client found in payload. Skipping.")
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, data); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete SQS message with empty client: %v", delErr))
+		}
 		return
 	}
 
@@ -177,13 +190,13 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, queueURL, handler.wg)
+			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for client: %s", handler.workers, client))
 	}
 	clientMux.Unlock()
 
-	handler.msgChan <- MessageWrapper{Message: msg, Payload: data}
+	handler.msgChan <- MessageWrapper{Message: msg, Payload: data, QueueURL: queueURL}
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -234,7 +247,7 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, queueURL string, wg *sync.WaitGroup) {
+func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", client, r))
@@ -257,7 +270,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				<-timeout.C
 			}
 			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, queueURL, msgWrapper)
+			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
 			// Note: Message deletion is handled inside processMessage and channel handlers
 			// Only delete here if processMessage explicitly indicates it should be deleted
 			// but wasn't already deleted (e.g., on fatal errors)
@@ -268,7 +281,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				// For now, we let SQS handle retries via visibility timeout
 				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
 			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload)
+				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
 				if !deleted {
 					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 				}
@@ -564,7 +577,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if skipSend {
-			recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
+				return false, false
+			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete duplicate in-flight marketing SMS: %v", delErr))
@@ -573,8 +588,10 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if campaignDuplicate {
-			recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
-				"", campaignDuplicateError(data))
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
+				"", campaignDuplicateError(data)); trackErr != nil {
+				return false, false
+			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete campaign-duplicate marketing SMS: %v", delErr))
@@ -587,9 +604,16 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	if !AssignVendor(&data) {
 		if marketing {
-			recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active")
+			if updErr := channelHelper.UpdateRedisErrorMessage(data, "requested vendor is not active"); updErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record inactive vendor in redis: %v", data.Client, data.EventId, updErr))
+				return false, false
+			}
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active"); trackErr != nil {
+				return false, false
+			}
 		}
-
+		// Terminal FAILED: keep Redis claims so a replay does not hit the vendor again
+		// after tracking already exists.
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
 
@@ -604,7 +628,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		if marketing && result.AckSQS {
-			recordMarketingSMSTrackingFromSend(data, result, err)
+			if trackErr := recordMarketingSMSTrackingFromSend(data, result, err); trackErr != nil {
+				return false, false
+			}
 		}
 
 		if result.Processed && result.AckSQS {
@@ -619,7 +645,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if marketing && result.AckSQS {
-		recordMarketingSMSTrackingFromSend(data, result, nil)
+		if trackErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackErr != nil {
+			return false, false
+		}
 	} else if !result.AckSQS {
 		releaseMarketingSMSClaims(data)
 	}
@@ -815,7 +843,10 @@ func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campa
 
 	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
 		if strings.Contains(setErr.Error(), "already exists") {
-			_, txn, errMsg, _ := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			if getErr != nil {
+				return false, false, "", "", getErr
+			}
 			return true, false, txn, errMsg, nil
 		}
 		return false, false, "", "", setErr
@@ -861,11 +892,11 @@ func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
 // recordMarketingSMSTrackingFromRedisSkip writes tracking when Redis already has a
 // terminal result from an earlier send (no vendor call). Blank Redis is in-flight:
 // the first copy still owns the tracking insert.
-func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) {
+func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) error {
 	txn := strings.TrimSpace(redisTxn)
 	errMsg := strings.TrimSpace(redisErr)
 	if txn == "" && errMsg == "" {
-		return
+		return nil
 	}
 	outcome := database.DispatchTrackingSent
 	if txn == "" {
@@ -873,10 +904,10 @@ func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, 
 	} else {
 		errMsg = ""
 	}
-	recordMarketingSMSTracking(data, outcome, txn, errMsg)
+	return recordMarketingSMSTracking(data, outcome, txn, errMsg)
 }
 
-func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) {
+func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) error {
 	txn, _ := result.DBData["TransactionId"].(string)
 	errMsg, _ := result.DBData["ResponseMessage"].(string)
 	if sendErr != nil && errMsg == "" {
@@ -887,10 +918,10 @@ func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, resul
 		status = database.DispatchTrackingSent
 		errMsg = ""
 	}
-	recordMarketingSMSTracking(data, status, txn, errMsg)
+	return recordMarketingSMSTracking(data, status, txn, errMsg)
 }
 
-func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) {
+func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
 	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
@@ -907,9 +938,11 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 	})
 	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
 		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
-		return
+		return nil
 	}
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
+		return err
 	}
+	return nil
 }

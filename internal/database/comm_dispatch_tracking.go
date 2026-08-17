@@ -67,7 +67,8 @@ func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchT
 	}
 
 	// Approved table: PK on Id only, DF CreatedOn/UpdatedOn = SYSDATETIME(), AppliedOn left NULL.
-	// No unique index — skip a second row for the same (Source, SourceRowId, Channel).
+	// Skip a second row for the same (Source, SourceRowId, Channel). Concurrent inserts can
+	// still race this NOT EXISTS check; add a unique index in SSMS (not AutoMigrate) if duplicates appear.
 	query := fmt.Sprintf(`INSERT INTO %s (
 		[Source], SourceRowId, Channel, Client, Vendor, Process, EventId,
 		CommId, TransactionId, Outcome, ErrorMessage, TemplateReference,
