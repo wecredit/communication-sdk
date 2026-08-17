@@ -446,6 +446,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message with invalid channel: %v", err))
 		}
+		releaseZapCashClaimIfUnsent(data, queueURL, false)
 		return true, deleted // message processed (rejected due to invalid channel)
 	}
 }
@@ -481,6 +482,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after CreditSea limit exceeded: %v", err))
 			}
+			releaseZapCashClaimIfUnsent(data, queueURL, false)
 			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeeded
 		}
 	} else {
@@ -505,6 +507,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		} else {
 			releaseMarketingSMSClaims(data)
 		}
+		releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 		return isMessageProcessed, deleted
 	}
 
@@ -522,6 +525,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 	}
 
+	releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 	return isMessageProcessed, deleted
 
 }
@@ -535,7 +539,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
-	isMessageProcessed, err := rcs.SendRcsByProcess(data)
+	isMessageProcessed, sent, err := rcs.SendRcsByProcess(data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
 		// If processing failed, don't delete message - let it retry after visibility timeout
@@ -549,6 +553,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		} else {
 			releaseMarketingSMSClaims(data)
 		}
+		releaseZapCashClaimIfUnsent(data, queueURL, sent)
 		return isMessageProcessed, deleted
 	}
 
@@ -561,6 +566,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		releaseMarketingSMSClaims(data)
 	}
 
+	releaseZapCashClaimIfUnsent(data, queueURL, sent)
 	return isMessageProcessed, deleted
 }
 
@@ -641,6 +647,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		} else if !result.AckSQS {
 			releaseMarketingSMSClaims(data)
 		}
+		releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
 		return result.Processed, deleted
 	}
 
@@ -665,6 +672,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
 	}
 
+	releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
 	return result.Processed, deleted
 }
 
@@ -693,6 +701,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		} else {
 			releaseMarketingSMSClaims(data)
 		}
+		releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 		return isMessageProcessed, deleted
 	}
 
@@ -712,6 +721,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	}
 
+	releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 	return isMessageProcessed, deleted
 }
 
@@ -781,6 +791,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 }
 
 func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	releaseZapCashClaimIfUnsent(data, queueURL, false)
 	deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
@@ -795,6 +806,16 @@ func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
 func isZapCashDirectQueue(queueURL string) bool {
 	z := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
 	return z != "" && strings.TrimSpace(queueURL) == z
+}
+
+func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL string, sent bool) {
+	if sent || isMarketingSMSDispatch(data) || !isZapCashDirectQueue(queueURL) {
+		return
+	}
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	if err := redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to release zapcash redis claim: %v", data.Client, data.CommId, err))
+	}
 }
 
 func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, err error) {
