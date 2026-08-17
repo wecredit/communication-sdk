@@ -218,7 +218,7 @@ func SendMessageWithSubject(sqsClient *sqs.SQS, messageMap interface{}, queueURL
 		}
 	}
 
-	_, err = SQSClient.SendMessage(&sqs.SendMessageInput{
+	_, err = sqsClient.SendMessage(&sqs.SendMessageInput{
 		QueueUrl:          aws.String(queueURL),
 		MessageBody:       aws.String(string(messageBytes)),
 		MessageAttributes: messageAttributes,

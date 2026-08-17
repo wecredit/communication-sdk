@@ -124,35 +124,41 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("redis add failed for mobile: %s, channel: %s, redisKey: %s: %v", data.Mobile, data.Channel, redisKey, redisSetErr)
 	}
 
+	campaignClaimed := false
+	rollbackSendClaims := func() {
+		if campaignClaimed {
+			if releaseErr := redisInteraction.ReleaseMarketingCampaignDedupKey(redisClient, channelHelper.GenerateMarketingCampaignDedupKey(*data)); releaseErr != nil {
+				utils.Error(fmt.Errorf("failed to rollback campaign dedup key event_id=%s: %v", strings.TrimSpace(data.EventId), releaseErr))
+			}
+		}
+		if releaseErr := redisInteraction.ReleaseMobileChannelHashField(redisClient, config.Configs.CommIdempotentKey, redisKey); releaseErr != nil {
+			utils.Error(fmt.Errorf("failed to rollback event id hash field redisKey=%s: %v", redisKey, releaseErr))
+		}
+	}
+
 	if channelHelper.IsMarketingCampaignRequest(*data) {
 		campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(*data)
 		eventID := strings.TrimSpace(data.EventId)
 		claimed, claimErr := redisInteraction.ClaimMarketingCampaignDedupKey(redisClient, campaignKey, eventID)
-		
-		if claimErr != nil {
-			if releaseErr := redisInteraction.ReleaseMobileChannelHashField(redisClient, config.Configs.CommIdempotentKey, redisKey); releaseErr != nil {
-				utils.Error(fmt.Errorf("failed to rollback event id hash field after campaign dedup error dedup_type=campaign event_id=%s: %v", eventID, releaseErr))
-			}
 
+		if claimErr != nil {
+			rollbackSendClaims()
 			utils.Error(fmt.Errorf("campaign dedup claim failed dedup_type=campaign event_id=%s: %v", eventID, claimErr))
 			return sdkModels.CommApiResponseBody{Success: false}, claimErr
 		}
 
 		if !claimed {
-			if releaseErr := redisInteraction.ReleaseMobileChannelHashField(redisClient, config.Configs.CommIdempotentKey, redisKey); releaseErr != nil {
-				utils.Error(fmt.Errorf("failed to rollback event id hash field after campaign duplicate dedup_type=campaign event_id=%s: %v", eventID, releaseErr))
-			}
-
+			rollbackSendClaims()
 			dupErr := fmt.Errorf(
 				"campaign duplicate: channel %s process %s event_id %s already sent today",
 				strings.ToUpper(strings.TrimSpace(data.Channel)),
 				strings.ToLower(strings.TrimSpace(data.ProcessName)),
 				eventID,
 			)
-			
 			utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
 			return sdkModels.CommApiResponseBody{Success: false}, dupErr
 		}
+		campaignClaimed = true
 	}
 
 	// Preserve caller-supplied CommId when present; otherwise generate WC-<CLIENT>-UUID-ts
@@ -169,6 +175,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
 	if err != nil {
+		rollbackSendClaims()
 		utils.Error(fmt.Errorf("error in mapping data into dbModel for mobile %s and channel %s: %v", data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error in mapping data into dbModel for mobile %s and channel %s: %v", data.Mobile, data.Channel, err)
 	}
@@ -181,6 +188,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	// Convert the struct to JSON (byte slice)
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
+		rollbackSendClaims()
 		utils.Error(fmt.Errorf("failed to serialize data for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to serialize data for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
@@ -191,11 +199,13 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	// Deserialize JSON into map
 	err = json.Unmarshal(jsonBytes, &dataMap)
 	if err != nil {
+		rollbackSendClaims()
 		utils.Error(fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
 	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+		rollbackSendClaims()
 		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
 	}
@@ -205,10 +215,12 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	topicArn = strings.TrimSpace(topicArn)
 	if queueURL != "" {
 		if queue.SQSClient == nil {
+			rollbackSendClaims()
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("SQS client is not initialized for direct enqueue")
 		}
 		err = queue.SendMessageToSqsQueue(queue.SQSClient, dataMap, queueURL, subject)
 		if err != nil {
+			rollbackSendClaims()
 			utils.Error(fmt.Errorf("error occurred while sending data to SQS for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to SQS for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 		}
@@ -216,6 +228,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	} else {
 		err = queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject)
 		if err != nil {
+			rollbackSendClaims()
 			utils.Error(fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err))
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 		}

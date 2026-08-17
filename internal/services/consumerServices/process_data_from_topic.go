@@ -32,8 +32,9 @@ import (
 )
 
 type MessageWrapper struct {
-	Message *sqs.Message
-	Payload sdkModels.CommApiRequestBody
+	Message  *sqs.Message
+	Payload  sdkModels.CommApiRequestBody
+	QueueURL string
 }
 
 type clientRoutine struct {
@@ -77,8 +78,8 @@ func ConsumerQueueURLs() []string {
 }
 
 // ConsumerService long-polls every configured SDK work queue and routes into shared
-// per-client worker pools. Polls AWS_QUEUE_URL (legacy SNS hop) and
-// AWS_WECREDIT_SMS_QUEUE_URL (WeCredit SMS direct) when both are set and distinct.
+// per-client worker pools. Each work item carries its originating queue URL so
+// DeleteMessage targets the queue the message was received from.
 func ConsumerService(_ string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -99,14 +100,20 @@ func ConsumerService(_ string) {
 	<-ctx.Done()
 	utils.Warn("Context cancelled. Shutting down all client handlers.")
 	clientMux.Lock()
+	handlers := make([]*clientRoutine, 0, len(clientHandlers))
+	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
 		handler.closeOnce.Do(func() {
 			close(handler.msgChan)
 		})
-		handler.wg.Wait()
-		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", client))
+		handlers = append(handlers, handler)
+		clients = append(clients, client)
 	}
 	clientMux.Unlock()
+	for i, handler := range handlers {
+		handler.wg.Wait()
+		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", clients[i]))
+	}
 }
 
 func pollCommunicationQueue(ctx context.Context, queueURL string) {
@@ -149,12 +156,18 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	data, err := parseSQSCommPayload(*msg.Body)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to parse SQS message body: %v", err))
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, sdkModels.CommApiRequestBody{}); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete unparseable SQS message: %v", delErr))
+		}
 		return
 	}
 
 	client := strings.ToLower(data.Client)
 	if client == "" {
 		utils.Warn("Empty client found in payload. Skipping.")
+		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, data); delErr != nil {
+			utils.Error(fmt.Errorf("failed to delete SQS message with empty client: %v", delErr))
+		}
 		return
 	}
 
@@ -172,13 +185,13 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, queueURL, handler.wg)
+			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for client: %s", handler.workers, client))
 	}
 	clientMux.Unlock()
 
-	handler.msgChan <- MessageWrapper{Message: msg, Payload: data}
+	handler.msgChan <- MessageWrapper{Message: msg, Payload: data, QueueURL: queueURL}
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -229,7 +242,7 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, queueURL string, wg *sync.WaitGroup) {
+func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", client, r))
@@ -252,7 +265,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				<-timeout.C
 			}
 			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, queueURL, msgWrapper)
+			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
 			// Note: Message deletion is handled inside processMessage and channel handlers
 			// Only delete here if processMessage explicitly indicates it should be deleted
 			// but wasn't already deleted (e.g., on fatal errors)
@@ -263,7 +276,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				// For now, we let SQS handle retries via visibility timeout
 				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
 			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, queueURL, msgWrapper.Message, msgWrapper.Payload)
+				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
 				if !deleted {
 					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 				}

@@ -68,6 +68,31 @@ func TestApplySinchTemplateVariablesNamedFieldsWinWhenCsvEmpty(t *testing.T) {
 	}
 }
 
+func TestApplySinchTemplateVariablesRejectsPlaceholderCountMismatch(t *testing.T) {
+	_, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:      "Hi {#var#} then {#var#}",
+		TemplateVariables: "CustomerName",
+		CustomerName:      "Asha",
+	})
+	if err == nil {
+		t.Fatal("expected placeholder/key count mismatch")
+	}
+}
+
+func TestOverlayKeepsLoanIdAndApplicationNumberDistinct(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "loan {#var#} app {#var#}",
+		TemplateVariables:      "LoanId,ApplicationNumber",
+		TemplateVariableValues: "L-1,A-9",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "loan L-1 app A-9" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
 func TestSinchSMSCredentialsByClient(t *testing.T) {
 	config := models.Config{
 		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password", SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRED",

@@ -16,12 +16,13 @@ func IsMarketingCampaignRequest(data sdkModels.CommApiRequestBody) bool {
 }
 
 // GenerateMarketingCampaignDedupKey builds the standalone Redis string key for
-// same-day mobile+campaign+channel dedup (cleared by daily FlushAll). Stage omitted when Stage is 0.
+// same-day mobile+client+campaign+channel dedup (cleared by daily FlushAll). Stage omitted when Stage is 0.
 func GenerateMarketingCampaignDedupKey(data sdkModels.CommApiRequestBody) string {
 	mobile := strings.TrimSpace(data.Mobile)
+	client := strings.ToLower(strings.TrimSpace(data.Client))
 	campaign := strings.ToLower(strings.TrimSpace(data.ProcessName))
 	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
-	key := fmt.Sprintf("%s_%s_%s", mobile, campaign, channel)
+	key := fmt.Sprintf("%s_%s_%s_%s", mobile, client, campaign, channel)
 
 	if data.Stage != 0 {
 		key += "_" + fmt.Sprintf("%.0f", data.Stage)
