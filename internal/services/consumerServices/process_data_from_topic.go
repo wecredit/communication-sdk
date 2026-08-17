@@ -536,7 +536,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if skipSend {
-			recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
+				return false, false
+			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete duplicate in-flight marketing SMS: %v", delErr))
@@ -545,8 +547,10 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if campaignDuplicate {
-			recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
-				"", campaignDuplicateError(data))
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
+				"", campaignDuplicateError(data)); trackErr != nil {
+				return false, false
+			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete campaign-duplicate marketing SMS: %v", delErr))
@@ -559,9 +563,16 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	if !AssignVendor(&data) {
 		if marketing {
-			recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active")
+			if updErr := channelHelper.UpdateRedisErrorMessage(data, "requested vendor is not active"); updErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record inactive vendor in redis: %v", data.Client, data.EventId, updErr))
+				return false, false
+			}
+			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active"); trackErr != nil {
+				return false, false
+			}
 		}
-
+		// Terminal FAILED: keep Redis claims so a replay does not hit the vendor again
+		// after tracking already exists.
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
 
@@ -576,7 +587,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		if marketing && result.AckSQS {
-			recordMarketingSMSTrackingFromSend(data, result, err)
+			if trackErr := recordMarketingSMSTrackingFromSend(data, result, err); trackErr != nil {
+				return false, false
+			}
 		}
 
 		if result.Processed && result.AckSQS {
@@ -591,7 +604,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if marketing && result.AckSQS {
-		recordMarketingSMSTrackingFromSend(data, result, nil)
+		if trackErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackErr != nil {
+			return false, false
+		}
 	} else if marketing && !result.AckSQS {
 		releaseMarketingSMSClaims(data)
 	}
@@ -745,7 +760,10 @@ func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campa
 
 	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
 		if strings.Contains(setErr.Error(), "already exists") {
-			_, txn, errMsg, _ := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			if getErr != nil {
+				return false, false, "", "", getErr
+			}
 			return true, false, txn, errMsg, nil
 		}
 		return false, false, "", "", setErr
@@ -791,11 +809,11 @@ func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
 // recordMarketingSMSTrackingFromRedisSkip writes tracking when Redis already has a
 // terminal result from an earlier send (no vendor call). Blank Redis is in-flight:
 // the first copy still owns the tracking insert.
-func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) {
+func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) error {
 	txn := strings.TrimSpace(redisTxn)
 	errMsg := strings.TrimSpace(redisErr)
 	if txn == "" && errMsg == "" {
-		return
+		return nil
 	}
 	outcome := database.DispatchTrackingSent
 	if txn == "" {
@@ -803,10 +821,10 @@ func recordMarketingSMSTrackingFromRedisSkip(data sdkModels.CommApiRequestBody, 
 	} else {
 		errMsg = ""
 	}
-	recordMarketingSMSTracking(data, outcome, txn, errMsg)
+	return recordMarketingSMSTracking(data, outcome, txn, errMsg)
 }
 
-func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) {
+func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, result sms.SendSmsResult, sendErr error) error {
 	txn, _ := result.DBData["TransactionId"].(string)
 	errMsg, _ := result.DBData["ResponseMessage"].(string)
 	if sendErr != nil && errMsg == "" {
@@ -817,10 +835,10 @@ func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, resul
 		status = database.DispatchTrackingSent
 		errMsg = ""
 	}
-	recordMarketingSMSTracking(data, status, txn, errMsg)
+	return recordMarketingSMSTracking(data, status, txn, errMsg)
 }
 
-func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) {
+func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
 	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
@@ -837,9 +855,11 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 	})
 	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
 		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
-		return
+		return nil
 	}
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
+		return err
 	}
+	return nil
 }
