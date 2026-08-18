@@ -56,10 +56,11 @@ func GetTemplatePayload(data extapimodels.SmsRequestBody, config models.Config) 
 }
 
 func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, error) {
-	if err := overlayPositionalTemplateValues(&data); err != nil {
+	extras, err := overlayPositionalTemplateValues(&data)
+	if err != nil {
 		return "", err
 	}
-	keys := strings.Split(data.TemplateVariables, ",")
+	keys := splitCSV(data.TemplateVariables)
 	variableMap := map[string]string{
 		"EmiAmount":         data.EmiAmount,
 		"ApplicationNumber": data.ApplicationNumber,
@@ -68,6 +69,9 @@ func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 		"PaymentLink":       data.PaymentLink,
 		"Link":              data.PaymentLink,
 		"Description":       data.Description,
+	}
+	for key, value := range extras {
+		variableMap[key] = value
 	}
 
 	keyIndex := 0
@@ -143,7 +147,7 @@ func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 			return value
 
 		default:
-			value := strings.TrimSpace(variableMap[key])
+			value := lookupTemplateVar(variableMap, key)
 			if value == "" {
 				replacementErr = fmt.Errorf("missing value for required variable: %s", key)
 				return ""
@@ -158,16 +162,30 @@ func ApplySinchTemplateVariables(data extapimodels.SmsRequestBody) (string, erro
 	return text, nil
 }
 
+func lookupTemplateVar(variableMap map[string]string, key string) string {
+	if value := strings.TrimSpace(variableMap[key]); value != "" {
+		return value
+	}
+	for mapKey, mapValue := range variableMap {
+		if strings.EqualFold(mapKey, key) {
+			return strings.TrimSpace(mapValue)
+		}
+	}
+	return ""
+}
+
 // overlayPositionalTemplateValues fills named fields from CommMarketingInput.VariablesValue.
 // ZapCash/legacy already set CustomerName/PaymentLink/etc and leave TemplateVariableValues empty.
-func overlayPositionalTemplateValues(data *extapimodels.SmsRequestBody) error {
+// Unknown names (urg, args, ...) stay in extras and fill {#var#} in TemplateVariables order.
+func overlayPositionalTemplateValues(data *extapimodels.SmsRequestBody) (map[string]string, error) {
+	extras := map[string]string{}
 	if data == nil || strings.TrimSpace(data.TemplateVariableValues) == "" {
-		return nil
+		return extras, nil
 	}
 	keys := splitCSV(data.TemplateVariables)
 	values := splitCSV(data.TemplateVariableValues)
 	if len(keys) != len(values) {
-		return fmt.Errorf("template variable count does not match supplied values")
+		return nil, fmt.Errorf("template variable count does not match supplied values")
 	}
 	for i, key := range keys {
 		value := values[i]
@@ -187,10 +205,10 @@ func overlayPositionalTemplateValues(data *extapimodels.SmsRequestBody) error {
 		case "paymentlink", "link":
 			data.PaymentLink = value
 		default:
-			return fmt.Errorf("unsupported template variable: %s", key)
+			extras[key] = value
 		}
 	}
-	return nil
+	return extras, nil
 }
 
 func splitCSV(raw string) []string {
