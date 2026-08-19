@@ -40,6 +40,35 @@ func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
 	}
 }
 
+func TestApplySinchTemplateVariablesMapsDynamicNamedValuesOntoVarPlaceholders(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "Chhoti zaroorat, sahi support. Salaried users ke liye Credittplus se Rs 35000 tak loan. Abhi explore karein {#var#} WeCredit",
+		TemplateVariables:      "urg",
+		TemplateVariableValues: "https://loan.credittnow.com/",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "Chhoti zaroorat, sahi support. Salaried users ke liye Credittplus se Rs 35000 tak loan. Abhi explore karein https://loan.credittnow.com/ WeCredit"
+	if text != want {
+		t.Fatalf("text = %q, want %q", text, want)
+	}
+}
+
+func TestApplySinchTemplateVariablesMapsMultipleDynamicValuesInOrder(t *testing.T) {
+	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText:           "Hi {#var#} open {#var#}",
+		TemplateVariables:      "args,urg",
+		TemplateVariableValues: "Asha, https://loan.credittnow.com/",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Hi Asha open https://loan.credittnow.com/" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
 func TestApplySinchTemplateVariablesUsesPositionalCsv(t *testing.T) {
 	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
 		TemplateText:           "Hi {#var#} pay {#var#}",
