@@ -76,6 +76,10 @@ func LoadConfigs() error {
 	}
 	utils.Info("Tech Database connection pool initialized successfully.")
 
+	if err := database.ConnectDB(database.Marketing, Configs); err != nil {
+		return fmt.Errorf("failed to initialize Marketing database: %v", err)
+	}
+
 	// Configure Queue client
 	if err := queue.InitAWSClients(Configs.AWSRegion); err != nil {
 		return fmt.Errorf("failed to initialize AWS clients: %v", err)
@@ -90,6 +94,6 @@ func LoadConfigs() error {
 			utils.Info("SNS Client initialized successfully.")
 		}
 	*/
-	
+
 	return nil
 }

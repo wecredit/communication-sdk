@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
@@ -106,6 +107,44 @@ func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) 
 	return nil
 }
 
+// ReclaimBlankMobileChannelKey deletes a hash field only when it is still an
+// orphan blank claim (empty string or JSON with no transactionId/errorMessage).
+// Used for EventId-keyed marketing sends so a crash after HSetNX does not
+// permanently block retries. Returns true when the field was deleted.
+func ReclaimBlankMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) (bool, error) {
+	ctx := context.Background()
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false then
+  return 0
+end
+if val == '' then
+  return redis.call('HDEL', KEYS[1], ARGV[1])
+end
+-- Non-JSON non-empty values are legacy transactionId strings; keep them.
+if string.sub(val, 1, 1) ~= '{' then
+  return 0
+end
+-- Keep keys that already recorded a provider/error outcome.
+if string.match(val, '"transactionId"%s*:%s*"[^"]+"') then
+  return 0
+end
+if string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then
+  return 0
+end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+	result, err := RDB.Eval(ctx, script, []string{commIdempotentKey}, redisKey).Int()
+	if err != nil {
+		return false, fmt.Errorf("failed to reclaim blank redis key %s: %w", redisKey, err)
+	}
+	if result > 0 {
+		utils.Info(fmt.Sprintf("Reclaimed orphan blank redis key %s from hash %s", redisKey, commIdempotentKey))
+		return true, nil
+	}
+	return false, nil
+}
+
 // 2. Update the value (e.g. responseId) for an existing mobile_channel key
 // This function is kept for backward compatibility
 func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, responseId string) error {
@@ -178,4 +217,46 @@ func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMes
 	}
 	utils.Info(fmt.Sprintf("Key %s in hash %s updated with errorMessage %s", redisKey, commIdempotentKey, errorMessage))
 	return nil
+}
+
+// ClaimMarketingCampaignDedupKey atomically claims a campaign-level dedup slot (SET NX, no TTL). Key persists until daily FlushAll.
+// Returns true when the key was created, false when it already exists (duplicate).
+func ClaimMarketingCampaignDedupKey(rdb *redis.Client, key, value string) (bool, error) {
+	if rdb == nil {
+		return false, fmt.Errorf("redis client is not initialized")
+	}
+
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, fmt.Errorf("campaign dedup key is required")
+	}
+
+	ctx := context.Background()
+	ok, err := rdb.SetNX(ctx, key, value, 0).Result()
+
+	if err != nil {
+		return false, fmt.Errorf("campaign dedup claim: %w", err)
+	}
+
+	return ok, nil
+}
+
+// ReleaseMarketingCampaignDedupKey deletes a campaign dedup string key (rollback helper).
+func ReleaseMarketingCampaignDedupKey(rdb *redis.Client, key string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	ctx := context.Background()
+	return rdb.Del(ctx, key).Err()
+}
+
+// ReleaseMobileChannelHashField removes one field from the idempotency hash (EventId rollback).
+func ReleaseMobileChannelHashField(rdb *redis.Client, commIdempotentKey, field string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	ctx := context.Background()
+	return rdb.HDel(ctx, commIdempotentKey, field).Err()
 }

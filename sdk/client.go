@@ -16,6 +16,7 @@ type CommSdkClient struct {
 	isAuthed     bool
 	Channel      string
 	TopicArn     string
+	QueueURL     string // When set (WeCredit SMS), Send uses SQS-direct instead of SNS.
 	AwsSnsClient *sns.SNS
 	RedisClient  *redis.Client
 }
@@ -30,14 +31,11 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		return nil, fmt.Errorf("username, password, channel, and baseUrl are required")
 	}
 
-	var userName, topicArn, redisAddress string
-	var ok bool
-	if ok, userName, channel, topicArn, redisAddress = ValidateClient(username, password, channel, baseUrl); !ok {
+	ok, userName, channel, topicArn, queueURL, redisAddress := ValidateClient(username, password, channel, baseUrl)
+	if !ok {
 		return nil, fmt.Errorf("client is not authenticated with us for this channel. Wrong Username or password")
 	}
 
-	// fmt.Println("TopicArn: ", topicArn)
-	// Create redis client from the address
 	redisClient, err := redisHelper.GetSdkRedisClient(redisAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize redis client: %v", err)
@@ -48,13 +46,13 @@ func NewSdkClient(username, password, channel, baseUrl string) (*CommSdkClient, 
 		isAuthed:     ok,
 		Channel:      channel,
 		TopicArn:     topicArn,
+		QueueURL:     queueURL,
 		AwsSnsClient: snsClient,
 		RedisClient:  redisClient,
 	}, nil
 }
 
-func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string) {
-
+func ValidateClient(username, password, channel, baseUrl string) (bool, string, string, string, string, string) {
 	apiUrl := baseUrl + "/clients/validate-client"
 
 	apiHeaders := map[string]string{
@@ -69,11 +67,16 @@ func ValidateClient(username, password, channel, baseUrl string) (bool, string, 
 
 	apiResponse, err := utils.ApiHit(variables.PostMethod, apiUrl, apiHeaders, "", "", requestBody, variables.ContentTypeJSON)
 	if err != nil {
-		return false, "", "", "", ""
+		return false, "", "", "", "", ""
 	}
 
 	if apiResponse["ApistatusCode"].(int) == 200 {
-		return true, apiResponse["user"].(string), apiResponse["channel"].(string), apiResponse["topicArn"].(string), apiResponse["redisAddress"].(string)
+		user, _ := apiResponse["user"].(string)
+		ch, _ := apiResponse["channel"].(string)
+		topicArn, _ := apiResponse["topicArn"].(string)
+		queueURL, _ := apiResponse["queueUrl"].(string)
+		redisAddress, _ := apiResponse["redisAddress"].(string)
+		return true, user, ch, topicArn, queueURL, redisAddress
 	}
-	return false, "", "", "", ""
+	return false, "", "", "", "", ""
 }

@@ -1,11 +1,14 @@
 package sinchSms
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -14,20 +17,24 @@ import (
 func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	var sinchSmsResponse extapimodels.SmsResponse
 	sinchSmsResponse.IsSent = false
+	sinchSmsResponse.Outcome = outcome.FailedFinal
 
-	// Getting the API URL
 	apiUrl := config.Configs.SinchSmsApiUrl
-
-	// Setting the API header
 	apiHeader := map[string]string{
 		"Content-Type": "application/json",
 	}
 
-	// Get api payload
 	apiPayload, err := sinchpayloads.GetTemplatePayload(data, config.Configs)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured in Sinch SMS payload: %v for %s", err, data.Client)
+		sinchSmsResponse.Outcome = outcome.FailedFinal
+		return sinchSmsResponse
+	}
+
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, data.Client)); err != nil {
+		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		sinchSmsResponse.Outcome = outcome.FailedRetryable
 		return sinchSmsResponse
 	}
 
@@ -38,30 +45,24 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
 		}
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("error occured while hitting Sinch SMS payload: %v", err)
+		sinchSmsResponse.Outcome = outcome.ClassifyTransportError(err)
 		return sinchSmsResponse
 	}
 
-	accepted := apiResponse["accepted"].(bool)
-
+	accepted, _ := apiResponse["accepted"].(bool)
 	if accepted {
-		sinchSmsResponse.TransactionId = apiResponse["respid"].(string)
+		if respid, ok := apiResponse["respid"].(string); ok {
+			sinchSmsResponse.TransactionId = respid
+		}
 		sinchSmsResponse.IsSent = true
+		sinchSmsResponse.Outcome = outcome.Submitted
 		sinchSmsResponse.ResponseMessage = "Message Submitted Successfully"
-	} else {
-		sinchSmsResponse.ResponseMessage = GetRejectionReason(apiResponse["error"].(string))
+		return sinchSmsResponse
 	}
 
-	// TODO Handling For Api Responses
-
-	// if code, ok := apiResponse["code"].(float64); ok {
-	// 	response.StatusCode = code
-	// } else {
-	// 	return response, fmt.Errorf("unexpected type for code: %T", apiResponse["code"])
-	// }
-	// response.Message = apiResponse["message"].(string)
-	// response.Status = apiResponse["status"].(bool)
-	fmt.Println("Sinch SMS Final response:", sinchSmsResponse)
-
+	errCode, _ := apiResponse["error"].(string)
+	sinchSmsResponse.ResponseMessage = GetRejectionReason(errCode)
+	sinchSmsResponse.Outcome = outcome.FailedFinal
 	return sinchSmsResponse
 }
 

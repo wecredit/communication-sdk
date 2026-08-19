@@ -148,7 +148,7 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 		return
 	}
 
-	user, channel, topicArn, redisAddress, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
+	user, channel, topicArn, queueURL, redisAddress, err := h.Service.ValidateCredentials(userInput.Username, userInput.Password, channel)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 		return
@@ -159,6 +159,7 @@ func (h *ClientHandler) ValidateClient(c *gin.Context) {
 		"user":         user,
 		"channel":      channel,
 		"topicArn":     topicArn,
+		"queueUrl":     queueURL,
 		"redisAddress": redisAddress,
 	})
 }

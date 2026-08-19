@@ -49,6 +49,8 @@ type Templatedetails struct {
 	ImageId           string     `gorm:"column:ImageId" json:"imageId,omitempty"`
 	ImageUrl          string     `gorm:"column:ImageUrl" json:"imageUrl,omitempty"`
 	DltTemplateId     int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
+	TemplateEntityId  int64      `gorm:"column:TemplateEntityId" json:"templateEntityId,omitempty"`
+	TemplateHeader    string     `gorm:"column:TemplateHeader" json:"templateHeader,omitempty"`
 	IsActive          bool       `gorm:"column:IsActive" json:"isActive"`
 	TemplateText      string     `gorm:"column:TemplateText" json:"templateText,omitempty"`
 	Link              string     `gorm:"column:Link" json:"link,omitempty"`

@@ -55,7 +55,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		return false, nil, errors.New("template data not found in cache")
 	}
 
-	data, matchedVendor, err := channelHelper.FetchTemplateData(msg, templateDetails)
+	data, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
 		return channelHelper.HandleTemplateNotFoundError(msg, err)
 	}
@@ -97,7 +97,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	// delete message then insert in the database.
 
 	// Step 2: Once you have responseId, update the value of transactionId in redis
-	if err := channelHelper.UpdateRedisTransactionId(msg.Mobile, msg.Channel, msg.Stage, response.TransactionId); err != nil {
+	if err := channelHelper.UpdateRedisTransactionId(msg, response.TransactionId); err != nil {
 		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
 	}
 
@@ -125,7 +125,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if !shouldHitVendor {
 		// Step 2: Once you have error message, update the error message in redis
 		dbMappedData["ResponseMessage"] = "shouldHitVendor is off for mobile " + msg.Mobile
-		if err := channelHelper.HandleShouldHitVendorOffError(msg.Mobile, msg.Channel, msg.Stage); err != nil {
+		if err := channelHelper.HandleShouldHitVendorOffError(msg); err != nil {
 			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off error: %v", err))
 		}
 	}
