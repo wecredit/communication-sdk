@@ -755,18 +755,30 @@ func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campa
 	}
 
 	if exists {
-		return true, false, txn, errMsg, nil
-	}
-
-	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
-		if strings.Contains(setErr.Error(), "already exists") {
-			_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
-			if getErr != nil {
-				return false, false, "", "", getErr
+		errLower := strings.ToLower(strings.TrimSpace(errMsg))
+		if strings.TrimSpace(txn) == "" && strings.Contains(errLower, "shouldhitvendor is off") && channelHelper.ShouldHitVendor(data.Client, data.Channel) {
+			if relErr := redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey); relErr != nil {
+				return false, false, "", "", relErr
 			}
+
+			utils.Info(fmt.Sprintf("Reclaimed stale shouldHitVendor redis block for EventId=%s (previous: %s)", data.EventId, errMsg))
+			exists = false
+		} else {
 			return true, false, txn, errMsg, nil
 		}
-		return false, false, "", "", setErr
+	}
+
+	if !exists {
+		if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
+			if strings.Contains(setErr.Error(), "already exists") {
+				_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+				if getErr != nil {
+					return false, false, "", "", getErr
+				}
+				return true, false, txn, errMsg, nil
+			}
+			return false, false, "", "", setErr
+		}
 	}
 	if !channelHelper.IsMarketingCampaignRequest(data) {
 		return false, false, "", "", nil

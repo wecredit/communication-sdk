@@ -191,12 +191,20 @@ func IsVendorActive(client, vendor, channel string) bool {
 	return false
 }
 
+func clientChannelCacheKey(client, channel string) string {
+	return fmt.Sprintf("Name:%s|Channel:%s",
+		strings.ToLower(strings.TrimSpace(client)),
+		strings.ToUpper(strings.TrimSpace(channel)),
+	)
+}
+
 func ShouldHitVendor(client, channel string) bool {
 	clientDetails, found := cache.GetCache().GetMappedData(cache.ClientsData)
 	if !found {
 		utils.Error(fmt.Errorf("client details not found in cache"))
+		return false
 	}
-	key := fmt.Sprintf("Name:%s|Channel:%s", client, channel)
+	key := clientChannelCacheKey(client, channel)
 	if clientData, ok := clientDetails[key]; ok {
 		if status, ok := clientData["ShouldHitVendor"].(int64); ok && status == variables.Active {
 			return true
