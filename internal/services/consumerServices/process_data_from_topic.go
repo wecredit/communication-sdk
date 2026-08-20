@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
@@ -603,8 +604,42 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		return result.Processed, deleted
 	}
 
+	outputWritten := false
 	if marketing && result.AckSQS {
-		if trackErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackErr != nil {
+		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+			func() error {
+				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+			},
+			func() error {
+				return recordMarketingSMSTrackingFromSend(data, result, nil)
+			},
+		)
+		
+		outputWritten = true
+		if outputErr != nil || trackingErr != nil {
+			outputStatus := "succeeded"
+			if outputErr != nil {
+				outputStatus = outputErr.Error()
+			}
+
+			trackingStatus := "succeeded"
+			if trackingErr != nil {
+				trackingStatus = trackingErr.Error()
+			}
+
+			utils.Error(fmt.Errorf(
+				"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
+				data.Client,
+				data.CommId,
+				data.EventId,
+				outputStatus,
+				trackingStatus,
+			))
+		}
+
+		// Preserve the existing tracking failure behavior: do not reach SQS
+		// deletion when CommDispatchTracking failed. SmsOutput remains log-only.
+		if trackingErr != nil {
 			return false, false
 		}
 	} else if marketing && !result.AckSQS {
@@ -620,11 +655,29 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Info(fmt.Sprintf("[Client:%s CommId:%s] retaining SQS message for non-terminal SMS outcome", data.Client, data.CommId))
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
+	if !outputWritten {
+		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
+		}
 	}
 
 	return result.Processed, deleted
+}
+
+// RunParallelSMSPostSendWrites starts both independent post-send writes and
+// waits for both to finish. Callers retain sink-specific failure handling.
+func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outputErr, trackingErr error) {
+	var group errgroup.Group
+	group.Go(func() error {
+		outputErr = outputWrite()
+		return outputErr
+	})
+	group.Go(func() error {
+		trackingErr = trackingWrite()
+		return trackingErr
+	})
+	_ = group.Wait()
+	return outputErr, trackingErr
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
