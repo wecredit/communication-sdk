@@ -43,6 +43,9 @@ type Config struct {
 	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
 	// WeCredit SMS: prefer SQS-direct (plan A). When set, SDK Send skips SNS for wecredit+SMS.
 	AwsWeCreditSmsQueueUrl string `envconfig:"AWS_WECREDIT_SMS_QUEUE_URL"`
+	
+	// WeCredit WhatsApp staging queue. Leave unset in production until rate limiting is approved.
+	AwsWeCreditWhatsappQueueUrl string `envconfig:"AWS_WECREDIT_WHATSAPP_QUEUE_URL"`
 	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
 	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
