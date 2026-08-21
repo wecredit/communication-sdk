@@ -66,7 +66,7 @@ func StartConsumer(port string) {
 		clients.POST("/validate-client", clientHandler.ValidateClient)
 	}
 
-	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead))
+	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead, database.DBtechWrite))
 	templates := r.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)

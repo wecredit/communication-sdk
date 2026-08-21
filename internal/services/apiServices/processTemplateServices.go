@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -16,15 +15,57 @@ import (
 )
 
 type TemplateService struct {
-	DB *gorm.DB
+	ReadDB  *gorm.DB
+	WriteDB *gorm.DB
 }
 
-func NewTemplateService(db *gorm.DB) *TemplateService {
-	return &TemplateService{DB: db}
+func NewTemplateService(readDB, writeDB *gorm.DB) *TemplateService {
+	return &TemplateService{ReadDB: readDB, WriteDB: writeDB}
 }
 
-func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
-	// cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB) // Temporary: ensure cache is populated
+func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*apiModels.TemplateListResult, error) {
+	query := s.ReadDB.Table(config.Configs.TemplateDetailsTable)
+	if params.Process != "" {
+		query = query.Where("Process = ?", params.Process)
+	}
+
+	if params.Stage != "" {
+		query = query.Where("Stage = CAST(? AS DECIMAL(10,2))", params.Stage)
+	}
+
+	if params.Client != "" {
+		query = query.Where("Client = ?", params.Client)
+	}
+
+	if params.Channel != "" {
+		query = query.Where("Channel = ?", params.Channel)
+	}
+
+	if params.Vendor != "" {
+		query = query.Where("Vendor = ?", params.Vendor)
+	}
+
+	var totalItems int64
+	if err := query.Count(&totalItems).Error; err != nil {
+		return nil, fmt.Errorf("count templates: %w", err)
+	}
+
+	templates := make([]apiModels.Templatedetails, 0, params.PageSize)
+	offset := (params.Page - 1) * params.PageSize
+	if err := query.
+		Order("Client, Channel, Process, Stage, Vendor, Id").
+		Limit(params.PageSize).
+		Offset(offset).
+		Find(&templates).Error; err != nil {
+		return nil, fmt.Errorf("list templates: %w", err)
+	}
+
+	return &apiModels.TemplateListResult{Items: templates, TotalItems: totalItems}, nil
+}
+
+// getTemplatesFromCache preserves the previous read path for rollback while
+// dashboard/select APIs use the configured read replica.
+func (s *TemplateService) getTemplatesFromCache(process, stage, client, channel, vendor string) ([]apiModels.Templatedetails, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
@@ -49,9 +90,14 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 
 	// Case 2: filtering
 	for _, data := range templateDetails {
-		stageFloat, _ := strconv.ParseFloat(string(data["Stage"].([]uint8)), 64)
+		stageMatches := true
+		if stage != "" {
+			stageValue, ok := data["Stage"].(float64)
+			stageMatches = ok && fmt.Sprintf("%.2f", stageValue) == stage
+		}
+
 		if (process != "" && data["Process"] != process) ||
-			(stage != "" && fmt.Sprintf("%.2f", stageFloat) != stage) ||
+			!stageMatches ||
 			(client != "" && data["Client"] != client) ||
 			(channel != "" && data["Channel"] != channel) ||
 			(vendor != "" && data["Vendor"] != vendor) {
@@ -76,8 +122,14 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 		if templates[i].Process != templates[j].Process {
 			return templates[i].Process < templates[j].Process
 		}
-		if templates[i].Stage != templates[j].Stage {
-			return templates[i].Stage < templates[j].Stage
+		if templates[i].Stage != nil && templates[j].Stage != nil && *templates[i].Stage != *templates[j].Stage {
+			return *templates[i].Stage < *templates[j].Stage
+		}
+		if templates[i].Stage == nil && templates[j].Stage != nil {
+			return true
+		}
+		if templates[i].Stage != nil && templates[j].Stage == nil {
+			return false
 		}
 		return templates[i].Vendor < templates[j].Vendor
 	})
@@ -86,6 +138,20 @@ func (s *TemplateService) GetTemplates(process, stage, client, channel, vendor s
 }
 
 func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, error) {
+	var template apiModels.Templatedetails
+	if err := s.ReadDB.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&template).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTemplateNotFound
+		}
+
+		return nil, fmt.Errorf("get template %d: %w", id, err)
+	}
+
+	return &template, nil
+}
+
+// getTemplateByIDFromCache preserves the previous read path for rollback.
+func (s *TemplateService) getTemplateByIDFromCache(id uint) (*apiModels.Templatedetails, error) {
 	idIndex, found := cache.GetCache().GetMappedIdData(cache.TemplateDetailsData + ":IdIndex")
 	if !found {
 		utils.Error(fmt.Errorf("template Id index not found in cache"))
@@ -120,49 +186,117 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
-	template.Process = strings.ToUpper(template.Process)
-	template.Channel = strings.ToUpper(template.Channel)
-	template.Vendor = strings.ToUpper(template.Vendor)
-	template.Client = strings.ToLower(template.Client)
+	normalizeTemplate(template)
+	if err := ValidateTemplateStructure(*template); err != nil {
+		return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
+	}
 
-	err := s.DB.Create(template).Error
+	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
+		lockName, lockErr := acquireResolutionLock(conn, *template)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer releaseResolutionLock(conn, lockName)
+
+		return conn.Transaction(func(tx *gorm.DB) error {
+			if err := validateActiveUniqueness(tx, *template); err != nil {
+				return err
+			}
+			return tx.Table(config.Configs.TemplateDetailsTable).Create(template).Error
+		})
+	})
+
 	if err != nil {
 		return err
 	}
 
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.WriteDB)
 
 	return nil
 }
 
-func (s *TemplateService) UpdateTemplateById(id int, updates map[string]interface{}) error {
-	var existing apiModels.Templatedetails
-	if err := s.DB.Where("id = ?", id).First(&existing).Error; err != nil {
-		return errors.New("template not found")
+func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateUpdateRequest) (*apiModels.Templatedetails, error) {
+	var saved apiModels.Templatedetails
+	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
+		var lockName string
+		defer func() { releaseResolutionLock(conn, lockName) }()
+
+		return conn.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&saved).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrTemplateNotFound
+				}
+				return fmt.Errorf("load template %d for update: %w", id, err)
+			}
+
+			updates.Apply(&saved)
+			normalizeTemplate(&saved)
+			if err := ValidateTemplateStructure(saved); err != nil {
+				return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
+			}
+
+			var err error
+			lockName, err = acquireResolutionLock(tx, saved)
+			if err != nil {
+				return err
+			}
+
+			if err := validateActiveUniqueness(tx, saved); err != nil {
+				return err
+			}
+
+			istOffset := 5*time.Hour + 30*time.Minute
+			now := time.Now().UTC().Add(istOffset)
+			saved.UpdatedOn = &now
+
+			return tx.Table(config.Configs.TemplateDetailsTable).Save(&saved).Error
+		})
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	// add updatedOn timestamp
-	istOffset := 5*time.Hour + 30*time.Minute
-	updates["UpdatedOn"] = time.Now().UTC().Add(istOffset)
-
-	if err := s.DB.Model(&existing).Updates(updates).Error; err != nil {
-		return err
-	}
-
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
-	return nil
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.WriteDB)
+	return &saved, nil
 }
 
 func (s *TemplateService) DeleteTemplate(id int) error {
-	result := s.DB.Where("id = ?", id).Delete(&apiModels.Templatedetails{})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
+		var lockName string
+		defer func() { releaseResolutionLock(conn, lockName) }()
+
+		return conn.Transaction(func(tx *gorm.DB) error {
+			var existing apiModels.Templatedetails
+			if err := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&existing).Error; err != nil {
+				return err
+			}
+
+			normalizeTemplate(&existing)
+			var err error
+			lockName, err = acquireResolutionLock(tx, existing)
+			if err != nil {
+				return err
+			}
+
+			result := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).Delete(&apiModels.Templatedetails{})
+			if result.Error != nil {
+				return result.Error
+			}
+
+			if result.RowsAffected == 0 {
+				return gorm.ErrRecordNotFound
+			}
+
+			return nil
+		})
+	})
+
+	if err != nil {
+		return err
 	}
 
-	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.DB)
+	cache.StoreMappedDataIntoCache(cache.TemplateDetailsData, config.Configs.TemplateDetailsTable, "Process", "Stage", s.WriteDB)
 	return nil
 }
 func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, error) {
@@ -202,6 +336,14 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 		return 0
 	}
 
+	getOptionalFloat := func(key string) *float64 {
+		if data[key] == nil {
+			return nil
+		}
+		value := getFloat(key)
+		return &value
+	}
+
 	getBool := func(key string) bool {
 		if val, ok := data[key].(int64); ok {
 			return val == 1
@@ -210,27 +352,27 @@ func mapToTemplate(data map[string]interface{}) (*apiModels.Templatedetails, err
 	}
 
 	template := &apiModels.Templatedetails{
-		Id:                getInt("Id"),
-		Client:            getStr("Client"),
-		Channel:           getStr("Channel"),
-		Process:           getStr("Process"),
-		Stage:             getFloat("Stage"),
-		Vendor:            getStr("Vendor"),
-		TemplateName:      getStr("TemplateName"),
-		ImageId:           getStr("ImageId"),
-		ImageUrl:          getStr("ImageUrl"),
-		DltTemplateId:     int64(getInt("DltTemplateId")), // stored as int64 anyway
-		TemplateEntityId:  int64(getInt("TemplateEntityId")),
-		TemplateHeader:    getStr("TemplateHeader"),
-		IsActive:          getBool("IsActive"),
-		TemplateText:      getStr("TemplateText"),
-		TemplateCategory:  int64(getInt("TemplateCategory")),
-		TemplateVariables: getStr("TemplateVariables"),
-		FromEmail:         getStr("FromEmail"),
-		Subject:           getStr("Subject"),
-		Link:              getStr("Link"),
+		Id:                   getInt("Id"),
+		Client:               getStr("Client"),
+		Channel:              getStr("Channel"),
+		Process:              getStr("Process"),
+		Stage:                getOptionalFloat("Stage"),
+		Vendor:               getStr("Vendor"),
+		TemplateName:         getStr("TemplateName"),
+		ImageId:              getStr("ImageId"),
+		ImageUrl:             getStr("ImageUrl"),
+		DltTemplateId:        int64(getInt("DltTemplateId")), // stored as int64 anyway
+		TemplateEntityId:     int64(getInt("TemplateEntityId")),
+		TemplateHeader:       getStr("TemplateHeader"),
+		IsActive:             getBool("IsActive"),
+		TemplateText:         getStr("TemplateText"),
+		TemplateCategory:     int64(getInt("TemplateCategory")),
+		TemplateVariables:    getStr("TemplateVariables"),
+		SmsFallbackVariables: getStr("SmsFallbackVariables"),
+		FromEmail:            getStr("FromEmail"),
+		Subject:              getStr("Subject"),
+		Link:                 getStr("Link"),
 	}
-
 	// CreatedOn
 	if createdOn, ok := data["CreatedOn"].(time.Time); ok {
 		template.CreatedOn = createdOn
