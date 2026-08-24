@@ -12,9 +12,14 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func ConstructTemplateKey(msg sdkModels.CommApiRequestBody) string {
-	return fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:%s",
-		msg.ProcessName, msg.Stage, msg.Client, msg.Channel, msg.Vendor)
+func ConstructTemplateKey(msg sdkModels.CommApiRequestBody) (string, error) {
+	stage, err := cache.CanonicalTemplateStage(msg.Stage)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s",
+		msg.ProcessName, stage, msg.Client, msg.Channel, msg.Vendor), nil
 }
 
 // ResolveTemplateData uses TemplateReference lookup for CommMarketingInput dispatch rows;
@@ -110,18 +115,23 @@ func templateMatchesSMSReference(row map[string]interface{}, templateRef string)
 // When the request already has an explicit vendor, cross-vendor fallback is disabled
 // so AssignVendor's selection cannot be overwritten by another active template.
 func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[string]map[string]interface{}) (map[string]interface{}, string, error) {
-	key := ConstructTemplateKey(msg)
+	key, err := ConstructTemplateKey(msg)
+	if err != nil {
+		return nil, msg.Vendor, fmt.Errorf("invalid template Stage: %w", err)
+	}
+
 	if data, ok := templateDetails[key]; ok && data["IsActive"] == variables.Active { // Check if template is active  //TODO: Check if any stage has an active and inactive template then active gets sent.
 		return data, msg.Vendor, nil
 	}
 
 	// 2. Stage fallback (same Process, same Client, same Channel, same Vendor, but any sub-stage in same integer part)
-	stageInt := int(msg.Stage)
-	stagePrefix := fmt.Sprintf("Process:%s|Stage:%d.", msg.ProcessName, stageInt)
+	canonicalStage, _ := cache.CanonicalTemplateStage(msg.Stage)
+	stageWhole := strings.SplitN(canonicalStage, ".", 2)[0]
+	stagePrefix := fmt.Sprintf("Process:%s|Stage:%s.", msg.ProcessName, stageWhole)
 
 	utils.Debug(fmt.Sprintf(
-		"No exact template found for Stage %.2f; Trying stage fallback within stage %d for vendor %s, channel %s...",
-		msg.Stage, stageInt, msg.Vendor, msg.Channel))
+		"No exact template found for Stage %.2f; Trying stage fallback within stage %s for vendor %s, channel %s...",
+		msg.Stage, stageWhole, msg.Vendor, msg.Channel))
 
 	for otherKey, val := range templateDetails {
 		if strings.HasPrefix(otherKey, stagePrefix) && val["IsActive"] == variables.Active {
@@ -145,8 +155,8 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 	// Legacy path only: empty vendor may resolve via any active vendor template for the same process/stage/channel.
 	utils.Debug(fmt.Sprintf("No template found for the given Process: %s, Stage: %.2f, Client: %s, Channel: %s; Fetching cross-vendor fallback template",
 		msg.ProcessName, msg.Stage, msg.Client, msg.Channel))
-	prefix := fmt.Sprintf("Process:%s|Stage:%.2f|Client:%s|Channel:%s|Vendor:",
-		msg.ProcessName, msg.Stage, msg.Client, msg.Channel)
+	prefix := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:",
+		msg.ProcessName, canonicalStage, msg.Client, msg.Channel)
 	for otherKey, val := range templateDetails {
 		if strings.HasPrefix(otherKey, prefix) && val["IsActive"] == variables.Active {
 			parts := strings.Split(otherKey, "|")

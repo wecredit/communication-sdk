@@ -10,6 +10,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -24,6 +25,7 @@ var (
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
 )
 
+// normalizeTemplate normalizes the template
 func normalizeTemplate(template *apiModels.Templatedetails) {
 	template.Process = strings.ToUpper(strings.TrimSpace(template.Process))
 	template.Channel = strings.ToUpper(strings.TrimSpace(template.Channel))
@@ -34,9 +36,16 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 	template.SmsFallbackVariables = strings.TrimSpace(template.SmsFallbackVariables)
 }
 
+// ValidateTemplateStructure validates the template structure
 func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	if template.Process == "" || template.Client == "" || template.Channel == "" || template.Vendor == "" {
 		return errors.New("process, client, channel, and vendor are required")
+	}
+
+	switch template.Channel {
+	case "SMS", "RCS", "WHATSAPP", "EMAIL":
+	default:
+		return fmt.Errorf("unsupported channel %q", template.Channel)
 	}
 
 	mode := templateResolutionMode(template)
@@ -55,8 +64,6 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 			if template.TemplateName == "" {
 				return fmt.Errorf("templateName is required for %s REFERENCE_MODE", template.Channel)
 			}
-		default:
-			return fmt.Errorf("unsupported channel %q", template.Channel)
 		}
 	}
 
@@ -71,6 +78,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	return nil
 }
 
+// validateActiveUniqueness validates the active uniqueness
 func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) error {
 	if !template.IsActive {
 		return nil
@@ -99,14 +107,29 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 		}
 	}
 
-	var count int64
-	if err := query.Limit(1).Count(&count).Error; err != nil {
+	// A locking read is deliberate here. UpdateTemplateById loads the row before
+	// acquiring the advisory lock, so a plain SELECT would reuse an older
+	// REPEATABLE READ snapshot and could miss a competing commit made while
+	// GET_LOCK was waiting. InnoDB locking reads use the latest committed state.
+	var existing struct {
+		Id int `gorm:"column:Id"`
+	}
+
+	err := query.
+		Select("Id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Limit(1).
+		Take(&existing).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+
+	if err != nil {
 		return fmt.Errorf("check active template uniqueness: %w", err)
 	}
-	if count > 0 {
-		return ErrTemplateConflict
-	}
-	return nil
+
+	return ErrTemplateConflict
 }
 
 func templateResolutionMode(template apiModels.Templatedetails) string {

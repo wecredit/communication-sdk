@@ -21,6 +21,11 @@ func TestValidateTemplateStructure(t *testing.T) {
 			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stage},
 		},
 		{
+			name:    "stage mode rejects unsupported channel",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "V", Stage: &stage},
+			wantErr: "unsupported channel",
+		},
+		{
 			name:    "reference sms requires dlt",
 			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V"},
 			wantErr: "dltTemplateId is required",

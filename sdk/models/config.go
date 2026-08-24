@@ -54,6 +54,13 @@ type Config struct {
 	RedisMapKey       string `envconfig:"REDIS_MAP_KEY"`
 	CommIdempotentKey string `envconfig:"COMM_IDEMPOTENT_KEY"`
 
+	// ConfigurationVersion is durable cache state. Redis pub/sub is only the
+	// fast notification path; polling this version recovers missed messages.
+	Environment                     string `envconfig:"ENVIRONMENT" default:"dev"`
+	ConfigurationVersionTable       string `envconfig:"CONFIGURATION_VERSION_TABLE" default:"ConfigurationVersion"`
+	CacheVersionPollIntervalSeconds string `envconfig:"CACHE_VERSION_POLL_INTERVAL_SECONDS" default:"90"`
+	CacheReloadMinIntervalSeconds   string `envconfig:"CACHE_RELOAD_MIN_INTERVAL_SECONDS" default:"60"`
+
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
 
