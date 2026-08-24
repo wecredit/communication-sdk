@@ -9,6 +9,7 @@ import (
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/sms/times/timesPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
+	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -35,6 +36,13 @@ func HitTimesSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.TIMES, data.Client)); err != nil {
 		timesSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		timesSmsResponse.Outcome = outcome.FailedRetryable
+		return timesSmsResponse
+	}
+
+	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to evaluate the decision
+	if decision := smspolicy.Evaluate(data.Source, data.SourceRowId, data.Channel, data.CampaignDate, smspolicy.Now()); !decision.Allowed() {
+		timesSmsResponse.ResponseMessage = decision.ErrorMessage()
+		timesSmsResponse.Outcome = outcome.FailedFinal
 		return timesSmsResponse
 	}
 

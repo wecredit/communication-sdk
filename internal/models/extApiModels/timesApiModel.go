@@ -36,6 +36,11 @@ type SmsRequestBody struct {
 	// TemplateVariableValues is optional positional CSV (CommMarketingInput.VariablesValue).
 	// ZapCash/legacy leave this empty and already set named fields above.
 	TemplateVariableValues string `json:"TemplateVariableValues,omitempty"`
+
+	// Compliance identity for the CommMarketingInput WeCredit SMS path.
+	Source       string `json:"Source,omitempty"`
+	SourceRowId  int64  `json:"SourceRowId,omitempty"`
+	CampaignDate string `json:"CampaignDate,omitempty"`
 }
 
 type SmsResponse struct {

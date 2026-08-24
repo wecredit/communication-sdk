@@ -9,6 +9,7 @@ import (
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
+	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -35,6 +36,13 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, data.Client)); err != nil {
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		sinchSmsResponse.Outcome = outcome.FailedRetryable
+		return sinchSmsResponse
+	}
+
+	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to evaluate the decision
+	if decision := smspolicy.Evaluate(data.Source, data.SourceRowId, data.Channel, data.CampaignDate, smspolicy.Now()); !decision.Allowed() {
+		sinchSmsResponse.ResponseMessage = decision.ErrorMessage()
+		sinchSmsResponse.Outcome = outcome.FailedFinal
 		return sinchSmsResponse
 	}
 

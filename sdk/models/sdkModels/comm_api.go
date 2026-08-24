@@ -39,6 +39,10 @@ type CommApiRequestBody struct {
 	// Poller sets Source=marketing and SourceRowId=CommMarketingInput.Id. ZapCash/legacy leave both empty.
 	Source      string `json:"source,omitempty" gorm:"-"`
 	SourceRowId int64  `json:"sourceRowId,omitempty" gorm:"-"`
+
+	// CampaignDate is the Asia/Kolkata date portion of CommMarketingInput.CreatedOn.
+	// It is immutable across SQS retries and stale source-row reclaims.
+	CampaignDate string `json:"campaignDate,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {
