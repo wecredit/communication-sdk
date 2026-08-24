@@ -11,6 +11,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
+	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -88,7 +89,21 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	utils.Info(fmt.Sprintf("Pinnacle SMS request prepared host=%s path=%s dltTemplateSet=%t entitySet=%t",
 		u.Host, u.EscapedPath(), data.DltTemplateId != 0, entityID != ""))
 
-	// Call API
+	// Rate limit the request
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
+		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		pinnacleSmsResponse.Outcome = outcome.FailedRetryable
+		return pinnacleSmsResponse
+	}
+
+	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to evaluate the decision
+	if decision := smspolicy.Evaluate(data.Source, data.SourceRowId, data.Channel, data.CampaignDate, smspolicy.Now()); !decision.Allowed() {
+		pinnacleSmsResponse.ResponseMessage = decision.ErrorMessage()
+		pinnacleSmsResponse.Outcome = outcome.FailedFinal
+		return pinnacleSmsResponse
+	}
+
+	// Call API only after the final post-rate-limit compliance guard.
 	apiResponse, err := callPinnacle(finalURL, data)
 	if err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("error calling pinnacle api: %v", err)
@@ -142,9 +157,6 @@ func BuildPinnacleURL(base, apiKey, sender, mobile, message string, dltTemplateI
 
 // callPinnacle executes the GET request and returns parsed JSON map. On error, also send to error queue.
 func callPinnacle(urlStr string, data extapimodels.SmsRequestBody) (map[string]interface{}, error) {
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
-		return nil, err
-	}
 	apiResponse, err := utils.ApiHit("GET", urlStr, map[string]string{}, "", "", nil, variables.ContentTypeJSON)
 	if err != nil {
 		// Push to error queue for further inspection

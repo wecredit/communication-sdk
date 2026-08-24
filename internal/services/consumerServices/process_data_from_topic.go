@@ -604,6 +604,50 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		return result.Processed, deleted
 	}
 
+	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to persist the result to the database
+	// and record the tracking for the compliance failure
+	// and delete the message from the queue
+	// and release the marketing SMS claims
+	// and return false to indicate that the message was not processed successfully
+	// and return false to indicate that the message was not processed successfully
+	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
+		exists, existsErr := database.CommDispatchTrackingExists(database.DBMarketing,
+			config.Configs.CommDispatchTrackingTable, data.Source, data.SourceRowId, "SMS")
+
+		// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
+		if existsErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] compliance tracking lookup failed: %v", data.Client, data.SourceRowId, existsErr))
+			releaseMarketingSMSClaims(data)
+			return false, false
+		}
+
+		if !exists {
+			// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
+			if outputErr := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); outputErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] compliance SMS output persistence failed: %v", data.Client, data.SourceRowId, outputErr))
+				releaseMarketingSMSClaims(data)
+				return false, false
+			}
+
+			// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
+			if trackingErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackingErr != nil {
+				releaseMarketingSMSClaims(data)
+				return false, false
+			}
+		}
+
+		if redisErr := channelHelper.UpdateRedisErrorMessage(data, complianceFailureMessage(result)); redisErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] failed to cache compliance result: %v", data.Client, data.SourceRowId, redisErr))
+		}
+
+		deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if !deleted {
+			utils.Error(fmt.Errorf("failed to delete compliance-blocked marketing SMS after persistence: %v", delErr))
+		}
+
+		return true, deleted
+	}
+
 	outputWritten := false
 	if marketing && result.AckSQS {
 		outputErr, trackingErr := RunParallelSMSPostSendWrites(
@@ -614,7 +658,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 				return recordMarketingSMSTrackingFromSend(data, result, nil)
 			},
 		)
-		
+
 		outputWritten = true
 		if outputErr != nil || trackingErr != nil {
 			outputStatus := "succeeded"
@@ -662,6 +706,19 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	return result.Processed, deleted
+}
+
+func complianceFailureMessage(result sms.SendSmsResult) string {
+	message, _ := result.DBData["ResponseMessage"].(string)
+	return strings.TrimSpace(message)
+}
+
+// isWeCreditSMSComplianceFailure checks if the given result is a compliance failure for a WeCredit SMS
+func isWeCreditSMSComplianceFailure(result sms.SendSmsResult) bool {
+	message := complianceFailureMessage(result)
+	return strings.Contains(message, "WECREDIT_SMS_CUTOFF") ||
+		strings.Contains(message, "WECREDIT_SMS_EXPIRED") ||
+		strings.Contains(message, "WECREDIT_SMS_CAMPAIGN_DATE_INVALID")
 }
 
 // RunParallelSMSPostSendWrites starts both independent post-send writes and
@@ -904,7 +961,7 @@ func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, resul
 }
 
 func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
-	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommMarketingInputTable, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
 		Channel:           "SMS",
@@ -922,6 +979,12 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
 		return nil
 	}
+
+	if errors.Is(err, database.ErrDispatchSourceAlreadyTerminal) {
+		utils.Info(fmt.Sprintf("dispatch source already terminal sourceRowId=%d; preserving first terminal outcome", data.SourceRowId))
+		return nil
+	}
+
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
 		return err
