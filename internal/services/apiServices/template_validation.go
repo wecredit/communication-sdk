@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -17,11 +18,19 @@ import (
 const (
 	ResolutionModeStage     = "STAGE_MODE"
 	ResolutionModeReference = "REFERENCE_MODE"
+
+	rcsTransactionalTemplateCategory int64 = 1
+	rcsPromotionalTemplateCategory   int64 = 2
+	smsServiceImplicitCategory       int64 = 3
+	smsServiceExplicitCategory       int64 = 4
 )
+
+var pinnacleRCSTemplateIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{24}$`)
 
 var (
 	ErrTemplateNotFound   = errors.New("template not found")
 	ErrTemplateConflict   = errors.New("active template conflicts with an existing resolution key")
+	ErrTemplateDuplicate  = errors.New("an identical template already exists")
 	ErrTemplateValidation = errors.New("template validation failed")
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
 )
@@ -37,6 +46,52 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 	template.SmsFallbackVariables = strings.TrimSpace(template.SmsFallbackVariables)
 }
 
+// validateCreateDuplicate rejects a repeated create with identical business
+// fields. IsActive is deliberately excluded: callers should update the
+// existing row when only its active state needs to change.
+func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) error {
+	query := db.Table(config.Configs.TemplateDetailsTable).
+		Where(
+			`Client = ? AND Channel = ? AND Process = ? AND Vendor = ?
+			AND TemplateName = ? AND ImageId = ? AND ImageUrl = ?
+			AND DltTemplateId = ? AND TemplateEntityId = ? AND TemplateHeader = ?
+			AND TemplateText = ? AND Link = ? AND TemplateCategory = ?
+			AND TemplateVariables = ? AND SmsFallbackVariables = ?
+			AND Subject = ? AND FromEmail = ?`,
+			template.Client, template.Channel, template.Process, template.Vendor,
+			template.TemplateName, template.ImageId, template.ImageUrl,
+			template.DltTemplateId, template.TemplateEntityId, template.TemplateHeader,
+			template.TemplateText, template.Link, template.TemplateCategory,
+			template.TemplateVariables, template.SmsFallbackVariables,
+			template.Subject, template.FromEmail,
+		)
+
+	if template.Stage == nil {
+		query = query.Where("Stage IS NULL")
+	} else {
+		query = query.Where("Stage = ?", *template.Stage)
+	}
+
+	var existing struct {
+		Id int `gorm:"column:Id"`
+	}
+
+	err := query.
+		Select("Id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Limit(1).
+		Take(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("check duplicate template: %w", err)
+	}
+
+	return fmt.Errorf("%w: template id %d", ErrTemplateDuplicate, existing.Id)
+}
+
 // ValidateTemplateStructure validates the template structure
 func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	if template.Process == "" || template.Client == "" || template.Channel == "" || template.Vendor == "" {
@@ -47,6 +102,26 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	case "SMS", "RCS", "WHATSAPP", "EMAIL":
 	default:
 		return fmt.Errorf("unsupported channel %q", template.Channel)
+	}
+
+	switch template.Channel {
+	case "RCS":
+		if template.TemplateCategory != rcsTransactionalTemplateCategory &&
+			template.TemplateCategory != rcsPromotionalTemplateCategory {
+			return errors.New("templateCategory must be 1 (transactional) or 2 (promotional) for RCS")
+		}
+
+	case "SMS":
+		if template.TemplateCategory != smsServiceImplicitCategory &&
+			template.TemplateCategory != smsServiceExplicitCategory {
+			return errors.New("templateCategory must be 3 (service implicit) or 4 (service explicit) for SMS")
+		}
+	}
+
+	if template.Channel == "SMS" || template.Channel == "RCS" {
+		if err := validateTemplateVariablePlaceholders(template.TemplateText, template.TemplateVariables); err != nil {
+			return err
+		}
 	}
 
 	mode := templateResolutionMode(template)
@@ -75,6 +150,10 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	if template.Channel == "RCS" {
+		if template.Vendor == "PINNACLE" && !pinnacleRCSTemplateIDPattern.MatchString(template.TemplateName) {
+			return errors.New("templateName must be the 24-character hexadecimal Pinnacle RCS template _id")
+		}
+
 		hasFallbackID := template.DltTemplateId > 0
 		hasFallbackVariables := template.SmsFallbackVariables != ""
 		if hasFallbackID != hasFallbackVariables {
@@ -83,6 +162,165 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	return nil
+}
+
+// validateTemplateVariablePlaceholders keeps the stored variable order aligned
+// with the generic DLT placeholders consumed by the sending code. Each
+// {#var#} occurrence represents exactly one comma-separated variable name.
+func validateTemplateVariablePlaceholders(templateText, templateVariables string) error {
+	placeholderCount := strings.Count(templateText, "{#var#}")
+	variables, err := parseTemplateVariables(templateVariables)
+	if err != nil {
+		return err
+	}
+
+	if len(variables) != placeholderCount {
+		return fmt.Errorf(
+			"templateVariables contains %d entries but templateText contains %d {#var#} placeholders",
+			len(variables), placeholderCount,
+		)
+	}
+
+	for _, variable := range variables {
+		if strings.EqualFold(variable, "var") && (len(variables) != 1 || placeholderCount != 1) {
+			return errors.New(`the general template variable "var" may only be used as the single variable for one {#var#} placeholder`)
+		}
+	}
+
+	return nil
+}
+
+func parseTemplateVariables(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	variables := make([]string, 0, len(parts))
+	for _, part := range parts {
+		variable := strings.TrimSpace(part)
+		if variable == "" {
+			return nil, errors.New("templateVariables must be a comma-separated list without empty entries")
+		}
+		variables = append(variables, variable)
+	}
+
+	return variables, nil
+}
+
+// validateStagePrerequisites ensures a stage-mode template can be selected by
+// nurture-engine. TemplateDetails.Process is the runtime LenderName, while the
+// decimal Stage stores Stage.SubStage (for example, 2.10 means Stage=2 and
+// SubStage=10). Reference-mode templates bypass nurture stage resolution.
+func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails) error {
+	if template.Stage == nil {
+		return nil
+	}
+
+	canonicalStage, err := cache.CanonicalTemplateStage(*template.Stage)
+	if err != nil {
+		return fmt.Errorf("derive stage prerequisites: %w", err)
+	}
+
+	parts := strings.SplitN(canonicalStage, ".", 2)
+	stage, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return fmt.Errorf("derive whole stage from %q: %w", canonicalStage, err)
+	}
+
+	subStage, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return fmt.Errorf("derive substage from %q: %w", canonicalStage, err)
+	}
+
+	var lenderSchedules []struct {
+		Interval string `gorm:"column:Interval"`
+	}
+
+	if err := db.Table(config.Configs.LenderStagesTable).
+		Select("`Interval`").
+		Where("LenderName = ? AND CommType = ? AND Stage = ?", template.Process, template.Channel, stage).
+		Find(&lenderSchedules).Error; err != nil {
+		return fmt.Errorf("check lender schedule prerequisite: %w", err)
+	}
+
+	hasValidLenderSchedule := false
+	for _, schedule := range lenderSchedules {
+		if validLenderScheduleIntervals(schedule.Interval) {
+			hasValidLenderSchedule = true
+			break
+		}
+	}
+
+	var stageMappingCount int64
+	if err := db.Table(config.Configs.TemplateStageTable).
+		Where(
+			"LenderName = ? AND CommType = ? AND Stage = ? AND SubStage = ?",
+			template.Process, template.Channel, stage, subStage,
+		).
+		Count(&stageMappingCount).Error; err != nil {
+		return fmt.Errorf("check template stage prerequisite: %w", err)
+	}
+
+	missing := make([]string, 0, 2)
+	if !hasValidLenderSchedule {
+		missing = append(missing, fmt.Sprintf("%s entry for Stage %d with a valid non-empty Interval", config.Configs.LenderStagesTable, stage))
+	}
+
+	if stageMappingCount == 0 {
+		missing = append(missing, fmt.Sprintf("%s entry for Stage %d and SubStage %d", config.Configs.TemplateStageTable, stage, subStage))
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: stage configuration is missing for client %q, process/lender %q, channel %q, stage %s: create %s before adding or updating this template",
+		ErrTemplateValidation,
+		template.Client,
+		template.Process,
+		template.Channel,
+		canonicalStage,
+		strings.Join(missing, " and "),
+	)
+}
+
+// validLenderScheduleIntervals mirrors the interval grammar currently consumed
+// by nurture-engine: semicolon-separated signed day/hour/minute offsets or
+// weekday names. Every configured token must be usable.
+func validLenderScheduleIntervals(raw string) bool {
+	tokens := strings.Split(raw, ";")
+	if len(tokens) == 0 {
+		return false
+	}
+
+	for _, token := range tokens {
+		token = strings.ToLower(strings.TrimSpace(token))
+		if token == "" {
+			return false
+		}
+
+		switch token {
+		case "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+			continue
+		}
+
+		if len(token) < 2 {
+			return false
+		}
+
+		unit := token[len(token)-1]
+		if unit != 'd' && unit != 'h' && unit != 'm' {
+			return false
+		}
+
+		if _, err := strconv.Atoi(token[:len(token)-1]); err != nil {
+			return false
+		}
+	}
+
+	return true
 }
 
 // validateActiveUniqueness validates the active uniqueness
@@ -147,8 +385,8 @@ func templateResolutionMode(template apiModels.Templatedetails) string {
 }
 
 // resolutionLockName returns a stable, non-sensitive MySQL advisory-lock name.
-// GET_LOCK serializes only mutations targeting the same active resolution key,
-// providing race protection without a generated database column.
+// GET_LOCK serializes mutations targeting the same resolution key, providing
+// race protection without a generated database column.
 func resolutionLockName(template apiModels.Templatedetails) string {
 	parts := []string{
 		templateResolutionMode(template),
@@ -173,15 +411,24 @@ func acquireResolutionLock(db *gorm.DB, template apiModels.Templatedetails) (str
 	if !template.IsActive {
 		return "", nil
 	}
+	return acquireNamedResolutionLock(db, template)
+}
 
+// acquireCreateResolutionLock serializes active and inactive creates so two
+// concurrent identical requests cannot both pass duplicate validation.
+func acquireCreateResolutionLock(db *gorm.DB, template apiModels.Templatedetails) (string, error) {
+	return acquireNamedResolutionLock(db, template)
+}
+
+func acquireNamedResolutionLock(db *gorm.DB, template apiModels.Templatedetails) (string, error) {
 	name := resolutionLockName(template)
 	var acquired int
 	if err := db.Raw("SELECT GET_LOCK(?, 10)", name).Scan(&acquired).Error; err != nil {
-		return "", fmt.Errorf("acquire active-template lock: %w", err)
+		return "", fmt.Errorf("acquire template uniqueness lock: %w", err)
 	}
 
 	if acquired != 1 {
-		return "", fmt.Errorf("%w: timed out waiting for active-template uniqueness lock", ErrTemplateBusy)
+		return "", fmt.Errorf("%w: timed out waiting for template uniqueness lock", ErrTemplateBusy)
 	}
 
 	return name, nil

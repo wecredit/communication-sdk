@@ -67,6 +67,25 @@ func TestSnapshotRejectsDuplicateActiveResolutionKey(t *testing.T) {
 	}
 }
 
+func TestSnapshotIgnoresInactiveDuplicateResolutionKey(t *testing.T) {
+	active := stageTemplate(14, 2.00, "RCS")
+	active.Process = "OLYV"
+	active.TemplateName = "olyv_stage_2_5_e_mar"
+
+	inactive := active
+	inactive.Id = 15
+	inactive.TemplateName = "olyv_stage_2_h_5_mar"
+	inactive.IsActive = false
+
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{active, inactive})
+	if err != nil {
+		t.Fatalf("inactive duplicate blocked snapshot: %v", err)
+	}
+	if len(snapshot.Templates) != 1 {
+		t.Fatalf("snapshot contains %d templates, want only the active row", len(snapshot.Templates))
+	}
+}
+
 func TestFailedBuildRetainsLastKnownGoodSnapshot(t *testing.T) {
 	good, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{stageTemplate(20, 3.00, "SMS")})
 	if err != nil {

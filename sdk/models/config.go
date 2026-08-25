@@ -84,6 +84,8 @@ type Config struct {
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
 	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
+	LenderStagesTable    string `envconfig:"LENDER_STAGES_TABLE_NAME" default:"LendersStages"`
+	TemplateStageTable   string `envconfig:"TEMPLATE_STAGE_TABLE_NAME" default:"TemplateStage"`
 
 	CommAuditTable string `envconfig:"COMM_AUDIT_TABLE"`
 

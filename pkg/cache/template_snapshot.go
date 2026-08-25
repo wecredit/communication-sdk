@@ -35,6 +35,12 @@ func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot,
 		if row.Id <= 0 {
 			return nil, fmt.Errorf("template snapshot contains invalid Id %d", row.Id)
 		}
+		// The runtime cache resolves only active templates. Inactive historical or
+		// alternate rows may legitimately share a stage resolution tuple and must
+		// not block startup or compete with the active row.
+		if !row.IsActive {
+			continue
+		}
 
 		process := strings.TrimSpace(row.Process)
 		client := strings.TrimSpace(row.Client)
@@ -60,10 +66,6 @@ func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot,
 		}
 
 		templates[cacheKey] = templateCacheData(row)
-
-		if !row.IsActive {
-			continue
-		}
 
 		resolutionKey, reason := activeTemplateResolutionKey(row, stage, client, channel, vendor)
 		if reason != "" {

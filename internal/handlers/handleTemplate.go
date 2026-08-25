@@ -83,7 +83,7 @@ func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
 		return
 	}
 
-	writeTemplateSuccess(c, http.StatusOK, template, "Template retrieved successfully", nil)
+	writeTemplateSuccess(c, http.StatusOK, apiModels.NewTemplateDetailsResponse(template), "Template details retrieved successfully", nil)
 }
 
 func (h *TemplateHandler) AddTemplate(c *gin.Context) {
@@ -106,7 +106,7 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 		return
 	}
 
-	writeTemplateSuccess(c, http.StatusCreated, template, "Template created successfully", nil)
+	writeTemplateSuccess(c, http.StatusCreated, gin.H{"id": template.Id}, "Template created successfully", nil)
 }
 
 func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
@@ -135,7 +135,7 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 		return
 	}
 
-	writeTemplateSuccess(c, http.StatusOK, template, "Template updated successfully", nil)
+	writeTemplateSuccess(c, http.StatusOK, apiModels.NewTemplateDetailsResponse(template), "Template updated successfully", nil)
 }
 
 func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
@@ -237,6 +237,9 @@ func writeTemplateServiceError(c *gin.Context, err error) {
 
 	case errors.Is(err, services.ErrTemplateConflict):
 		writeTemplateError(c, http.StatusConflict, "TEMPLATE_CONFLICT", err.Error())
+
+	case errors.Is(err, services.ErrTemplateDuplicate):
+		writeTemplateError(c, http.StatusConflict, "TEMPLATE_DUPLICATE", err.Error())
 
 	case errors.Is(err, services.ErrTemplateValidation):
 		message := strings.TrimPrefix(err.Error(), services.ErrTemplateValidation.Error()+": ")

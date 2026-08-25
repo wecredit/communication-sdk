@@ -51,12 +51,12 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 		return nil, fmt.Errorf("count templates: %w", err)
 	}
 
-	templates := make([]apiModels.Templatedetails, 0, params.PageSize)
+	templates := make([]apiModels.TemplateListItem, 0, params.PageSize)
 	offset := (params.Page - 1) * params.PageSize
 
-	// get the templates from the database
 	if err := query.
-		Order("Client, Channel, Process, Stage, Vendor, Id").
+		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, DltTemplateId, IsActive, CreatedOn, UpdatedOn").
+		Order("UpdatedOn DESC, Id DESC").
 		Limit(params.PageSize).
 		Offset(offset).
 		Find(&templates).Error; err != nil {
@@ -98,8 +98,16 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 
 		return conn.Transaction(func(tx *gorm.DB) error {
 			var err error
-			lockName, err = acquireResolutionLock(tx, *template)
+			lockName, err = acquireCreateResolutionLock(tx, *template)
 			if err != nil {
+				return err
+			}
+
+			if err := validateStagePrerequisites(tx, *template); err != nil {
+				return err
+			}
+
+			if err := validateCreateDuplicate(tx, *template); err != nil {
 				return err
 			}
 
@@ -122,6 +130,14 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 
 	if err != nil {
 		return err
+	}
+
+	if invalidationVersion == 0 {
+		utils.Info(fmt.Sprintf(
+			"template cache reload not required (operation=create templateId=%d reason=template-is-inactive)",
+			template.Id,
+		))
+		return nil
 	}
 
 	publishTemplateInvalidation(invalidationVersion)
@@ -154,6 +170,10 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			var err error
 			lockName, err = acquireResolutionLock(tx, saved)
 			if err != nil {
+				return err
+			}
+
+			if err := validateStagePrerequisites(tx, saved); err != nil {
 				return err
 			}
 
@@ -245,5 +265,11 @@ func publishTemplateInvalidation(templateVersion int64) {
 	if err := configurationcache.PublishTemplateInvalidation(ctx, internalredis.RDB, config.Configs.Environment, templateVersion); err != nil {
 		// The transaction is already committed. Version polling recovers a missed event.
 		utils.Error(err)
+		return
 	}
+
+	utils.Info(fmt.Sprintf(
+		"template cache invalidation published (environment=%s templateVersion=%d)",
+		config.Configs.Environment, templateVersion,
+	))
 }

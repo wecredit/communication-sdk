@@ -1,30 +1,31 @@
-package sms
+package sms_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
 )
 
-func TestSMSRequestFromMessagePreservesDLTTemplateReference(t *testing.T) {
-	msg := sdkModels.CommApiRequestBody{
+func TestTerminalReplayResultPreservesDLTTemplateReference(t *testing.T) {
+	result := sms.TerminalReplayResult(sdkModels.CommApiRequestBody{
 		TemplateReference: "1707177364212095135",
-	}
+	}, "", "")
 
-	req := smsRequestFromMessage(msg)
-	if req.DltTemplateId != 1707177364212095135 {
-		t.Fatalf("DltTemplateId = %d, want 1707177364212095135", req.DltTemplateId)
+	if result.DBData["DltTemplateId"] != int64(1707177364212095135) {
+		t.Fatalf("DltTemplateId = %#v, want expected DLT ID", result.DBData["DltTemplateId"])
 	}
 }
 
-func TestSMSRequestFromMessageLeavesMalformedDLTTemplateReferenceUnset(t *testing.T) {
-	msg := sdkModels.CommApiRequestBody{TemplateReference: "not-a-dlt-id"}
+func TestTerminalReplayResultLeavesMalformedDLTTemplateReferenceUnset(t *testing.T) {
+	result := sms.TerminalReplayResult(sdkModels.CommApiRequestBody{
+		TemplateReference: "not-a-dlt-id",
+	}, "", "")
 
-	req := smsRequestFromMessage(msg)
-	if req.DltTemplateId != 0 {
-		t.Fatalf("DltTemplateId = %d, want 0", req.DltTemplateId)
+	if result.DBData["DltTemplateId"] != int64(0) {
+		t.Fatalf("DltTemplateId = %#v, want int64(0)", result.DBData["DltTemplateId"])
 	}
 }
 
@@ -38,7 +39,7 @@ func TestComplianceBlockedResultPreservesDLTTemplateReference(t *testing.T) {
 	})
 	t.Cleanup(restoreClock)
 
-	result, err := SendSmsByProcess(sdkModels.CommApiRequestBody{
+	result, err := sms.SendSmsByProcess(sdkModels.CommApiRequestBody{
 		Source:            "marketing",
 		SourceRowId:       42,
 		Channel:           "SMS",
@@ -56,7 +57,7 @@ func TestComplianceBlockedResultPreservesDLTTemplateReference(t *testing.T) {
 }
 
 func TestTerminalReplayResultPreservesTerminalAuditIdentity(t *testing.T) {
-	result := TerminalReplayResult(sdkModels.CommApiRequestBody{
+	result := sms.TerminalReplayResult(sdkModels.CommApiRequestBody{
 		CommId:            "comm-42",
 		Vendor:            "SINCH",
 		TemplateReference: "1707177364212095135",

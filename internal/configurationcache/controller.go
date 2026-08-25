@@ -106,6 +106,10 @@ func StartController(ctx context.Context, readDB *gorm.DB, redis *redisclient.Cl
 		_ = subscription.Close()
 		return nil, fmt.Errorf("establish cache invalidation subscription: %w", err)
 	}
+	utils.Info(fmt.Sprintf(
+		"template cache invalidation subscription established (environment=%s channel=%s)",
+		options.Environment, channel,
+	))
 
 	go controller.runWorker(ctx)
 	go controller.runSubscriber(ctx, subscription)
@@ -191,6 +195,11 @@ func (c *Controller) runSubscriber(ctx context.Context, subscription *redisclien
 				}
 
 				utils.Error(fmt.Errorf("establish cache invalidation subscription: %w", err))
+			} else {
+				utils.Info(fmt.Sprintf(
+					"template cache invalidation subscription re-established (environment=%s channel=%s)",
+					c.options.Environment, channel,
+				))
 			}
 		}
 
@@ -219,6 +228,10 @@ func (c *Controller) runSubscriber(ctx context.Context, subscription *redisclien
 				utils.Error(fmt.Errorf("decode cache invalidation: %w", unmarshalErr))
 				continue
 			}
+			utils.Info(fmt.Sprintf(
+				"template cache invalidation received (environment=%s channel=%s templateVersion=%d)",
+				c.options.Environment, message.Channel, event.TemplateVersion,
+			))
 
 			// request a reload of the template cache
 			c.requestReload(reloadRequest{

@@ -19,7 +19,7 @@ func TestValidateTemplateStructure(t *testing.T) {
 	}{
 		{
 			name:  "valid stage mode",
-			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stage},
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stage, TemplateCategory: 3},
 		},
 		{
 			name:    "stage mode rejects unsupported channel",
@@ -28,13 +28,49 @@ func TestValidateTemplateStructure(t *testing.T) {
 		},
 		{
 			name:    "stage mode rejects more than two decimal places",
-			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stageWithTooManyDecimals},
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stageWithTooManyDecimals, TemplateCategory: 3},
 			wantErr: "more than two decimal places",
 		},
 		{
 			name:    "reference sms requires dlt",
-			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V"},
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", TemplateCategory: 3},
 			wantErr: "dltTemplateId is required",
+		},
+		{
+			name:  "sms accepts service implicit category",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3},
+		},
+		{
+			name:  "sms accepts service explicit category",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 4},
+		},
+		{
+			name:    "sms rejects rcs category",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 1},
+			wantErr: "3 (service implicit) or 4 (service explicit)",
+		},
+		{
+			name:  "sms accepts matching placeholders and variables",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hi {#var#}, pay at {#var#}", TemplateVariables: "CustomerName,PaymentLink"},
+		},
+		{
+			name:    "sms rejects placeholder variable count mismatch",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hi {#var#}, pay at {#var#}", TemplateVariables: "CustomerName"},
+			wantErr: "contains 1 entries but templateText contains 2",
+		},
+		{
+			name:    "sms rejects variables without placeholders",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hello", TemplateVariables: "CustomerName"},
+			wantErr: "contains 1 entries but templateText contains 0",
+		},
+		{
+			name:  "sms accepts one general variable",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hello {#var#}", TemplateVariables: "var"},
+		},
+		{
+			name:    "sms rejects repeated general variable",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hello {#var#} {#var#}", TemplateVariables: "var,var"},
+			wantErr: "may only be used as the single variable",
 		},
 		{
 			name:  "valid reference whatsapp",
@@ -42,8 +78,35 @@ func TestValidateTemplateStructure(t *testing.T) {
 		},
 		{
 			name:    "rcs fallback fields are paired",
-			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", DltTemplateId: 1},
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", DltTemplateId: 1, TemplateCategory: 1},
 			wantErr: "must both be present",
+		},
+		{
+			name:    "pinnacle rcs rejects a display name as template identifier",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "PINNACLE", TemplateName: "rcs_payment_reminder_v1", TemplateCategory: 1},
+			wantErr: "24-character hexadecimal",
+		},
+		{
+			name:  "pinnacle rcs accepts provider template id",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "PINNACLE", TemplateName: "6a59d83ad71b67a8f6d8030a", TemplateCategory: 1},
+		},
+		{
+			name:  "rcs accepts promotional category",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", TemplateCategory: 2},
+		},
+		{
+			name:    "rcs rejects sms category",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", TemplateCategory: 3},
+			wantErr: "1 (transactional) or 2 (promotional)",
+		},
+		{
+			name:  "rcs accepts matching placeholders and variables",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", TemplateCategory: 1, TemplateText: "Hello {#var#}", TemplateVariables: "CustomerName"},
+		},
+		{
+			name:    "rcs rejects placeholder variable count mismatch",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", TemplateCategory: 1, TemplateText: "Hello {#var#}", TemplateVariables: "CustomerName,PaymentLink"},
+			wantErr: "contains 2 entries but templateText contains 1",
 		},
 	}
 
