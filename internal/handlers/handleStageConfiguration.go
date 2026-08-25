@@ -136,22 +136,6 @@ func (h *StageConfigurationHandler) ListStageMappings(c *gin.Context) {
 	writeTemplateSuccess(c, http.StatusOK, result.Items, "Stage mappings retrieved successfully", paginationMeta(result.TotalItems, params.Page, params.PageSize))
 }
 
-func (h *StageConfigurationHandler) GetStageMapping(c *gin.Context) {
-	id, err := parseConfigurationID(c.Param("id"))
-	if err != nil {
-		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-		return
-	}
-
-	result, err := h.Service.GetStageMapping(id)
-	if err != nil {
-		writeStageConfigurationServiceError(c, err)
-		return
-	}
-
-	writeTemplateSuccess(c, http.StatusOK, result, "Stage mapping retrieved successfully", nil)
-}
-
 func (h *StageConfigurationHandler) DeleteStageMapping(c *gin.Context) {
 	id, err := parseConfigurationID(c.Param("id"))
 	if err != nil {

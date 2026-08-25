@@ -91,7 +91,6 @@ func StartConsumer(port string) {
 	stageMappings := r.Group("/stage-mappings")
 	{
 		stageMappings.GET("", stageConfigurationHandler.ListStageMappings)
-		stageMappings.GET("/id/:id", stageConfigurationHandler.GetStageMapping)
 		stageMappings.DELETE("/id/:id", stageConfigurationHandler.DeleteStageMapping)
 	}
 
