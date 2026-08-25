@@ -537,8 +537,22 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if skipSend {
-			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
-				return false, false
+			// Blank Redis state means another worker is still in flight. A terminal
+			// Redis state is a redelivery and must repair both audit sinks before ACK.
+			if strings.TrimSpace(redisTxn) != "" || strings.TrimSpace(redisErr) != "" {
+				replayResult := sms.TerminalReplayResult(data, redisTxn, redisErr)
+				outputErr, trackingErr := RunParallelSMSPostSendWrites(
+					func() error {
+						return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, replayResult.DBData)
+					},
+					func() error {
+						return recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+					},
+				)
+				if outputErr != nil || trackingErr != nil {
+					logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+					return false, false
+				}
 			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
@@ -604,36 +618,23 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		return result.Processed, deleted
 	}
 
-	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to persist the result to the database
-	// and record the tracking for the compliance failure
-	// and delete the message from the queue
-	// and release the marketing SMS claims
-	// and return false to indicate that the message was not processed successfully
-	// and return false to indicate that the message was not processed successfully
+	// Compliance failures are terminal only after both independent databases
+	// confirm persistence. The independent idempotent writes run concurrently;
+	// SQS acknowledgement still waits for both of them to complete successfully.
 	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
-		exists, existsErr := database.CommDispatchTrackingExists(database.DBMarketing,
-			config.Configs.CommDispatchTrackingTable, data.Source, data.SourceRowId, "SMS")
+		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+			func() error {
+				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+			},
+			func() error {
+				return recordMarketingSMSTrackingFromSend(data, result, nil)
+			},
+		)
 
-		// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
-		if existsErr != nil {
-			utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] compliance tracking lookup failed: %v", data.Client, data.SourceRowId, existsErr))
+		if outputErr != nil || trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
 			releaseMarketingSMSClaims(data)
 			return false, false
-		}
-
-		if !exists {
-			// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
-			if outputErr := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); outputErr != nil {
-				utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] compliance SMS output persistence failed: %v", data.Client, data.SourceRowId, outputErr))
-				releaseMarketingSMSClaims(data)
-				return false, false
-			}
-
-			// If the compliance tracking lookup fails, then we need to release the marketing SMS claims
-			if trackingErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackingErr != nil {
-				releaseMarketingSMSClaims(data)
-				return false, false
-			}
 		}
 
 		if redisErr := channelHelper.UpdateRedisErrorMessage(data, complianceFailureMessage(result)); redisErr != nil {
@@ -658,32 +659,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 				return recordMarketingSMSTrackingFromSend(data, result, nil)
 			},
 		)
-
 		outputWritten = true
 		if outputErr != nil || trackingErr != nil {
-			outputStatus := "succeeded"
-			if outputErr != nil {
-				outputStatus = outputErr.Error()
-			}
-
-			trackingStatus := "succeeded"
-			if trackingErr != nil {
-				trackingStatus = trackingErr.Error()
-			}
-
-			utils.Error(fmt.Errorf(
-				"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
-				data.Client,
-				data.CommId,
-				data.EventId,
-				outputStatus,
-				trackingStatus,
-			))
-		}
-
-		// Preserve the existing tracking failure behavior: do not reach SQS
-		// deletion when CommDispatchTracking failed. SmsOutput remains log-only.
-		if trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
 			return false, false
 		}
 	} else if marketing && !result.AckSQS {
@@ -721,8 +699,9 @@ func isWeCreditSMSComplianceFailure(result sms.SendSmsResult) bool {
 		strings.Contains(message, "WECREDIT_SMS_CAMPAIGN_DATE_INVALID")
 }
 
-// RunParallelSMSPostSendWrites starts both independent post-send writes and
-// waits for both to finish. Callers retain sink-specific failure handling.
+// RunParallelSMSPostSendWrites executes the independent audit writes together
+// and waits for both results. The caller must not acknowledge SQS unless both
+// returned errors are nil.
 func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outputErr, trackingErr error) {
 	var group errgroup.Group
 	group.Go(func() error {
@@ -735,6 +714,23 @@ func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outp
 	})
 	_ = group.Wait()
 	return outputErr, trackingErr
+}
+
+func logSMSPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputErr, trackingErr error) {
+	outputStatus := "succeeded"
+	if outputErr != nil {
+		outputStatus = outputErr.Error()
+	}
+
+	trackingStatus := "succeeded"
+	if trackingErr != nil {
+		trackingStatus = trackingErr.Error()
+	}
+
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
+		data.Client, data.CommId, data.EventId, outputStatus, trackingStatus,
+	))
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {

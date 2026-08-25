@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 }
 
 func smsRequestFromMessage(msg sdkModels.CommApiRequestBody) extapimodels.SmsRequestBody {
+	dltTemplateID, _ := strconv.ParseInt(strings.TrimSpace(msg.TemplateReference), 10, 64)
 	return extapimodels.SmsRequestBody{
 		Mobile:                 msg.Mobile,
 		Process:                msg.ProcessName,
@@ -141,6 +143,7 @@ func smsRequestFromMessage(msg sdkModels.CommApiRequestBody) extapimodels.SmsReq
 		Channel:                msg.Channel,
 		CommId:                 msg.CommId,
 		Vendor:                 msg.Vendor,
+		DltTemplateId:          dltTemplateID,
 		EmiAmount:              msg.EmiAmount,
 		CustomerName:           msg.CustomerName,
 		LoanId:                 msg.LoanId,
@@ -167,6 +170,25 @@ func complianceBlockedResult(msg sdkModels.CommApiRequestBody, req extapimodels.
 		decision.CurrentIST.Format(time.RFC3339), decision.Code))
 
 	return buildSmsResult(msg, req, response)
+}
+
+// TerminalReplayResult reconstructs the durable SMS output for an SQS
+// redelivery whose provider result is already stored in Redis. It never calls a
+// provider and lets the consumer repair a partially completed audit write.
+func TerminalReplayResult(msg sdkModels.CommApiRequestBody, transactionID, errorMessage string) SendSmsResult {
+	response := extapimodels.SmsResponse{
+		TransactionId:   strings.TrimSpace(transactionID),
+		ResponseMessage: strings.TrimSpace(errorMessage),
+		Outcome:         outcome.FailedFinal,
+	}
+
+	if response.TransactionId != "" {
+		response.Outcome = outcome.Submitted
+		response.ResponseMessage = ""
+	}
+
+	result, _ := buildSmsResult(msg, smsRequestFromMessage(msg), response)
+	return result
 }
 
 func countComplianceDecision(decision smspolicy.Decision, msg sdkModels.CommApiRequestBody) {
