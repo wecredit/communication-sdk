@@ -94,15 +94,27 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
-		defer func() { releaseResolutionLock(conn, lockName) }()
+		var stageLocks []string
+		defer func() {
+			releaseResolutionLock(conn, lockName)
+			releaseStageConfigurationLocks(conn, stageLocks)
+		}()
+
+		stageIdentity, err := templateStageLockIdentity(*template)
+		if err != nil {
+			return fmt.Errorf("derive template stage lock: %w", err)
+		}
+
+		stageLocks, err = acquireStageConfigurationLocks(conn, stageIdentity)
+		if err != nil {
+			return err
+		}
+		lockName, err = acquireCreateResolutionLock(conn, *template)
+		if err != nil {
+			return err
+		}
 
 		return conn.Transaction(func(tx *gorm.DB) error {
-			var err error
-			lockName, err = acquireCreateResolutionLock(tx, *template)
-			if err != nil {
-				return err
-			}
-
 			if err := validateStagePrerequisites(tx, *template); err != nil {
 				return err
 			}
@@ -150,7 +162,11 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
-		defer func() { releaseResolutionLock(conn, lockName) }()
+		var stageLocks []string
+		defer func() {
+			releaseResolutionLock(conn, lockName)
+			releaseStageConfigurationLocks(conn, stageLocks)
+		}()
 
 		return conn.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&saved).Error; err != nil {
@@ -167,7 +183,15 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 				return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
 			}
 
-			var err error
+			stageIdentity, err := templateStageLockIdentity(saved)
+			if err != nil {
+				return fmt.Errorf("derive template stage lock: %w", err)
+			}
+
+			stageLocks, err = acquireStageConfigurationLocks(tx, stageIdentity)
+			if err != nil {
+				return err
+			}
 			lockName, err = acquireResolutionLock(tx, saved)
 			if err != nil {
 				return err

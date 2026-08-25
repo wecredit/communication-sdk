@@ -205,6 +205,7 @@ func ensureJSONBodyEnded(decoder *json.Decoder) error {
 		if err == nil {
 			return errors.New("request body must contain exactly one JSON object")
 		}
+
 		return fmt.Errorf("request body is invalid: %w", err)
 	}
 	return nil
@@ -245,7 +246,7 @@ func writeTemplateServiceError(c *gin.Context, err error) {
 		message := strings.TrimPrefix(err.Error(), services.ErrTemplateValidation.Error()+": ")
 		writeTemplateError(c, http.StatusBadRequest, "TEMPLATE_VALIDATION_FAILED", message)
 
-	case errors.Is(err, services.ErrTemplateBusy):
+	case errors.Is(err, services.ErrTemplateBusy), errors.Is(err, services.ErrConfigurationBusy):
 		writeTemplateError(c, http.StatusServiceUnavailable, "TEMPLATE_BUSY", "template configuration is busy; retry the request")
 
 	default:

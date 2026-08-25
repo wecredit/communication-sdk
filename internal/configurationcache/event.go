@@ -13,9 +13,40 @@ import (
 const invalidationChannelPrefix = "comm:configuration-cache:invalidate:"
 
 type templateInvalidationEvent struct {
-	TemplateVersion int64 `json:"templateVersion"`
+	TemplateVersion       int64 `json:"templateVersion,omitempty"`
+	LenderScheduleVersion int64 `json:"lenderScheduleVersion,omitempty"`
+	StageMappingVersion   int64 `json:"stageMappingVersion,omitempty"`
 }
 
+// PublishStageConfigurationInvalidation publishes a stage configuration invalidation event
+func PublishStageConfigurationInvalidation(ctx context.Context, client *redisclient.Client, environment string, versions StageConfigurationVersions) error {
+	if client == nil {
+		return errors.New("redis client is required")
+	}
+
+	if versions.LenderScheduleVersion <= 0 && versions.StageMappingVersion <= 0 {
+		return errors.New("at least one stage configuration version must be positive")
+	}
+
+	channel, err := invalidationChannel(environment)
+	if err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(templateInvalidationEvent{
+		LenderScheduleVersion: versions.LenderScheduleVersion,
+		StageMappingVersion:   versions.StageMappingVersion,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal stage configuration invalidation: %w", err)
+	}
+
+	if err := client.Publish(ctx, channel, payload).Err(); err != nil {
+		return fmt.Errorf("publish stage configuration invalidation: %w", err)
+	}
+
+	return nil
+}
 
 // invalidationChannel returns the invalidation channel for the given environment
 func invalidationChannel(environment string) (string, error) {
@@ -27,7 +58,6 @@ func invalidationChannel(environment string) (string, error) {
 	return invalidationChannelPrefix + environment, nil
 }
 
-
 // PublishTemplateInvalidation publishes a template invalidation event
 func PublishTemplateInvalidation(ctx context.Context, client *redisclient.Client, environment string, templateVersion int64) error {
 	if client == nil {
@@ -37,7 +67,7 @@ func PublishTemplateInvalidation(ctx context.Context, client *redisclient.Client
 	if templateVersion <= 0 {
 		return errors.New("template version must be positive")
 	}
-	
+
 	channel, err := invalidationChannel(environment)
 	if err != nil {
 		return err

@@ -239,7 +239,8 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 
 	if err := db.Table(config.Configs.LenderStagesTable).
 		Select("`Interval`").
-		Where("LenderName = ? AND CommType = ? AND Stage = ?", template.Process, template.Channel, stage).
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("LenderName = ? AND CommType = ? AND Stage = ?", strings.ToLower(template.Process), strings.ToUpper(template.Channel), stage).
 		Find(&lenderSchedules).Error; err != nil {
 		return fmt.Errorf("check lender schedule prerequisite: %w", err)
 	}
@@ -252,13 +253,18 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 		}
 	}
 
-	var stageMappingCount int64
+	var stageMappings []struct {
+		ID int `gorm:"column:Id"`
+	}
 	if err := db.Table(config.Configs.TemplateStageTable).
+		Select("Id").
+		Clauses(clause.Locking{Strength: "SHARE"}).
 		Where(
 			"LenderName = ? AND CommType = ? AND Stage = ? AND SubStage = ?",
-			template.Process, template.Channel, stage, subStage,
+			strings.ToLower(template.Process), strings.ToUpper(template.Channel), stage, subStage,
 		).
-		Count(&stageMappingCount).Error; err != nil {
+		Limit(1).
+		Find(&stageMappings).Error; err != nil {
 		return fmt.Errorf("check template stage prerequisite: %w", err)
 	}
 
@@ -267,7 +273,7 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 		missing = append(missing, fmt.Sprintf("%s entry for Stage %d with a valid non-empty Interval", config.Configs.LenderStagesTable, stage))
 	}
 
-	if stageMappingCount == 0 {
+	if len(stageMappings) == 0 {
 		missing = append(missing, fmt.Sprintf("%s entry for Stage %d and SubStage %d", config.Configs.TemplateStageTable, stage, subStage))
 	}
 

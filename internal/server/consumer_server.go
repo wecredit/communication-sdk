@@ -76,6 +76,25 @@ func StartConsumer(port string) {
 		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)
 	}
 
+	stageConfigurationHandler := handlers.NewStageConfigurationHandler(apiServices.NewStageConfigurationService(database.DBtechRead, database.DBtechWrite))
+	stageConfigurations := r.Group("/stage-configurations")
+	{
+		stageConfigurations.POST("", stageConfigurationHandler.Create)
+		stageConfigurations.PUT("/lender-schedule/id/:id", stageConfigurationHandler.Update)
+	}
+	lenderSchedules := r.Group("/lender-schedules")
+	{
+		lenderSchedules.GET("", stageConfigurationHandler.ListLenderSchedules)
+		lenderSchedules.GET("/id/:id", stageConfigurationHandler.GetLenderSchedule)
+		lenderSchedules.DELETE("/id/:id", stageConfigurationHandler.DeleteLenderSchedule)
+	}
+	stageMappings := r.Group("/stage-mappings")
+	{
+		stageMappings.GET("", stageConfigurationHandler.ListStageMappings)
+		stageMappings.GET("/id/:id", stageConfigurationHandler.GetStageMapping)
+		stageMappings.DELETE("/id/:id", stageConfigurationHandler.DeleteStageMapping)
+	}
+
 	// if err := r.Run(":" + port); err != nil {
 	if err := r.Run("0.0.0.0:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
