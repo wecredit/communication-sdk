@@ -31,6 +31,7 @@ type Config struct {
 	DbPasswordMarketing       string `envconfig:"DB_PASSWORD_MARKETING"`
 	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
 	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
+	CommMarketingInputTable   string `envconfig:"COMM_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommMarketingInput"`
 
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
