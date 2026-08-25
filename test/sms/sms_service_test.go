@@ -12,7 +12,7 @@ import (
 func TestTerminalReplayResultPreservesDLTTemplateReference(t *testing.T) {
 	result := sms.TerminalReplayResult(sdkModels.CommApiRequestBody{
 		TemplateReference: "1707177364212095135",
-	}, "provider-transaction-42", "")
+	}, "", "")
 
 	if result.DBData["DltTemplateId"] != int64(1707177364212095135) {
 		t.Fatalf("DltTemplateId = %#v, want expected DLT ID", result.DBData["DltTemplateId"])
@@ -22,7 +22,7 @@ func TestTerminalReplayResultPreservesDLTTemplateReference(t *testing.T) {
 func TestTerminalReplayResultLeavesMalformedDLTTemplateReferenceUnset(t *testing.T) {
 	result := sms.TerminalReplayResult(sdkModels.CommApiRequestBody{
 		TemplateReference: "not-a-dlt-id",
-	}, "", "failed")
+	}, "", "")
 
 	if result.DBData["DltTemplateId"] != int64(0) {
 		t.Fatalf("DltTemplateId = %#v, want int64(0)", result.DBData["DltTemplateId"])
