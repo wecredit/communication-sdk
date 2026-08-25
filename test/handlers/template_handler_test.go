@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +53,58 @@ func TestGetTemplateByIDRejectsInvalidID(t *testing.T) {
 	handler.GetTemplateByID(context)
 
 	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_TEMPLATE_ID")
+}
+
+func TestAddTemplateRejectsNonAllowlistedFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "database ID", body: `{"id":123}`},
+		{name: "created timestamp", body: `{"createdOn":"2026-08-25T00:00:00Z"}`},
+		{name: "updated timestamp", body: `{"updatedOn":"2026-08-25T00:00:00Z"}`},
+		{name: "unknown field", body: `{"unexpected":"value"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodPost, "/templates/add-template", strings.NewReader(tt.body))
+			context.Request.Header.Set("Content-Type", "application/json")
+
+			handler := handlers.NewTemplateHandler(nil)
+			handler.AddTemplate(context)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if !strings.Contains(recorder.Body.String(), "unknown field") {
+				t.Fatalf("response does not identify the rejected field: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestAddTemplateRejectsMultipleJSONValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/templates/add-template",
+		strings.NewReader(`{"client":"wecredit"} {"client":"other"}`),
+	)
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	handler := handlers.NewTemplateHandler(nil)
+	handler.AddTemplate(context)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
 }
 
 func newTemplateContext(target string) (*gin.Context, *httptest.ResponseRecorder) {

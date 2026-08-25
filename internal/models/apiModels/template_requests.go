@@ -29,6 +29,56 @@ func (v *NullableFloat64) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// TemplateCreateRequest is the complete allowlist for template creation.
+// Database identity and audit fields are intentionally absent.
+type TemplateCreateRequest struct {
+	Client               string   `json:"client"`
+	Channel              string   `json:"channel"`
+	Process              string   `json:"process"`
+	Stage                *float64 `json:"stage"`
+	Vendor               string   `json:"vendor"`
+	TemplateName         string   `json:"templateName"`
+	ImageId              string   `json:"imageId"`
+	ImageUrl             string   `json:"imageUrl"`
+	DltTemplateId        int64    `json:"dltTemplateId"`
+	TemplateEntityId     int64    `json:"templateEntityId"`
+	TemplateHeader       string   `json:"templateHeader"`
+	IsActive             bool     `json:"isActive"`
+	TemplateText         string   `json:"templateText"`
+	Link                 string   `json:"link"`
+	TemplateCategory     int64    `json:"templateCategory"`
+	TemplateVariables    string   `json:"templateVariables"`
+	SmsFallbackVariables string   `json:"smsFallbackVariables"`
+	Subject              string   `json:"subject"`
+	FromEmail            string   `json:"fromEmail"`
+}
+
+
+// Template converts the TemplateCreateRequest to a Templatedetails object
+func (r TemplateCreateRequest) Template() Templatedetails {
+	return Templatedetails{
+		Client:               r.Client,
+		Channel:              r.Channel,
+		Process:              r.Process,
+		Stage:                r.Stage,
+		Vendor:               r.Vendor,
+		TemplateName:         r.TemplateName,
+		ImageId:              r.ImageId,
+		ImageUrl:             r.ImageUrl,
+		DltTemplateId:        r.DltTemplateId,
+		TemplateEntityId:     r.TemplateEntityId,
+		TemplateHeader:       r.TemplateHeader,
+		IsActive:             r.IsActive,
+		TemplateText:         r.TemplateText,
+		Link:                 r.Link,
+		TemplateCategory:     r.TemplateCategory,
+		TemplateVariables:    r.TemplateVariables,
+		SmsFallbackVariables: r.SmsFallbackVariables,
+		Subject:              r.Subject,
+		FromEmail:            r.FromEmail,
+	}
+}
+
 // TemplateUpdateRequest is the complete allowlist for the legacy template PUT.
 // Lifecycle, identity, and audit columns are intentionally absent.
 type TemplateUpdateRequest struct {

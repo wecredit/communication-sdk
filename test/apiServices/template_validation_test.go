@@ -10,6 +10,7 @@ import (
 
 func TestValidateTemplateStructure(t *testing.T) {
 	stage := 1.25
+	stageWithTooManyDecimals := 1.234
 
 	tests := []struct {
 		name    string
@@ -24,6 +25,11 @@ func TestValidateTemplateStructure(t *testing.T) {
 			name:    "stage mode rejects unsupported channel",
 			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "V", Stage: &stage},
 			wantErr: "unsupported channel",
+		},
+		{
+			name:    "stage mode rejects more than two decimal places",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", Stage: &stageWithTooManyDecimals},
+			wantErr: "more than two decimal places",
 		},
 		{
 			name:    "reference sms requires dlt",
@@ -51,6 +57,21 @@ func TestValidateTemplateStructure(t *testing.T) {
 				t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestTemplateCreateRequestPreservesActiveFlag(t *testing.T) {
+	request := apiModels.TemplateCreateRequest{
+		Client:   "wecredit",
+		Channel:  "SMS",
+		Process:  "COLLECTION",
+		Vendor:   "SINCH",
+		IsActive: true,
+	}
+
+	template := request.Template()
+	if !template.IsActive {
+		t.Fatal("active create request was converted to an inactive template")
 	}
 }
 

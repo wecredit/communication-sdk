@@ -9,6 +9,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
+	"github.com/wecredit/communication-sdk/pkg/cache"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -54,12 +55,18 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 		if *template.Stage < 0 {
 			return errors.New("stage cannot be negative")
 		}
+
+		if _, err := cache.CanonicalTemplateStage(*template.Stage); err != nil {
+			return fmt.Errorf("invalid stage: %w", err)
+		}
+
 	case ResolutionModeReference:
 		switch template.Channel {
 		case "SMS":
 			if template.DltTemplateId <= 0 {
 				return errors.New("dltTemplateId is required for SMS REFERENCE_MODE")
 			}
+
 		case "RCS", "WHATSAPP", "EMAIL":
 			if template.TemplateName == "" {
 				return fmt.Errorf("templateName is required for %s REFERENCE_MODE", template.Channel)

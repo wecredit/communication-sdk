@@ -86,16 +86,46 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
 	istOffset := 5*time.Hour + 30*time.Minute
 	template.CreatedOn = time.Now().UTC().Add(istOffset)
-	// Legacy creates must not become effective implicitly. The versioned API
-	// will add the full DRAFT lifecycle; until then, activation remains an
-	// explicit update that runs active uniqueness validation under the lock.
-	template.IsActive = false
 	normalizeTemplate(template)
 	if err := ValidateTemplateStructure(*template); err != nil {
 		return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
 	}
 
-	return s.WriteDB.Table(config.Configs.TemplateDetailsTable).Create(template).Error
+	var invalidationVersion int64
+	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
+		var lockName string
+		defer func() { releaseResolutionLock(conn, lockName) }()
+
+		return conn.Transaction(func(tx *gorm.DB) error {
+			var err error
+			lockName, err = acquireResolutionLock(tx, *template)
+			if err != nil {
+				return err
+			}
+
+			if err := validateActiveUniqueness(tx, *template); err != nil {
+				return err
+			}
+
+			if err := tx.Table(config.Configs.TemplateDetailsTable).Create(template).Error; err != nil {
+				return fmt.Errorf("create template: %w", err)
+			}
+
+			if !template.IsActive {
+				return nil
+			}
+
+			invalidationVersion, err = configurationcache.IncrementTemplateVersion(tx, config.Configs.ConfigurationVersionTable)
+			return err
+		})
+	})
+
+	if err != nil {
+		return err
+	}
+
+	publishTemplateInvalidation(invalidationVersion)
+	return nil
 }
 
 // UpdateTemplateById updates a template by its ID

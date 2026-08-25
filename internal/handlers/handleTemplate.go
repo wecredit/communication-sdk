@@ -87,12 +87,20 @@ func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
 }
 
 func (h *TemplateHandler) AddTemplate(c *gin.Context) {
-	var template apiModels.Templatedetails
-	if err := c.ShouldBindJSON(&template); err != nil {
-		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", "request body is invalid: "+err.Error())
+	var request apiModels.TemplateCreateRequest
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", fmt.Sprintf("request body is invalid: %v", err))
 		return
 	}
 
+	if err := ensureJSONBodyEnded(decoder); err != nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", err.Error())
+		return
+	}
+
+	template := request.Template()
 	if err := h.Service.AddTemplate(&template); err != nil {
 		writeTemplateServiceError(c, err)
 		return
@@ -202,7 +210,6 @@ func ensureJSONBodyEnded(decoder *json.Decoder) error {
 	return nil
 }
 
-
 func writeTemplateSuccess(c *gin.Context, status int, data interface{}, message string, meta *apiModels.TemplatePaginationMeta) {
 	c.JSON(status, apiModels.TemplateAPIResponse{
 		Success: true,
@@ -211,8 +218,6 @@ func writeTemplateSuccess(c *gin.Context, status int, data interface{}, message 
 		Meta:    meta,
 	})
 }
-
-
 
 func writeTemplateError(c *gin.Context, status int, code, message string) {
 	c.JSON(status, apiModels.TemplateAPIResponse{
@@ -223,7 +228,6 @@ func writeTemplateError(c *gin.Context, status int, code, message string) {
 		},
 	})
 }
-
 
 // writeTemplateServiceError writes an error to the response based on the Error Type.
 func writeTemplateServiceError(c *gin.Context, err error) {
