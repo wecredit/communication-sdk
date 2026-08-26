@@ -7,10 +7,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
+	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
@@ -19,12 +19,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// Redacts 10–15 digit sequences (typically mobiles) from Pinnacle response logs.
 var pinnacleSensitiveNumber = regexp.MustCompile(`\b[0-9]{10,15}\b`)
-
-const (
-	pinnacleMessageTypeTXT = "TXT"
-	defaultPinnacleSender  = "WECRPL"
-)
 
 // HitPinnacleApi sends SMS via Pinnacle Console JSON API:
 // POST https://api.pinnacle.in/index.php/sms/json
@@ -44,37 +40,15 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return pinnacleSmsResponse
 	}
 
-	sender := strings.TrimSpace(data.TemplateHeader)
-	if sender == "" {
-		sender = strings.TrimSpace(config.Configs.TimesSmsApiSender)
-	}
-	if sender == "" {
-		sender = defaultPinnacleSender
-	}
-
-	message := strings.TrimSpace(data.TemplateText)
-	if message == "" {
-		message = strings.TrimSpace(data.Description)
-	}
-	if message == "" {
-		pinnacleSmsResponse.ResponseMessage = "Pinnacle SMS message text is empty"
-		pinnacleSmsResponse.Outcome = outcome.FailedFinal
-		return pinnacleSmsResponse
-	}
-
-	entityID := strings.TrimSpace(data.TemplateEntityId)
-	if entityID == "" {
-		entityID = strings.TrimSpace(config.Configs.PinnacleSmsDltEntityId)
-	}
-
-	payload, err := BuildPinnacleJSONPayload(data, sender, message, entityID)
+	apiPayload, err := pinnaclepayloads.GetTemplatePayload(data, config.Configs)
 	if err != nil {
-		pinnacleSmsResponse.ResponseMessage = err.Error()
+		utils.Error(fmt.Errorf("error occured while getting SMS payload: %v", err))
+		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("error occured in Pinnacle SMS payload: %v for %s", err, data.Client)
 		pinnacleSmsResponse.Outcome = outcome.FailedFinal
 		return pinnacleSmsResponse
 	}
 
-	logPinnacleJSONRequest(data, apiURL, sender, message, entityID, payload)
+	logPinnacleJSONRequest(data, apiURL, apiPayload)
 
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
@@ -88,7 +62,7 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return pinnacleSmsResponse
 	}
 
-	apiResponse, err := callPinnacleJSON(apiURL, apiKey, payload, data)
+	apiResponse, err := callPinnacleJSON(apiURL, apiKey, apiPayload, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("Pinnacle SMS API call failed client=%s commId=%s sourceRowId=%d: %v",
 			data.Client, data.CommId, data.SourceRowId, err))
@@ -122,7 +96,6 @@ func ResolvePinnacleJSONURL(configured string) string {
 	case strings.HasSuffix(lower, "/sms/send"):
 		return configured[:len(configured)-len("/sms/send")] + "/sms/json"
 	case strings.Contains(lower, "/index.php/sms"):
-		// e.g. .../index.php/sms or unexpected suffix → prefer .../sms/json
 		idx := strings.LastIndex(lower, "/index.php/sms")
 		return configured[:idx] + "/index.php/sms/json"
 	default:
@@ -130,58 +103,32 @@ func ResolvePinnacleJSONURL(configured string) string {
 	}
 }
 
-// BuildPinnacleJSONPayload builds the Console SMS JSON body (no secrets).
-func BuildPinnacleJSONPayload(data extapimodels.SmsRequestBody, sender, message, entityID string) (map[string]interface{}, error) {
-	number, err := NormalizePinnacleMSISDN(data.Mobile)
-	if err != nil {
-		return nil, err
+func logPinnacleJSONRequest(data extapimodels.SmsRequestBody, apiURL string, payload map[string]interface{}) {
+	sender, _ := payload["sender"].(string)
+	msgType, _ := payload["messagetype"].(string)
+	entityID, _ := payload["dltentityid"].(string)
+	messageLen := 0
+	unresolvedVar := false
+	if msgs, ok := payload["message"].([]map[string]interface{}); ok && len(msgs) > 0 {
+		if text, ok := msgs[0]["text"].(string); ok {
+			messageLen = len(text)
+			unresolvedVar = strings.Contains(text, "{#var#}")
+		}
 	}
-
-	msgItem := map[string]interface{}{
-		"number": number,
-		"text":   message,
-	}
-	if uid := sanitizePinnacleClientUID(data.CommId); uid != "" {
-		msgItem["clientuid"] = uid
-	}
-
-	payload := map[string]interface{}{
-		"sender":      strings.TrimSpace(sender),
-		"message":     []map[string]interface{}{msgItem},
-		"messagetype": choosePinnacleMessageType(message),
-	}
-	if data.DltTemplateId != 0 {
-		payload["dlttempid"] = strconv.FormatInt(data.DltTemplateId, 10)
-	}
-	if strings.TrimSpace(entityID) != "" {
-		payload["dltentityid"] = strings.TrimSpace(entityID)
-	}
-	return payload, nil
+	utils.Info(fmt.Sprintf(
+		"Pinnacle SMS JSON request client=%s commId=%s sourceRowId=%d url=%s sender=%s dltTemplateId=%d entityId=%s mobileLen=%d mobileTail=%s messageLen=%d unresolvedVar=%t messagetype=%s",
+		data.Client, data.CommId, data.SourceRowId, apiURL, sender, data.DltTemplateId, entityID,
+		len(strings.TrimSpace(data.Mobile)), mobileTail(data.Mobile), messageLen,
+		unresolvedVar, msgType,
+	))
 }
 
-func choosePinnacleMessageType(message string) string {
-	// Console doc also supports CLICK/UCLICK for vendor URL shortening.
-	// Default TXT: JSON POST already avoids GET path breakage for https:// links.
-	// DLT URL whitelist (5901 URL_NOT_FOUND) remains a registration concern.
-	_ = message
-	return pinnacleMessageTypeTXT
-}
-
-// NormalizePinnacleMSISDN returns digits in 91XXXXXXXXXX form when possible.
-func NormalizePinnacleMSISDN(mobile string) (string, error) {
+func mobileTail(mobile string) string {
 	digits := onlyDigits(mobile)
-	switch {
-	case len(digits) == 10:
-		return "91" + digits, nil
-	case len(digits) == 12 && strings.HasPrefix(digits, "91"):
-		return digits, nil
-	case len(digits) == 11 && strings.HasPrefix(digits, "0"):
-		return "91" + digits[1:], nil
-	case len(digits) >= 10 && len(digits) <= 15:
-		return digits, nil
-	default:
-		return "", fmt.Errorf("invalid mobile for Pinnacle SMS")
+	if len(digits) < 4 {
+		return "****"
 	}
+	return digits[len(digits)-4:]
 }
 
 func onlyDigits(s string) string {
@@ -192,42 +139,6 @@ func onlyDigits(s string) string {
 		}
 	}
 	return b.String()
-}
-
-func sanitizePinnacleClientUID(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-		}
-	}
-	out := b.String()
-	if len(out) > 50 {
-		out = out[:50]
-	}
-	return out
-}
-
-func logPinnacleJSONRequest(data extapimodels.SmsRequestBody, apiURL, sender, message, entityID string, payload map[string]interface{}) {
-	msgType, _ := payload["messagetype"].(string)
-	utils.Info(fmt.Sprintf(
-		"Pinnacle SMS JSON request client=%s commId=%s sourceRowId=%d url=%s sender=%s dltTemplateId=%d entityId=%s mobileLen=%d mobileTail=%s messageLen=%d unresolvedVar=%t messagetype=%s",
-		data.Client, data.CommId, data.SourceRowId, apiURL, sender, data.DltTemplateId, entityID,
-		len(strings.TrimSpace(data.Mobile)), mobileTail(data.Mobile), len(message),
-		strings.Contains(message, "{#var#}"), msgType,
-	))
-}
-
-func mobileTail(mobile string) string {
-	digits := onlyDigits(mobile)
-	if len(digits) < 4 {
-		return "****"
-	}
-	return digits[len(digits)-4:]
 }
 
 func logPinnacleResponse(data extapimodels.SmsRequestBody, apiResponse map[string]interface{}, result extapimodels.SmsResponse) {
@@ -345,7 +256,6 @@ func ClassifyPinnacleResponse(apiResponse map[string]interface{}) (string, strin
 		return outcome.FailedFinal, sanitized
 	}
 	if !bodyCodeSet && httpCode >= 200 && httpCode < 300 {
-		// HTTP 2xx alone is not enough when body uses EC* codes without numeric code.
 		if strings.TrimSpace(bodyCodeRaw) == "" && !strings.Contains(combined, "success") && !strings.Contains(combined, "accepted") {
 			return outcome.Unknown, sanitized
 		}

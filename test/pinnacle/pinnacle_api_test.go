@@ -6,6 +6,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	pinnacleApi "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle"
+	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
 
@@ -65,8 +66,8 @@ func TestClassifyPinnacleResponseECStringCode(t *testing.T) {
 
 func TestResolvePinnacleJSONURL(t *testing.T) {
 	cases := map[string]string{
-		"https://api.pinnacle.in/index.php/sms/send": "https://api.pinnacle.in/index.php/sms/json",
-		"https://api.pinnacle.in/index.php/sms/json": "https://api.pinnacle.in/index.php/sms/json",
+		"https://api.pinnacle.in/index.php/sms/send":  "https://api.pinnacle.in/index.php/sms/json",
+		"https://api.pinnacle.in/index.php/sms/json":  "https://api.pinnacle.in/index.php/sms/json",
 		"https://api.pinnacle.in/index.php/sms/send/": "https://api.pinnacle.in/index.php/sms/json",
 	}
 	for in, want := range cases {
@@ -77,21 +78,21 @@ func TestResolvePinnacleJSONURL(t *testing.T) {
 }
 
 func TestNormalizePinnacleMSISDN(t *testing.T) {
-	got, err := pinnacleApi.NormalizePinnacleMSISDN("7014850582")
+	got, err := pinnaclepayloads.NormalizeMSISDN("7014850582")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "917014850582" {
 		t.Fatalf("got %q", got)
 	}
-	got, err = pinnacleApi.NormalizePinnacleMSISDN("917014850582")
+	got, err = pinnaclepayloads.NormalizeMSISDN("917014850582")
 	if err != nil || got != "917014850582" {
 		t.Fatalf("got %q err %v", got, err)
 	}
 }
 
 func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
-	payload, err := pinnacleApi.BuildPinnacleJSONPayload(extapimodels.SmsRequestBody{
+	payload, err := pinnaclepayloads.BuildConsoleJSONPayload(extapimodels.SmsRequestBody{
 		Mobile:        "7014850582",
 		CommId:        "WC-WECREDIT-abc-123",
 		DltTemplateId: 1777178764367201169,
@@ -128,7 +129,7 @@ func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
 }
 
 func TestBuildPinnacleJSONPayloadTXTWithoutURL(t *testing.T) {
-	payload, err := pinnacleApi.BuildPinnacleJSONPayload(extapimodels.SmsRequestBody{
+	payload, err := pinnaclepayloads.BuildConsoleJSONPayload(extapimodels.SmsRequestBody{
 		Mobile: "9220146969",
 	}, "WECRLP", "Abhi explore karein  wecredit.co.in WeCredit", "1701170417883448407")
 	if err != nil {
