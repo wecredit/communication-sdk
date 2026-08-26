@@ -6,6 +6,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	pinnacleApi "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
 
 func TestExtractTransactionIdFromUniqueID(t *testing.T) {
@@ -51,30 +52,89 @@ func TestClassifyPinnacleResponsePrefersBodyFailureOverHTTPSuccess(t *testing.T)
 	}
 }
 
-func TestBuildPinnacleURLEscapesAndSetsQuery(t *testing.T) {
-	got, err := pinnacleApi.BuildPinnacleURL(
-		"https://api.pinnacle.in/index.php/sms/send",
-		"secret",
-		"WECRWP",
-		"7014850582",
-		"hello world",
-		1777178764360614607,
-		"1701170417883448407",
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestClassifyPinnacleResponseECStringCode(t *testing.T) {
+	status, _ := pinnacleApi.ClassifyPinnacleResponse(map[string]interface{}{
+		"code":          "EC1009",
+		"status":        "Sorry unable to process request",
+		"ApistatusCode": 200,
+	})
+	if status != outcome.FailedFinal {
+		t.Fatalf("outcome = %q, want %s", status, outcome.FailedFinal)
 	}
-	for _, want := range []string{
-		"/WECRWP/",
-		"/7014850582/",
-		"hello%20world",
-		"/TXT",
-		"apikey=secret",
-		"dlttempid=1777178764360614607",
-		"dltentityid=1701170417883448407",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("url %q missing %q", got, want)
+}
+
+func TestResolvePinnacleJSONURL(t *testing.T) {
+	cases := map[string]string{
+		"https://api.pinnacle.in/index.php/sms/send": "https://api.pinnacle.in/index.php/sms/json",
+		"https://api.pinnacle.in/index.php/sms/json": "https://api.pinnacle.in/index.php/sms/json",
+		"https://api.pinnacle.in/index.php/sms/send/": "https://api.pinnacle.in/index.php/sms/json",
+	}
+	for in, want := range cases {
+		if got := pinnacleApi.ResolvePinnacleJSONURL(in); got != want {
+			t.Fatalf("ResolvePinnacleJSONURL(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestNormalizePinnacleMSISDN(t *testing.T) {
+	got, err := pinnacleApi.NormalizePinnacleMSISDN("7014850582")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "917014850582" {
+		t.Fatalf("got %q", got)
+	}
+	got, err = pinnacleApi.NormalizePinnacleMSISDN("917014850582")
+	if err != nil || got != "917014850582" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
+func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
+	payload, err := pinnacleApi.BuildPinnacleJSONPayload(extapimodels.SmsRequestBody{
+		Mobile:        "7014850582",
+		CommId:        "WC-WECREDIT-abc-123",
+		DltTemplateId: 1777178764367201169,
+	}, "WECRLP", "Abhi explore karein https://branch.co/BRNCHI/BBqHUGs WeCredit", "1701170417883448407")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["sender"] != "WECRLP" {
+		t.Fatalf("sender=%v", payload["sender"])
+	}
+	if payload["messagetype"] != "TXT" {
+		t.Fatalf("messagetype=%v want TXT", payload["messagetype"])
+	}
+	if payload["dlttempid"] != "1777178764367201169" {
+		t.Fatalf("dlttempid=%v", payload["dlttempid"])
+	}
+	if payload["dltentityid"] != "1701170417883448407" {
+		t.Fatalf("dltentityid=%v", payload["dltentityid"])
+	}
+	msgs, ok := payload["message"].([]map[string]interface{})
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("message=%T %#v", payload["message"], payload["message"])
+	}
+	if msgs[0]["number"] != "917014850582" {
+		t.Fatalf("number=%v", msgs[0]["number"])
+	}
+	if !strings.Contains(msgs[0]["text"].(string), "https://branch.co/") {
+		t.Fatalf("text=%v", msgs[0]["text"])
+	}
+	uid, _ := msgs[0]["clientuid"].(string)
+	if uid == "" || strings.ContainsAny(uid, "-_") {
+		t.Fatalf("clientuid should be alphanumeric, got %q", uid)
+	}
+}
+
+func TestBuildPinnacleJSONPayloadTXTWithoutURL(t *testing.T) {
+	payload, err := pinnacleApi.BuildPinnacleJSONPayload(extapimodels.SmsRequestBody{
+		Mobile: "9220146969",
+	}, "WECRLP", "Abhi explore karein  wecredit.co.in WeCredit", "1701170417883448407")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["messagetype"] != "TXT" {
+		t.Fatalf("messagetype=%v want TXT", payload["messagetype"])
 	}
 }
