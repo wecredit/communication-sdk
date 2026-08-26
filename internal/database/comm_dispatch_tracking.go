@@ -49,27 +49,6 @@ type CommDispatchTrackingRow struct {
 	TemplateReference string
 }
 
-func CommDispatchTrackingExists(db *gorm.DB, tableName, source string, sourceRowID int64, channel string) (bool, error) {
-	if db == nil {
-		return false, fmt.Errorf("marketing database is not initialized")
-	}
-
-	tableName = strings.TrimSpace(tableName)
-	if tableName == "" {
-		return false, fmt.Errorf("tracking table name is required")
-	}
-
-	var count int64
-	query := fmt.Sprintf(`SELECT COUNT(1) FROM %s WITH (READPAST)
-		WHERE [Source] = ? AND SourceRowId = ? AND Channel = ?`, tableName)
-
-	if err := db.Raw(query, strings.TrimSpace(source), sourceRowID, strings.TrimSpace(channel)).Scan(&count).Error; err != nil {
-		return false, fmt.Errorf("check dispatch tracking: %w", err)
-	}
-
-	return count > 0, nil
-}
-
 func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row CommDispatchTrackingRow) error {
 	if db == nil {
 		return fmt.Errorf("marketing database is not initialized")
@@ -93,9 +72,9 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 		return fmt.Errorf("invalid tracking outcome %q", row.Outcome)
 	}
 
-	// Approved table: PK on Id only, DF CreatedOn/UpdatedOn = SYSDATETIME(), AppliedOn left NULL.
-	// Skip a second row for the same (Source, SourceRowId, Channel). Concurrent inserts can
-	// still race this NOT EXISTS check; add a unique index in SSMS (not AutoMigrate) if duplicates appear.
+	// The locked CommMarketingInput source row serializes terminal writes for a
+	// SourceRowId. NOT EXISTS makes redelivery idempotent without a separate
+	// tracking-table existence check outside this transaction.
 	query := fmt.Sprintf(`INSERT INTO %s (
 		[Source], SourceRowId, Channel, Client, Vendor, Process, EventId,
 		CommId, TransactionId, Outcome, ErrorMessage, TemplateReference,
@@ -173,7 +152,7 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 		}
 		return fmt.Errorf("insert dispatch tracking: %w", result.Error)
 	}
-	
+
 	if result.RowsAffected == 0 {
 		tx.Rollback()
 		return ErrDispatchTrackingAlreadyExists
