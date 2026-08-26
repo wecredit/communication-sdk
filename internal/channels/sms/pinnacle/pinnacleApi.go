@@ -2,8 +2,10 @@ package pinnacleApi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
+
+var pinnacleSensitiveNumber = regexp.MustCompile(`\b[0-9]{10,15}\b`)
 
 // HitPinnacleApi calls the Pinnacle GET SMS endpoint using a safely-escaped
 // URL and classifies the response into SmsResponse. It avoids logging PII.
@@ -85,9 +89,8 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	}
 	u.RawQuery = q.Encode()
 	finalURL := u.String()
-	// Never log the full URL: it includes apikey and the SMS path (mobile/message).
-	utils.Info(fmt.Sprintf("Pinnacle SMS request prepared host=%s path=%s dltTemplateSet=%t entitySet=%t",
-		u.Host, u.EscapedPath(), data.DltTemplateId != 0, entityID != ""))
+
+	logPinnacleRequest(data, sender, message, entityID, u)
 
 	// Rate limit the request
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
@@ -106,21 +109,96 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	// Call API only after the final post-rate-limit compliance guard.
 	apiResponse, err := callPinnacle(finalURL, data)
 	if err != nil {
+		utils.Error(fmt.Errorf("Pinnacle SMS API call failed client=%s commId=%s sourceRowId=%d: %v",
+			data.Client, data.CommId, data.SourceRowId, err))
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("error calling pinnacle api: %v", err)
 		pinnacleSmsResponse.Outcome = outcome.ClassifyTransportError(err)
 		return pinnacleSmsResponse
 	}
 
 	// Extract transaction id
-	pinnacleSmsResponse.TransactionId = extractTransactionId(apiResponse)
+	pinnacleSmsResponse.TransactionId = ExtractTransactionId(apiResponse)
 
 	// Classify
-	status, respMsg := classifyPinnacleResponse(apiResponse)
+	status, respMsg := ClassifyPinnacleResponse(apiResponse)
 	pinnacleSmsResponse.Outcome = status
 	pinnacleSmsResponse.IsSent = outcome.IsSentDerived(status)
 	pinnacleSmsResponse.ResponseMessage = respMsg
 	pinnacleSmsResponse.MobileNumber = data.Mobile
+
+	logPinnacleResponse(data, apiResponse, pinnacleSmsResponse)
 	return pinnacleSmsResponse
+}
+
+func logPinnacleRequest(data extapimodels.SmsRequestBody, sender, message, entityID string, u *url.URL) {
+	mobileLen := len(strings.TrimSpace(data.Mobile))
+	mobileTail := mobileTail(data.Mobile)
+	msgLen := len(message)
+	unresolvedVar := strings.Contains(message, "{#var#}")
+
+	// Redacted curl: never log apikey, full mobile, or SMS body.
+	redactedCurl := fmt.Sprintf(
+		"curl --location --request GET '%s/%s/[MOBILE_REDACTED len=%d tail=%s]/[MESSAGE_REDACTED len=%d unresolvedVar=%t]/TXT?apikey=[REDACTED]&dltentityid=%s&dlttempid=%d'",
+		strings.TrimRight(fmt.Sprintf("%s://%s%s", u.Scheme, u.Host, pathPrefixBeforeSender(u.EscapedPath(), sender)), "/"),
+		url.PathEscape(sender),
+		mobileLen,
+		mobileTail,
+		msgLen,
+		unresolvedVar,
+		entityID,
+		data.DltTemplateId,
+	)
+
+	utils.Info(fmt.Sprintf(
+		"Pinnacle SMS request client=%s commId=%s sourceRowId=%d sender=%s dltTemplateId=%d entityId=%s mobileLen=%d mobileTail=%s messageLen=%d unresolvedVar=%t host=%s curl=%s",
+		data.Client, data.CommId, data.SourceRowId, sender, data.DltTemplateId, entityID,
+		mobileLen, mobileTail, msgLen, unresolvedVar, u.Host, redactedCurl,
+	))
+}
+
+func pathPrefixBeforeSender(escapedPath, sender string) string {
+	marker := "/" + url.PathEscape(strings.TrimSpace(sender)) + "/"
+	idx := strings.Index(escapedPath, marker)
+	if idx <= 0 {
+		return escapedPath
+	}
+	return escapedPath[:idx]
+}
+
+func mobileTail(mobile string) string {
+	digits := strings.TrimSpace(mobile)
+	if len(digits) < 4 {
+		return "****"
+	}
+	return digits[len(digits)-4:]
+}
+
+func logPinnacleResponse(data extapimodels.SmsRequestBody, apiResponse map[string]interface{}, result extapimodels.SmsResponse) {
+	sanitized := sanitizePinnacleResponseForLog(apiResponse)
+	raw, err := json.Marshal(sanitized)
+	if err != nil {
+		raw = []byte(`{"marshalError":true}`)
+	}
+	utils.Info(fmt.Sprintf(
+		"Pinnacle SMS response client=%s commId=%s sourceRowId=%d outcome=%s isSent=%t transactionId=%s body=%s",
+		data.Client, data.CommId, data.SourceRowId, result.Outcome, result.IsSent, result.TransactionId, string(raw),
+	))
+}
+
+func sanitizePinnacleResponseForLog(apiResponse map[string]interface{}) map[string]interface{} {
+	if apiResponse == nil {
+		return map[string]interface{}{}
+	}
+	raw, err := json.Marshal(apiResponse)
+	if err != nil {
+		return map[string]interface{}{"sanitizeError": true}
+	}
+	redacted := pinnacleSensitiveNumber.ReplaceAllString(string(raw), "[REDACTED]")
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(redacted), &out); err != nil {
+		return map[string]interface{}{"raw": redacted}
+	}
+	return out
 }
 
 // BuildPinnacleURL builds the safe Pinnacle URL for GET contract.
@@ -168,8 +246,9 @@ func callPinnacle(urlStr string, data extapimodels.SmsRequestBody) (map[string]i
 	return apiResponse, nil
 }
 
-// extractTransactionId pulls common transaction id fields from Pinnacle response.
-func extractTransactionId(apiResponse map[string]interface{}) string {
+// ExtractTransactionId pulls common transaction id fields from Pinnacle response.
+// Observed SMS success body: {"code":200,"status":"success","data":[{"uniqueid":"..."}]}.
+func ExtractTransactionId(apiResponse map[string]interface{}) string {
 	if apiResponse == nil {
 		return ""
 	}
@@ -179,43 +258,97 @@ func extractTransactionId(apiResponse map[string]interface{}) string {
 	if txf, ok := apiResponse["transactionId"].(float64); ok {
 		return fmt.Sprintf("%d", int(txf))
 	}
-	if id, ok := apiResponse["msgid"].(string); ok {
+	if id, ok := apiResponse["msgid"].(string); ok && id != "" {
 		return id
 	}
-	if idn, ok := apiResponse["messageId"].(string); ok {
+	if idn, ok := apiResponse["messageId"].(string); ok && idn != "" {
 		return idn
+	}
+	if id := uniqueIDFromPinnacleData(apiResponse["data"]); id != "" {
+		return id
 	}
 	return ""
 }
 
-// classifyPinnacleResponse returns (providerOutcome, sanitizedMessage).
-func classifyPinnacleResponse(apiResponse map[string]interface{}) (string, string) {
+func uniqueIDFromPinnacleData(data interface{}) string {
+	switch v := data.(type) {
+	case []interface{}:
+		if len(v) == 0 {
+			return ""
+		}
+		return uniqueIDFromPinnacleData(v[0])
+	case map[string]interface{}:
+		if id, ok := v["uniqueid"].(string); ok {
+			return strings.TrimSpace(id)
+		}
+		if id, ok := v["uniqueId"].(string); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
+}
+
+// ClassifyPinnacleResponse returns (providerOutcome, sanitizedMessage).
+// Prefer provider body code/status when present; HTTP ApistatusCode is fallback only.
+// ApiHit always stamps ApistatusCode from the transport layer, which can hide a
+// non-success body if HTTP is still 2xx.
+func ClassifyPinnacleResponse(apiResponse map[string]interface{}) (string, string) {
 	if apiResponse == nil {
 		return outcome.Unknown, "empty response"
 	}
-	var code int
-	if v, ok := apiResponse["ApistatusCode"].(int); ok {
-		code = v
-	} else if v, ok := apiResponse["ApistatusCode"].(float64); ok {
-		code = int(v)
-	}
+
+	bodyCode, bodyCodeSet := pinnacleBodyCode(apiResponse)
+	httpCode := pinnacleHTTPCode(apiResponse)
 	status := fmt.Sprint(apiResponse["status"])
 	msg := fmt.Sprint(apiResponse["message"])
+	code := httpCode
+	if bodyCodeSet {
+		code = bodyCode
+	}
 	combined := strings.ToLower(status + " " + msg + " " + fmt.Sprint(code))
-	sanitized := fmt.Sprintf("status:%s message:%s code:%d", status, msg, code)
+	sanitized := fmt.Sprintf("status:%s message:%s bodyCode=%d httpCode=%d", status, msg, bodyCode, httpCode)
 
-	if code >= 200 && code < 300 {
+	if bodyCodeSet && bodyCode >= 200 && bodyCode < 300 {
 		return outcome.Submitted, sanitized
 	}
 	if strings.Contains(combined, "submitted") || strings.Contains(combined, "success") || strings.Contains(combined, "ok") {
 		return outcome.Submitted, sanitized
 	}
-	if code == 429 || code >= 500 {
+	if bodyCodeSet && (bodyCode == 429 || bodyCode >= 500) {
 		return outcome.FailedRetryable, sanitized
 	}
-	if code >= 400 && code < 500 {
+	if bodyCodeSet && bodyCode >= 400 && bodyCode < 500 {
+		return outcome.FailedFinal, sanitized
+	}
+	if !bodyCodeSet && httpCode >= 200 && httpCode < 300 {
+		return outcome.Submitted, sanitized
+	}
+	if httpCode == 429 || httpCode >= 500 {
+		return outcome.FailedRetryable, sanitized
+	}
+	if httpCode >= 400 && httpCode < 500 {
 		return outcome.FailedFinal, sanitized
 	}
 	// Ambiguous body without a clear success/failure contract.
 	return outcome.Unknown, sanitized
+}
+
+func pinnacleBodyCode(apiResponse map[string]interface{}) (int, bool) {
+	if v, ok := apiResponse["code"].(int); ok {
+		return v, true
+	}
+	if v, ok := apiResponse["code"].(float64); ok {
+		return int(v), true
+	}
+	return 0, false
+}
+
+func pinnacleHTTPCode(apiResponse map[string]interface{}) int {
+	if v, ok := apiResponse["ApistatusCode"].(int); ok {
+		return v
+	}
+	if v, ok := apiResponse["ApistatusCode"].(float64); ok {
+		return int(v)
+	}
+	return 0
 }
