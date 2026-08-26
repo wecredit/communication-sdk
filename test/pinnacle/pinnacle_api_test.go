@@ -64,6 +64,18 @@ func TestClassifyPinnacleResponseECStringCode(t *testing.T) {
 	}
 }
 
+func TestClassifyPinnacleResponseFailureCodeBeatsOkSubstring(t *testing.T) {
+	status, _ := pinnacleApi.ClassifyPinnacleResponse(map[string]interface{}{
+		"code":          float64(401),
+		"status":        "failed",
+		"message":       "not ok",
+		"ApistatusCode": 200,
+	})
+	if status != outcome.FailedFinal {
+		t.Fatalf("outcome = %q, want %s", status, outcome.FailedFinal)
+	}
+}
+
 func TestResolvePinnacleJSONURL(t *testing.T) {
 	cases := map[string]string{
 		"https://api.pinnacle.in/index.php/sms/send":  "https://api.pinnacle.in/index.php/sms/json",

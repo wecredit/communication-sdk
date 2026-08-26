@@ -246,22 +246,12 @@ func ClassifyPinnacleResponse(apiResponse map[string]interface{}) (string, strin
 	if bodyCodeSet && bodyCode >= 200 && bodyCode < 300 {
 		return outcome.Submitted, sanitized
 	}
-	if strings.Contains(combined, "submitted") || strings.Contains(combined, "success") || strings.Contains(combined, "accepted") || strings.Contains(combined, "ok") {
-		return outcome.Submitted, sanitized
-	}
+	// Prefer numeric failure codes over success-looking text (e.g. "not ok" must not win).
 	if bodyCodeSet && (bodyCode == 429 || bodyCode >= 500) {
 		return outcome.FailedRetryable, sanitized
 	}
 	if bodyCodeSet && bodyCode >= 400 && bodyCode < 500 {
 		return outcome.FailedFinal, sanitized
-	}
-	if !bodyCodeSet && httpCode >= 200 && httpCode < 300 {
-		if strings.TrimSpace(bodyCodeRaw) == "" && !strings.Contains(combined, "success") && !strings.Contains(combined, "accepted") {
-			return outcome.Unknown, sanitized
-		}
-		if strings.Contains(combined, "success") || strings.Contains(combined, "accepted") {
-			return outcome.Submitted, sanitized
-		}
 	}
 	if httpCode == 429 || httpCode >= 500 {
 		return outcome.FailedRetryable, sanitized
@@ -269,7 +259,24 @@ func ClassifyPinnacleResponse(apiResponse map[string]interface{}) (string, strin
 	if httpCode >= 400 && httpCode < 500 {
 		return outcome.FailedFinal, sanitized
 	}
+	if pinnacleLooksSubmitted(status, msg, combined) {
+		return outcome.Submitted, sanitized
+	}
 	return outcome.Unknown, sanitized
+}
+
+func pinnacleLooksSubmitted(status, msg, combined string) bool {
+	s := strings.ToLower(strings.TrimSpace(status))
+	m := strings.ToLower(strings.TrimSpace(msg))
+	if s == "success" || s == "submitted" || s == "accepted" || s == "ok" {
+		return true
+	}
+	if m == "success" || m == "submitted" || m == "accepted" || m == "ok" {
+		return true
+	}
+	return strings.Contains(combined, "submitted") ||
+		strings.Contains(combined, "success") ||
+		strings.Contains(combined, "accepted")
 }
 
 func pinnacleBodyCode(apiResponse map[string]interface{}) (code int, set bool, raw string) {
