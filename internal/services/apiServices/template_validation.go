@@ -208,10 +208,11 @@ func parseTemplateVariables(raw string) ([]string, error) {
 	return variables, nil
 }
 
-// validateStagePrerequisites ensures a stage-mode template can be selected by
-// nurture-engine. TemplateDetails.Process is the runtime LenderName, while the
-// decimal Stage stores Stage.SubStage (for example, 2.10 means Stage=2 and
-// SubStage=10). Reference-mode templates bypass nurture stage resolution.
+// validateStagePrerequisites ensures a stage-mode template has a resolvable
+// TemplateStage mapping. A LendersStages schedule is optional: existing flows
+// legitimately use mappings without a schedule. TemplateDetails.Process is the
+// runtime LenderName, while decimal Stage stores Stage.SubStage (for example,
+// 2.10 means Stage=2 and SubStage=10). Reference mode bypasses stage resolution.
 func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails) error {
 	if template.Stage == nil {
 		return nil
@@ -233,26 +234,6 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 		return fmt.Errorf("derive substage from %q: %w", canonicalStage, err)
 	}
 
-	var lenderSchedules []struct {
-		Interval string `gorm:"column:Interval"`
-	}
-
-	if err := db.Table(config.Configs.LenderStagesTable).
-		Select("`Interval`").
-		Clauses(clause.Locking{Strength: "SHARE"}).
-		Where("LenderName = ? AND CommType = ? AND Stage = ?", strings.ToLower(template.Process), strings.ToUpper(template.Channel), stage).
-		Find(&lenderSchedules).Error; err != nil {
-		return fmt.Errorf("check lender schedule prerequisite: %w", err)
-	}
-
-	hasValidLenderSchedule := false
-	for _, schedule := range lenderSchedules {
-		if validLenderScheduleIntervals(schedule.Interval) {
-			hasValidLenderSchedule = true
-			break
-		}
-	}
-
 	var stageMappings []struct {
 		ID int `gorm:"column:Id"`
 	}
@@ -268,65 +249,21 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 		return fmt.Errorf("check template stage prerequisite: %w", err)
 	}
 
-	missing := make([]string, 0, 2)
-	if !hasValidLenderSchedule {
-		missing = append(missing, fmt.Sprintf("%s entry for Stage %d with a valid non-empty Interval", config.Configs.LenderStagesTable, stage))
-	}
-
-	if len(stageMappings) == 0 {
-		missing = append(missing, fmt.Sprintf("%s entry for Stage %d and SubStage %d", config.Configs.TemplateStageTable, stage, subStage))
-	}
-
-	if len(missing) == 0 {
+	if len(stageMappings) != 0 {
 		return nil
 	}
 
 	return fmt.Errorf(
-		"%w: stage configuration is missing for client %q, process/lender %q, channel %q, stage %s: create %s before adding or updating this template",
+		"%w: stage mapping is missing for client %q, process/lender %q, channel %q, stage %s: create %s entry for Stage %d and SubStage %d before adding or updating this template",
 		ErrTemplateValidation,
 		template.Client,
 		template.Process,
 		template.Channel,
 		canonicalStage,
-		strings.Join(missing, " and "),
+		config.Configs.TemplateStageTable,
+		stage,
+		subStage,
 	)
-}
-
-// validLenderScheduleIntervals mirrors the interval grammar currently consumed
-// by nurture-engine: semicolon-separated signed day/hour/minute offsets or
-// weekday names. Every configured token must be usable.
-func validLenderScheduleIntervals(raw string) bool {
-	tokens := strings.Split(raw, ";")
-	if len(tokens) == 0 {
-		return false
-	}
-
-	for _, token := range tokens {
-		token = strings.ToLower(strings.TrimSpace(token))
-		if token == "" {
-			return false
-		}
-
-		switch token {
-		case "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
-			continue
-		}
-
-		if len(token) < 2 {
-			return false
-		}
-
-		unit := token[len(token)-1]
-		if unit != 'd' && unit != 'h' && unit != 'm' {
-			return false
-		}
-
-		if _, err := strconv.Atoi(token[:len(token)-1]); err != nil {
-			return false
-		}
-	}
-
-	return true
 }
 
 // validateActiveUniqueness validates the active uniqueness

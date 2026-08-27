@@ -8,8 +8,8 @@ type StageConfigurationRequest struct {
 	LenderName     string              `json:"lenderName"`
 	CommType       string              `json:"commType"`
 	Stage          int                 `json:"stage"`
-	Interval       string              `json:"interval"`
-	TemplateStages []StageMappingInput `json:"templateStages"`
+	Interval       *string             `json:"interval,omitempty"`
+	TemplateStages []StageMappingInput `json:"templateStages,omitempty"`
 }
 
 type LenderSchedule struct {
@@ -29,8 +29,8 @@ type StageMapping struct {
 }
 
 type StageConfigurationResponse struct {
-	LenderSchedule LenderSchedule `json:"lenderSchedule"`
-	TemplateStages []StageMapping `json:"templateStages"`
+	LenderSchedule *LenderSchedule `json:"lenderSchedule,omitempty"`
+	TemplateStages []StageMapping  `json:"templateStages,omitempty"`
 }
 
 type StageConfigurationListParams struct {

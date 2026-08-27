@@ -51,8 +51,8 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 	if request.Stage < 0 || request.Stage > maxWholeStage {
 		return fmt.Errorf("stage must be an integer between 0 and %d", maxWholeStage)
 	}
-	if len(request.TemplateStages) == 0 {
-		return errors.New("templateStages must contain at least one mapping")
+	if request.Interval == nil && request.TemplateStages == nil {
+		return errors.New("at least one of interval or templateStages is required")
 	}
 	seenSubStages := make(map[int]struct{}, len(request.TemplateStages))
 	for _, mapping := range request.TemplateStages {
@@ -67,11 +67,13 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 	sort.Slice(request.TemplateStages, func(i, j int) bool {
 		return request.TemplateStages[i].SubStage < request.TemplateStages[j].SubStage
 	})
-	interval, err := normalizeStageIntervals(request.Interval)
-	if err != nil {
-		return err
+	if request.Interval != nil {
+		interval, err := normalizeStageIntervals(*request.Interval)
+		if err != nil {
+			return err
+		}
+		request.Interval = &interval
 	}
-	request.Interval = interval
 	return nil
 }
 
@@ -109,7 +111,11 @@ func normalizeStageIntervals(raw string) (string, error) {
 }
 
 func scheduleFromRequest(request apiModels.StageConfigurationRequest) apiModels.LenderSchedule {
-	return apiModels.LenderSchedule{LenderName: request.LenderName, CommType: request.CommType, Stage: request.Stage, Interval: request.Interval}
+	interval := ""
+	if request.Interval != nil {
+		interval = *request.Interval
+	}
+	return apiModels.LenderSchedule{LenderName: request.LenderName, CommType: request.CommType, Stage: request.Stage, Interval: interval}
 }
 
 func mappingsFromRequest(request apiModels.StageConfigurationRequest) []apiModels.StageMapping {
@@ -130,6 +136,11 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	if err := NormalizeStageConfigurationRequest(&request); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigurationValidation, err)
 	}
+	scheduleRequested := request.Interval != nil
+	mappingsRequested := len(request.TemplateStages) > 0
+	if !scheduleRequested && !mappingsRequested {
+		return nil, fmt.Errorf("%w: templateStages must contain at least one mapping when interval is omitted", ErrConfigurationValidation)
+	}
 	schedule := scheduleFromRequest(request)
 	mappings := mappingsFromRequest(request)
 	var versions configurationcache.StageConfigurationVersions
@@ -140,19 +151,27 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 		}
 		defer releaseStageConfigurationLocks(conn, locks)
 		return conn.Transaction(func(tx *gorm.DB) error {
-			if err := ensureScheduleIdentityAvailable(tx, schedule, 0); err != nil {
-				return err
+			if scheduleRequested {
+				if err := ensureScheduleIdentityAvailable(tx, schedule, 0); err != nil {
+					return err
+				}
 			}
-			if err := ensureMappingIdentityAvailable(tx, schedule); err != nil {
-				return err
+			if mappingsRequested {
+				if err := ensureDesiredMappingsAvailable(tx, mappings); err != nil {
+					return err
+				}
 			}
-			if err := tx.Table(config.Configs.LenderStagesTable).Create(&schedule).Error; err != nil {
-				return fmt.Errorf("create lender schedule: %w", err)
+			if scheduleRequested {
+				if err := tx.Table(config.Configs.LenderStagesTable).Create(&schedule).Error; err != nil {
+					return fmt.Errorf("create lender schedule: %w", err)
+				}
 			}
-			if err := tx.Table(config.Configs.TemplateStageTable).Create(&mappings).Error; err != nil {
-				return fmt.Errorf("create stage mappings: %w", err)
+			if mappingsRequested {
+				if err := tx.Table(config.Configs.TemplateStageTable).Create(&mappings).Error; err != nil {
+					return fmt.Errorf("create stage mappings: %w", err)
+				}
 			}
-			versions, err = configurationcache.IncrementStageConfigurationVersions(tx, config.Configs.ConfigurationVersionTable, true, true)
+			versions, err = configurationcache.IncrementStageConfigurationVersions(tx, config.Configs.ConfigurationVersionTable, scheduleRequested, mappingsRequested)
 			return err
 		})
 	})
@@ -160,7 +179,11 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 		return nil, err
 	}
 	publishStageConfigurationInvalidation(versions)
-	return &apiModels.StageConfigurationResponse{LenderSchedule: schedule, TemplateStages: mappings}, nil
+	response := &apiModels.StageConfigurationResponse{TemplateStages: mappings}
+	if scheduleRequested {
+		response.LenderSchedule = &schedule
+	}
+	return response, nil
 }
 
 func (s *StageConfigurationService) Update(id int, request apiModels.StageConfigurationRequest) (*apiModels.StageConfigurationResponse, error) {
@@ -175,7 +198,11 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 		return nil, fmt.Errorf("discover lender schedule: %w", err)
 	}
 	target := scheduleFromRequest(request)
+	if request.Interval == nil {
+		target.Interval = discovered.Interval
+	}
 	target.ID = id
+	mappingsRequested := request.TemplateStages != nil
 	var savedMappings []apiModels.StageMapping
 	var versions configurationcache.StageConfigurationVersions
 	var scheduleChanged, mappingsChanged bool
@@ -200,24 +227,21 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 			if !sameScheduleIdentity(current, discovered) {
 				return ErrConfigurationStale
 			}
-			if !sameScheduleIdentity(current, target) {
-				if err := ensureScheduleUnused(tx, current); err != nil {
-					return err
-				}
-			}
 			if err := ensureScheduleIdentityAvailable(tx, target, id); err != nil {
 				return err
 			}
-			if !sameScheduleIdentity(current, target) {
+			if mappingsRequested && !sameScheduleIdentity(current, target) {
 				if err := ensureMappingIdentityAvailable(tx, target); err != nil {
 					return err
 				}
 			}
 			var existing []apiModels.StageMapping
-			if err := tx.Table(config.Configs.TemplateStageTable).Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("LenderName = ? AND CommType = ? AND Stage = ?", current.LenderName, current.CommType, current.Stage).
-				Order("SubStage ASC, Id ASC").Find(&existing).Error; err != nil {
-				return err
+			if mappingsRequested {
+				if err := tx.Table(config.Configs.TemplateStageTable).Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where("LenderName = ? AND CommType = ? AND Stage = ?", current.LenderName, current.CommType, current.Stage).
+					Order("SubStage ASC, Id ASC").Find(&existing).Error; err != nil {
+					return err
+				}
 			}
 			desired := mappingsFromRequest(request)
 			existingBySub := make(map[int]apiModels.StageMapping, len(existing))
@@ -231,17 +255,19 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 					desired[i].ID = mapping.ID
 				}
 			}
-			for _, mapping := range existing {
-				if _, keep := desiredSubs[mapping.SubStage]; keep && sameScheduleIdentity(current, target) {
-					continue
-				}
-				if err := ensureMappingUnused(tx, mapping); err != nil {
-					return err
+			if mappingsRequested {
+				for _, mapping := range existing {
+					if _, keep := desiredSubs[mapping.SubStage]; keep && sameScheduleIdentity(current, target) {
+						continue
+					}
+					if err := ensureMappingUnused(tx, mapping); err != nil {
+						return err
+					}
 				}
 			}
 
 			scheduleChanged = current.LenderName != target.LenderName || current.CommType != target.CommType || current.Stage != target.Stage || current.Interval != target.Interval
-			mappingsChanged = !sameMappingSet(existing, desired, sameScheduleIdentity(current, target))
+			mappingsChanged = mappingsRequested && !sameMappingSet(existing, desired, sameScheduleIdentity(current, target))
 			if scheduleChanged {
 				if err := tx.Table(config.Configs.LenderStagesTable).Where("Id = ?", id).Updates(map[string]interface{}{
 					"LenderName": target.LenderName, "CommType": target.CommType, "Stage": target.Stage, "Interval": target.Interval,
@@ -298,7 +324,14 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 	if scheduleChanged || mappingsChanged {
 		publishStageConfigurationInvalidation(versions)
 	}
-	return &apiModels.StageConfigurationResponse{LenderSchedule: target, TemplateStages: savedMappings}, nil
+	if !mappingsRequested {
+		if err := s.WriteDB.Table(config.Configs.TemplateStageTable).
+			Where("LenderName = ? AND CommType = ? AND Stage = ?", target.LenderName, target.CommType, target.Stage).
+			Order("SubStage ASC, Id ASC").Find(&savedMappings).Error; err != nil {
+			return nil, err
+		}
+	}
+	return &apiModels.StageConfigurationResponse{LenderSchedule: &target, TemplateStages: savedMappings}, nil
 }
 
 func sameMappingSet(existing, desired []apiModels.StageMapping, sameIdentity bool) bool {
@@ -336,6 +369,27 @@ func ensureMappingIdentityAvailable(tx *gorm.DB, schedule apiModels.LenderSchedu
 	var count int64
 	if err := tx.Table(config.Configs.TemplateStageTable).
 		Where("LenderName = ? AND CommType = ? AND Stage = ?", schedule.LenderName, schedule.CommType, schedule.Stage).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrConfigurationAlreadyExists
+	}
+	return nil
+}
+
+func ensureDesiredMappingsAvailable(tx *gorm.DB, mappings []apiModels.StageMapping) error {
+	if len(mappings) == 0 {
+		return nil
+	}
+	subStages := make([]int, 0, len(mappings))
+	for _, mapping := range mappings {
+		subStages = append(subStages, mapping.SubStage)
+	}
+	identity := mappings[0]
+	var count int64
+	if err := tx.Table(config.Configs.TemplateStageTable).
+		Where("LenderName = ? AND CommType = ? AND Stage = ? AND SubStage IN ?", identity.LenderName, identity.CommType, identity.Stage, subStages).
 		Count(&count).Error; err != nil {
 		return err
 	}
@@ -399,7 +453,7 @@ func (s *StageConfigurationService) GetLenderSchedule(id int) (*apiModels.StageC
 	if err := s.ReadDB.Table(config.Configs.TemplateStageTable).Where("LenderName = ? AND CommType = ? AND Stage = ?", schedule.LenderName, schedule.CommType, schedule.Stage).Order("SubStage ASC, Id ASC").Find(&mappings).Error; err != nil {
 		return nil, err
 	}
-	return &apiModels.StageConfigurationResponse{LenderSchedule: schedule, TemplateStages: mappings}, nil
+	return &apiModels.StageConfigurationResponse{LenderSchedule: &schedule, TemplateStages: mappings}, nil
 }
 
 func (s *StageConfigurationService) GetStageMappings(params apiModels.StageConfigurationListParams) (*apiModels.StageMappingListResult, error) {
@@ -440,7 +494,6 @@ func (s *StageConfigurationService) DeleteLenderSchedule(id int) error {
 		return err
 	}
 	var versions configurationcache.StageConfigurationVersions
-	var mappingsDeleted bool
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		locks, err := acquireStageConfigurationLocks(conn, stageConfigurationLockIdentity(discovered.LenderName, discovered.CommType, discovered.Stage))
 		if err != nil {
@@ -458,18 +511,10 @@ func (s *StageConfigurationService) DeleteLenderSchedule(id int) error {
 			if !sameScheduleIdentity(current, discovered) {
 				return ErrConfigurationStale
 			}
-			if err := ensureScheduleUnused(tx, current); err != nil {
-				return err
-			}
-			result := tx.Table(config.Configs.TemplateStageTable).Where("LenderName = ? AND CommType = ? AND Stage = ?", current.LenderName, current.CommType, current.Stage).Delete(&apiModels.StageMapping{})
-			if result.Error != nil {
-				return result.Error
-			}
-			mappingsDeleted = result.RowsAffected > 0
 			if err := tx.Table(config.Configs.LenderStagesTable).Where("Id = ?", id).Delete(&apiModels.LenderSchedule{}).Error; err != nil {
 				return err
 			}
-			versions, err = configurationcache.IncrementStageConfigurationVersions(tx, config.Configs.ConfigurationVersionTable, true, mappingsDeleted)
+			versions, err = configurationcache.IncrementStageConfigurationVersions(tx, config.Configs.ConfigurationVersionTable, true, false)
 			return err
 		})
 	})
@@ -508,15 +553,6 @@ func (s *StageConfigurationService) DeleteStageMapping(id int) error {
 			}
 			if err := ensureMappingUnused(tx, current); err != nil {
 				return err
-			}
-			var siblingCount int64
-			if err := tx.Table(config.Configs.TemplateStageTable).
-				Where("LenderName = ? AND CommType = ? AND Stage = ?", current.LenderName, current.CommType, current.Stage).
-				Count(&siblingCount).Error; err != nil {
-				return err
-			}
-			if siblingCount <= 1 {
-				return fmt.Errorf("%w: lender schedule must retain at least one stage mapping", ErrConfigurationInUse)
 			}
 			if err := tx.Table(config.Configs.TemplateStageTable).Where("Id = ?", id).Delete(&apiModels.StageMapping{}).Error; err != nil {
 				return err
