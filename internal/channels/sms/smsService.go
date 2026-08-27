@@ -12,6 +12,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	pinnacleSms "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle"
 	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
+	"github.com/wecredit/communication-sdk/internal/channels/sms/templatevars"
 	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -73,6 +74,19 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 		CampaignDate:           msg.CampaignDate,
 	}
 	channelHelper.PopulateSmsFields(&req, templateData)
+
+	if strings.Contains(req.TemplateText, "{#var#}") {
+		resolvedText, applyErr := templatevars.ApplyTemplateVariables(req)
+		if applyErr != nil {
+			utils.Error(fmt.Errorf("SMS template variable substitution failed for CommId %s: %v", msg.CommId, applyErr))
+			response := extapimodels.SmsResponse{
+				Outcome:         outcome.FailedFinal,
+				ResponseMessage: fmt.Sprintf("template variable substitution failed: %v", applyErr),
+			}
+			return buildSmsResult(msg, req, response)
+		}
+		req.TemplateText = resolvedText
+	}
 
 	var response extapimodels.SmsResponse
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
