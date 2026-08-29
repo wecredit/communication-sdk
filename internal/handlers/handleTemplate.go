@@ -39,7 +39,12 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, templates)
+	// Convert all templates to response format ensuring all fields present
+	response := make([]apiModels.TemplateResponse, len(templates))
+	for i := range templates {
+		response[i] = toTemplateResponse(&templates[i])
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
@@ -56,7 +61,9 @@ func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, template)
+	// Convert to response format to ensure all fields are present (even if empty)
+	response := toTemplateResponse(template)
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *TemplateHandler) AddTemplate(c *gin.Context) {
@@ -120,4 +127,61 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Template deleted successfully"})
+}
+
+// GetRequiredFields returns required fields based on vendor and channel
+func (h *TemplateHandler) GetRequiredFields(c *gin.Context) {
+	vendor := c.Query("vendor")
+	channel := c.Query("channel")
+
+	if vendor == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "vendor query parameter is required"})
+		return
+	}
+
+	if channel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "channel query parameter is required"})
+		return
+	}
+
+	response, err := h.Service.GetRequiredFields(vendor, channel)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// toTemplateResponse converts DB model to API response struct
+// Ensures all fields are always present in consistent order (struct field order)
+// No omitempty tags = all fields included even if empty
+func toTemplateResponse(template *apiModels.Templatedetails) apiModels.TemplateResponse {
+	var updatedOn *string
+	if template.UpdatedOn != nil {
+		formattedTime := template.UpdatedOn.Format("2006-01-02T15:04:05Z07:00")
+		updatedOn = &formattedTime
+	}
+
+	return apiModels.TemplateResponse{
+		Id:                template.Id,
+		Client:            template.Client,
+		Channel:           template.Channel,
+		Process:           template.Process,
+		Stage:             template.Stage,
+		Vendor:            template.Vendor,
+		TemplateName:      template.TemplateName,
+		ImageId:           template.ImageId,
+		ImageUrl:          template.ImageUrl,
+		DltTemplateId:     template.DltTemplateId,
+		IsActive:          template.IsActive,
+		TemplateText:      template.TemplateText,
+		Link:              template.Link,
+		TemplateCategory:  template.TemplateCategory,
+		TemplateVariables: template.TemplateVariables,
+		Subject:           template.Subject,
+		FromEmail:         template.FromEmail,
+		CreatedOn:         template.CreatedOn.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedOn:         updatedOn,
+	}
 }
