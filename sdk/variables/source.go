@@ -26,3 +26,8 @@ const (
 	TransactionalTemplateCategory string = "1"
 	PromotionalTemplateCategory   string = "2"
 )
+
+const (
+	ErrVendorRequired  = "vendor is required"
+	ErrChannelRequired = "channel is required"
+)
