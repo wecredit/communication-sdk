@@ -19,15 +19,15 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
+func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (processed, sent bool, err error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
-		return false, errors.New("template data not found in cache")
+		return false, false, errors.New("template data not found in cache")
 	}
 	templateData, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		return true, nil // message processed but not sent as Template not found
+		return true, false, nil // message processed but not sent as Template not found
 	}
 	msg.Vendor = matchedVendor
 
@@ -54,7 +54,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		rcsAppIdData, err := database.GetRcsAppId(database.DBtechRead, req.AppId)
 		if err != nil {
 			utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
-			return false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
+			return false, false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
 		}
 		if val, ok := rcsAppIdData["AppIdKey"].(string); ok {
 			req.AppIdKey = val
@@ -96,7 +96,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 
 	if response.IsSent {
 		utils.Info(fmt.Sprintf("RCS sent successfully for Process: %s on %s via %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		return true, nil
+		return true, true, nil
 	}
-	return true, nil // message processed but not sent as response.IsSent is false
+	return true, false, nil // message processed but not sent as response.IsSent is false
 }
