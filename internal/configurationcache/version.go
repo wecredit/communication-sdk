@@ -17,6 +17,13 @@ type StageConfigurationVersions struct {
 	StageMappingVersion   int64 `gorm:"column:StageMappingVersion" json:"stageMappingVersion"`
 }
 
+// versionSession keeps caller query state (WHERE, ORDER, LIMIT, model/table)
+// from leaking into singleton-version operations while retaining the caller's
+// underlying connection and transaction.
+func versionSession(db *gorm.DB) *gorm.DB {
+	return db.Session(&gorm.Session{NewDB: true})
+}
+
 // IncrementTemplateVersion increments the template version
 func IncrementTemplateVersion(tx *gorm.DB, table string) (int64, error) {
 	if tx == nil {
@@ -27,7 +34,7 @@ func IncrementTemplateVersion(tx *gorm.DB, table string) (int64, error) {
 		return 0, errors.New("configuration version table is required")
 	}
 
-	result := tx.Table(table).Where("Id = ?", 1).Updates(map[string]interface{}{
+	result := versionSession(tx).Table(table).Where("Id = ?", 1).Updates(map[string]interface{}{
 		"TemplateVersion": gorm.Expr("TemplateVersion + 1"),
 		"UpdatedOn":       gorm.Expr("CURRENT_TIMESTAMP(3)"),
 	})
@@ -42,7 +49,7 @@ func IncrementTemplateVersion(tx *gorm.DB, table string) (int64, error) {
 	}
 
 	var row templateVersionRow
-	if err := tx.Table(table).Select("TemplateVersion").Where("Id = ?", 1).First(&row).Error; err != nil {
+	if err := versionSession(tx).Table(table).Select("TemplateVersion").Where("Id = ?", 1).First(&row).Error; err != nil {
 		return 0, fmt.Errorf("read incremented template version: %w", err)
 	}
 
@@ -69,7 +76,7 @@ func IncrementStageConfigurationVersions(tx *gorm.DB, table string, scheduleChan
 	}
 
 	updates["UpdatedOn"] = gorm.Expr("CURRENT_TIMESTAMP(3)")
-	result := tx.Table(table).Where("Id = ?", 1).Updates(updates)
+	result := versionSession(tx).Table(table).Where("Id = ?", 1).Updates(updates)
 	if result.Error != nil {
 		return StageConfigurationVersions{}, fmt.Errorf("increment stage configuration versions: %w", result.Error)
 	}
@@ -88,7 +95,7 @@ func ReadStageConfigurationVersions(ctx context.Context, db *gorm.DB, table stri
 	}
 
 	var versions StageConfigurationVersions
-	if err := db.WithContext(ctx).Table(table).
+	if err := versionSession(db).WithContext(ctx).Table(table).
 		Select("LenderScheduleVersion, StageMappingVersion").Where("Id = ?", 1).First(&versions).Error; err != nil {
 		return StageConfigurationVersions{}, fmt.Errorf("read stage configuration versions: %w", err)
 	}
@@ -108,7 +115,7 @@ func ReadTemplateVersion(ctx context.Context, db *gorm.DB, table string) (int64,
 	}
 
 	var row templateVersionRow
-	if err := db.WithContext(ctx).Table(table).Select("TemplateVersion").Where("Id = ?", 1).First(&row).Error; err != nil {
+	if err := versionSession(db).WithContext(ctx).Table(table).Select("TemplateVersion").Where("Id = ?", 1).First(&row).Error; err != nil {
 		return 0, fmt.Errorf("read template version: %w", err)
 	}
 

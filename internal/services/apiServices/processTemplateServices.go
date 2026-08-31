@@ -116,7 +116,7 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 			return err
 		}
 
-		return conn.Transaction(func(tx *gorm.DB) error {
+		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
 			if err := validateStagePrerequisites(tx, *template); err != nil {
 				return err
 			}
@@ -129,7 +129,7 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 				return err
 			}
 
-			if err := tx.Table(config.Configs.TemplateDetailsTable).Create(template).Error; err != nil {
+			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Create(template).Error; err != nil {
 				return fmt.Errorf("create template: %w", err)
 			}
 
@@ -179,7 +179,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 		}
 
 		var discovered apiModels.Templatedetails
-		if err := conn.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
+		if err := conn.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrTemplateNotFound
 			}
@@ -207,9 +207,9 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			return err
 		}
 
-		return conn.Transaction(func(tx *gorm.DB) error {
+		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
 			var current apiModels.Templatedetails
-			if err := tx.Table(config.Configs.TemplateDetailsTable).
+			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("Id = ?", id).First(&current).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -233,7 +233,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			istOffset := 5*time.Hour + 30*time.Minute
 			now := time.Now().UTC().Add(istOffset)
 			saved.UpdatedOn = &now
-			result := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
+			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
 				Select(
 					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName",
 					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
@@ -283,7 +283,7 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 		}
 
 		var discovered apiModels.Templatedetails
-		if err := conn.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
+		if err := conn.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrTemplateNotFound
 			}
@@ -295,9 +295,9 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 			return err
 		}
 
-		return conn.Transaction(func(tx *gorm.DB) error {
+		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
 			var current apiModels.Templatedetails
-			if err := tx.Table(config.Configs.TemplateDetailsTable).
+			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("Id = ?", id).First(&current).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -309,7 +309,7 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 				return ErrTemplateStale
 			}
 
-			result := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).Delete(&apiModels.Templatedetails{})
+			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).Delete(&apiModels.Templatedetails{})
 			if result.Error != nil {
 				return result.Error
 			}
