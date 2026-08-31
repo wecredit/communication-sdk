@@ -51,7 +51,7 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 // fields. IsActive is deliberately excluded: callers should update the
 // existing row when only its active state needs to change.
 func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) error {
-	query := db.Table(config.Configs.TemplateDetailsTable).
+	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 		Where(
 			`Client = ? AND Channel = ? AND Process = ? AND Vendor = ?
 			AND TemplateName = ? AND ImageId = ? AND ImageUrl = ?
@@ -238,7 +238,7 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 	var stageMappings []struct {
 		ID int `gorm:"column:Id"`
 	}
-	if err := db.Table(config.Configs.TemplateStageTable).
+	if err := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateStageTable).
 		Select("Id").
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Where(
@@ -273,7 +273,7 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 		return nil
 	}
 
-	query := db.Table(config.Configs.TemplateDetailsTable).Where("IsActive = ?", true)
+	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("IsActive = ?", true)
 	if template.Id != 0 {
 		query = query.Where("Id <> ?", template.Id)
 	}
