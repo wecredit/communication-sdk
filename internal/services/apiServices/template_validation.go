@@ -284,7 +284,7 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 	case ResolutionModeStage:
 		query = query.Where("Stage IS NOT NULL").Where("Process = ? AND Stage = ?", template.Process, *template.Stage)
 	case ResolutionModeReference:
-		query = query.Where("Stage IS NULL")
+		query = query.Where("Stage IS NULL").Where("Process = ?", template.Process)
 		switch template.Channel {
 		case "SMS":
 			query = query.Where("DltTemplateId = ?", template.DltTemplateId)
@@ -340,10 +340,13 @@ func resolutionLockName(template apiModels.Templatedetails) string {
 
 	if template.Stage != nil {
 		parts = append(parts, strings.ToLower(template.Process), strconv.FormatFloat(*template.Stage, 'f', 2, 64))
-	} else if template.Channel == "SMS" {
-		parts = append(parts, strconv.FormatInt(template.DltTemplateId, 10))
 	} else {
-		parts = append(parts, strings.ToLower(template.TemplateName))
+		parts = append(parts, strings.ToLower(template.Process))
+		if template.Channel == "SMS" {
+			parts = append(parts, strconv.FormatInt(template.DltTemplateId, 10))
+		} else {
+			parts = append(parts, strings.ToLower(template.TemplateName))
+		}
 	}
 
 	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))

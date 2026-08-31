@@ -102,8 +102,9 @@ func CurrentTemplateSnapshot() (*TemplateSnapshot, bool) {
 // activeTemplateResolutionKey returns the active template resolution key
 func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, channel, vendor string) (string, string) {
 	base := strings.Join([]string{strings.ToLower(client), channel, vendor}, "\x00")
+	process := strings.ToLower(strings.TrimSpace(row.Process))
 	if row.Stage != nil {
-		return "stage\x00" + strings.ToLower(strings.TrimSpace(row.Process)) + "\x00" + stage + "\x00" + base, ""
+		return "stage\x00" + process + "\x00" + stage + "\x00" + base, ""
 	}
 
 	switch channel {
@@ -111,14 +112,14 @@ func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, c
 		if row.DltTemplateId <= 0 {
 			return "", "reference SMS template has no DltTemplateId"
 		}
-		return fmt.Sprintf("sms\x00%d\x00%s", row.DltTemplateId, base), ""
+		return fmt.Sprintf("sms\x00%s\x00%d\x00%s", process, row.DltTemplateId, base), ""
 
 	case "RCS", "WHATSAPP", "EMAIL":
 		name := strings.TrimSpace(row.TemplateName)
 		if name == "" {
 			return "", "reference template has no TemplateName"
 		}
-		return "named\x00" + strings.ToLower(name) + "\x00" + base, ""
+		return "named\x00" + process + "\x00" + strings.ToLower(name) + "\x00" + base, ""
 
 	default:
 		return "", "template channel is unsupported"

@@ -43,6 +43,9 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 	channel := strings.ToUpper(strings.TrimSpace(msg.Channel))
 	vendor := strings.ToUpper(strings.TrimSpace(msg.Vendor))
 	process := strings.TrimSpace(msg.ProcessName)
+	if process == "" {
+		return nil, vendor, fmt.Errorf("process name is required for template reference lookup")
+	}
 
 	var matches []map[string]interface{}
 	for _, val := range templateDetails {
@@ -72,7 +75,7 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		if vendor != "" && !strings.EqualFold(strings.TrimSpace(rowVendor), vendor) {
 			continue
 		}
-		if process != "" && !strings.EqualFold(strings.TrimSpace(rowProcess), process) {
+		if !strings.EqualFold(strings.TrimSpace(rowProcess), process) {
 			continue
 		}
 		matches = append(matches, val)

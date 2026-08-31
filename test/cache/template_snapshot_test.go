@@ -86,6 +86,28 @@ func TestSnapshotIgnoresInactiveDuplicateResolutionKey(t *testing.T) {
 	}
 }
 
+func TestSnapshotAllowsSameReferenceForDifferentProcesses(t *testing.T) {
+	branch := referenceSMSTemplate(16, "Branch")
+	branchTest := referenceSMSTemplate(17, "Branch_test")
+
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{branch, branchTest})
+	if err != nil {
+		t.Fatalf("different processes should have independent reference identities: %v", err)
+	}
+	if len(snapshot.Templates) != 2 {
+		t.Fatalf("snapshot contains %d templates, want 2", len(snapshot.Templates))
+	}
+}
+
+func TestSnapshotRejectsSameReferenceWithinProcess(t *testing.T) {
+	first := referenceSMSTemplate(18, "Branch")
+	second := referenceSMSTemplate(19, " branch ")
+
+	if _, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{first, second}); err == nil {
+		t.Fatal("same-process reference duplicate was accepted")
+	}
+}
+
 func TestFailedBuildRetainsLastKnownGoodSnapshot(t *testing.T) {
 	good, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{stageTemplate(20, 3.00, "SMS")})
 	if err != nil {
@@ -122,5 +144,12 @@ func stageTemplate(id int, stage float64, channel string) apiModels.Templatedeta
 	return apiModels.Templatedetails{
 		Id: id, Process: "COLLECTION", Stage: &stage, Client: "wecredit",
 		Channel: channel, Vendor: "SINCH", IsActive: true,
+	}
+}
+
+func referenceSMSTemplate(id int, process string) apiModels.Templatedetails {
+	return apiModels.Templatedetails{
+		Id: id, Process: process, Client: "wecredit", Channel: "SMS", Vendor: "PINNACLE",
+		DltTemplateId: 1777178764367201169, IsActive: true,
 	}
 }
