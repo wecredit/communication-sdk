@@ -61,6 +61,8 @@ type Config struct {
 	ConfigurationVersionTable       string `envconfig:"CONFIGURATION_VERSION_TABLE" default:"ConfigurationVersion"`
 	CacheVersionPollIntervalSeconds string `envconfig:"CACHE_VERSION_POLL_INTERVAL_SECONDS" default:"90"`
 	CacheReloadMinIntervalSeconds   string `envconfig:"CACHE_RELOAD_MIN_INTERVAL_SECONDS" default:"60"`
+	CommAdminUsername               string `envconfig:"COMM_ADMIN_USERNAME"`
+	CommAdminPassword               string `envconfig:"COMM_ADMIN_PASSWORD"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`

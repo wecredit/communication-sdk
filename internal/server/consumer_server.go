@@ -11,6 +11,7 @@ import (
 	"github.com/wecredit/communication-sdk/health"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
+	"github.com/wecredit/communication-sdk/internal/middleware"
 	apiServices "github.com/wecredit/communication-sdk/internal/services/apiServices"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -45,6 +46,13 @@ func StartConsumer(port string) {
 
 	r.GET("/health", health.HealthCheckHandler(port))
 
+	adminBasicAuth, err := middleware.NewAdminBasicAuth(config.Configs.CommAdminUsername, config.Configs.CommAdminPassword)
+	if err != nil {
+		log.Fatalf("Failed to configure communication admin authentication: %v", err)
+	}
+	admin := r.Group("")
+	admin.Use(adminBasicAuth)
+
 	vendorHandler := handlers.NewVendorHandler(apiServices.NewVendorService(database.DBtechRead)) // Create handler for vendors passing them database object
 	vendors := r.Group("/vendors")
 	{
@@ -67,7 +75,7 @@ func StartConsumer(port string) {
 	}
 
 	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead, database.DBtechWrite))
-	templates := r.Group("/templates")
+	templates := admin.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)
 		templates.POST("/add-template", templateHandler.AddTemplate)
@@ -77,18 +85,18 @@ func StartConsumer(port string) {
 	}
 
 	stageConfigurationHandler := handlers.NewStageConfigurationHandler(apiServices.NewStageConfigurationService(database.DBtechRead, database.DBtechWrite))
-	stageConfigurations := r.Group("/stage-configurations")
+	stageConfigurations := admin.Group("/stage-configurations")
 	{
 		stageConfigurations.POST("", stageConfigurationHandler.Create)
 		stageConfigurations.PUT("/lender-schedule/id/:id", stageConfigurationHandler.Update)
 	}
-	lenderSchedules := r.Group("/lender-schedules")
+	lenderSchedules := admin.Group("/lender-schedules")
 	{
 		lenderSchedules.GET("", stageConfigurationHandler.ListLenderSchedules)
 		lenderSchedules.GET("/id/:id", stageConfigurationHandler.GetLenderSchedule)
 		lenderSchedules.DELETE("/id/:id", stageConfigurationHandler.DeleteLenderSchedule)
 	}
-	stageMappings := r.Group("/stage-mappings")
+	stageMappings := admin.Group("/stage-mappings")
 	{
 		stageMappings.GET("", stageConfigurationHandler.ListStageMappings)
 		stageMappings.DELETE("/id/:id", stageConfigurationHandler.DeleteStageMapping)
