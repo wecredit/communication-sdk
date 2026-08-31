@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -12,6 +13,7 @@ import (
 	internalredis "github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TemplateService struct {
@@ -162,41 +164,64 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
+		var mutationLockName string
 		var stageLocks []string
 		defer func() {
 			releaseResolutionLock(conn, lockName)
 			releaseStageConfigurationLocks(conn, stageLocks)
+			releaseTemplateMutationLock(conn, mutationLockName)
 		}()
 
+		var err error
+		mutationLockName, err = acquireTemplateMutationLock(conn, id)
+		if err != nil {
+			return err
+		}
+
+		var discovered apiModels.Templatedetails
+		if err := conn.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTemplateNotFound
+			}
+			return fmt.Errorf("discover template %d for update: %w", id, err)
+		}
+
+		saved = discovered
+		updates.Apply(&saved)
+		normalizeTemplate(&saved)
+		if err := ValidateTemplateStructure(saved); err != nil {
+			return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
+		}
+
+		stageIdentity, err := templateStageLockIdentity(saved)
+		if err != nil {
+			return fmt.Errorf("derive template stage lock: %w", err)
+		}
+
+		stageLocks, err = acquireStageConfigurationLocks(conn, stageIdentity)
+		if err != nil {
+			return err
+		}
+		lockName, err = acquireResolutionLock(conn, saved)
+		if err != nil {
+			return err
+		}
+
 		return conn.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&saved).Error; err != nil {
+			var current apiModels.Templatedetails
+			if err := tx.Table(config.Configs.TemplateDetailsTable).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("Id = ?", id).First(&current).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return ErrTemplateNotFound
 				}
-				return fmt.Errorf("load template %d for update: %w", id, err)
+				return fmt.Errorf("lock template %d for update: %w", id, err)
+			}
+			if !reflect.DeepEqual(current, discovered) {
+				return ErrTemplateStale
 			}
 
-			wasActive := saved.IsActive
-			updates.Apply(&saved)
-			normalizeTemplate(&saved)
-			if err := ValidateTemplateStructure(saved); err != nil {
-				return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
-			}
-
-			stageIdentity, err := templateStageLockIdentity(saved)
-			if err != nil {
-				return fmt.Errorf("derive template stage lock: %w", err)
-			}
-
-			stageLocks, err = acquireStageConfigurationLocks(tx, stageIdentity)
-			if err != nil {
-				return err
-			}
-			lockName, err = acquireResolutionLock(tx, saved)
-			if err != nil {
-				return err
-			}
-
+			wasActive := current.IsActive
 			if err := validateStagePrerequisites(tx, saved); err != nil {
 				return err
 			}
@@ -208,8 +233,19 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			istOffset := 5*time.Hour + 30*time.Minute
 			now := time.Now().UTC().Add(istOffset)
 			saved.UpdatedOn = &now
-			if err := tx.Table(config.Configs.TemplateDetailsTable).Save(&saved).Error; err != nil {
-				return err
+			result := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
+				Select(
+					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName",
+					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
+					"IsActive", "TemplateText", "Link", "UpdatedOn", "TemplateCategory",
+					"TemplateVariables", "SmsFallbackVariables", "Subject", "FromEmail",
+				).
+				Updates(&saved)
+			if result.Error != nil {
+				return fmt.Errorf("update template %d: %w", id, result.Error)
+			}
+			if result.RowsAffected != 1 {
+				return ErrTemplateStale
 			}
 
 			if !wasActive && !saved.IsActive {
@@ -234,19 +270,43 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
-		defer func() { releaseResolutionLock(conn, lockName) }()
+		var mutationLockName string
+		defer func() {
+			releaseResolutionLock(conn, lockName)
+			releaseTemplateMutationLock(conn, mutationLockName)
+		}()
+
+		var err error
+		mutationLockName, err = acquireTemplateMutationLock(conn, id)
+		if err != nil {
+			return err
+		}
+
+		var discovered apiModels.Templatedetails
+		if err := conn.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&discovered).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTemplateNotFound
+			}
+			return fmt.Errorf("discover template %d for delete: %w", id, err)
+		}
+
+		lockName, err = acquireResolutionLock(conn, discovered)
+		if err != nil {
+			return err
+		}
 
 		return conn.Transaction(func(tx *gorm.DB) error {
-			var existing apiModels.Templatedetails
-			if err := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).First(&existing).Error; err != nil {
-				return err
+			var current apiModels.Templatedetails
+			if err := tx.Table(config.Configs.TemplateDetailsTable).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("Id = ?", id).First(&current).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrTemplateNotFound
+				}
+				return fmt.Errorf("lock template %d for delete: %w", id, err)
 			}
-
-			normalizeTemplate(&existing)
-			var err error
-			lockName, err = acquireResolutionLock(tx, existing)
-			if err != nil {
-				return err
+			if !reflect.DeepEqual(current, discovered) {
+				return ErrTemplateStale
 			}
 
 			result := tx.Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).Delete(&apiModels.Templatedetails{})
@@ -256,10 +316,10 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 
 			// check if the rows affected is 0
 			if result.RowsAffected == 0 {
-				return gorm.ErrRecordNotFound
+				return ErrTemplateStale
 			}
 
-			if !existing.IsActive {
+			if !current.IsActive {
 				return nil
 			}
 

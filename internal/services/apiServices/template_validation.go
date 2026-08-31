@@ -33,6 +33,7 @@ var (
 	ErrTemplateDuplicate  = errors.New("an identical template already exists")
 	ErrTemplateValidation = errors.New("template validation failed")
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
+	ErrTemplateStale      = errors.New("template changed while acquiring locks")
 )
 
 // normalizeTemplate normalizes the template
@@ -378,6 +379,28 @@ func acquireNamedResolutionLock(db *gorm.DB, template apiModels.Templatedetails)
 	}
 
 	return name, nil
+}
+
+// acquireTemplateMutationLock serializes updates and deletes of the same row
+// before either operation discovers the row's current resolution identity.
+func acquireTemplateMutationLock(db *gorm.DB, id int) (string, error) {
+	if id <= 0 {
+		return "", errors.New("template mutation lock requires a positive template ID")
+	}
+
+	name := fmt.Sprintf("comm-template-row:%d", id)
+	var acquired int
+	if err := db.Raw("SELECT GET_LOCK(?, 10)", name).Scan(&acquired).Error; err != nil {
+		return "", fmt.Errorf("acquire template row lock: %w", err)
+	}
+	if acquired != 1 {
+		return "", fmt.Errorf("%w: timed out waiting for template row lock", ErrTemplateBusy)
+	}
+	return name, nil
+}
+
+func releaseTemplateMutationLock(db *gorm.DB, name string) {
+	releaseResolutionLock(db, name)
 }
 
 func releaseResolutionLock(db *gorm.DB, name string) {

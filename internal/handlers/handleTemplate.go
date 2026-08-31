@@ -249,6 +249,9 @@ func writeTemplateServiceError(c *gin.Context, err error) {
 	case errors.Is(err, services.ErrTemplateBusy), errors.Is(err, services.ErrConfigurationBusy):
 		writeTemplateError(c, http.StatusServiceUnavailable, "TEMPLATE_BUSY", "template configuration is busy; retry the request")
 
+	case errors.Is(err, services.ErrTemplateStale):
+		writeTemplateError(c, http.StatusConflict, "TEMPLATE_STALE", "template changed while the request was being processed; retry the request")
+
 	default:
 		utils.Error(fmt.Errorf("template API request failed: %w", err))
 		writeTemplateError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
