@@ -595,7 +595,6 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 
 }
 
-
 // MarketingWhatsappDependencies defines the dependencies for marketing WhatsApp dispatch.
 type MarketingWhatsappDependencies struct {
 	Claim       func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error)
@@ -608,7 +607,6 @@ type MarketingWhatsappDependencies struct {
 	Release     func(sdkModels.CommApiRequestBody)
 	Blank       func(sdkModels.CommApiRequestBody, *sqs.Message, int)
 }
-
 
 // handleMarketingWhatsapp handles marketing WhatsApp dispatch.
 func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
@@ -630,7 +628,6 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 
 	return HandleMarketingWhatsappWithDependencies(data, dbMappedData, msg, redriveMaxReceiveCount, deps)
 }
-
 
 // HandleMarketingWhatsappWithDependencies handles marketing WhatsApp dispatch with dependencies.
 func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, msg *sqs.Message, redriveMaxReceiveCount int, deps MarketingWhatsappDependencies) (bool, bool) {
@@ -801,8 +798,22 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if skipSend {
-			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
-				return false, false
+			// Blank Redis state means another worker is still in flight. A terminal
+			// Redis state is a redelivery and must repair both audit sinks before ACK.
+			if strings.TrimSpace(redisTxn) != "" || strings.TrimSpace(redisErr) != "" {
+				replayResult := sms.TerminalReplayResult(data, redisTxn, redisErr)
+				outputErr, trackingErr := RunParallelSMSPostSendWrites(
+					func() error {
+						return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, replayResult.DBData)
+					},
+					func() error {
+						return recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+					},
+				)
+				if outputErr != nil || trackingErr != nil {
+					logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+					return false, false
+				}
 			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
@@ -868,6 +879,37 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		return result.Processed, deleted
 	}
 
+	// Compliance failures are terminal only after both independent databases
+	// confirm persistence. The independent idempotent writes run concurrently;
+	// SQS acknowledgement still waits for both of them to complete successfully.
+	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
+		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+			func() error {
+				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+			},
+			func() error {
+				return recordMarketingSMSTrackingFromSend(data, result, nil)
+			},
+		)
+
+		if outputErr != nil || trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+			releaseMarketingDispatchClaims(data)
+			return false, false
+		}
+
+		if redisErr := channelHelper.UpdateRedisErrorMessage(data, complianceFailureMessage(result)); redisErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] failed to cache compliance result: %v", data.Client, data.SourceRowId, redisErr))
+		}
+
+		deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if !deleted {
+			utils.Error(fmt.Errorf("failed to delete compliance-blocked marketing SMS after persistence: %v", delErr))
+		}
+
+		return true, deleted
+	}
+
 	outputWritten := false
 	if marketing && result.AckSQS {
 		outputErr, trackingErr := RunParallelSMSPostSendWrites(
@@ -878,32 +920,9 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 				return recordMarketingSMSTrackingFromSend(data, result, nil)
 			},
 		)
-
 		outputWritten = true
 		if outputErr != nil || trackingErr != nil {
-			outputStatus := "succeeded"
-			if outputErr != nil {
-				outputStatus = outputErr.Error()
-			}
-
-			trackingStatus := "succeeded"
-			if trackingErr != nil {
-				trackingStatus = trackingErr.Error()
-			}
-
-			utils.Error(fmt.Errorf(
-				"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
-				data.Client,
-				data.CommId,
-				data.EventId,
-				outputStatus,
-				trackingStatus,
-			))
-		}
-
-		// Preserve the existing tracking failure behavior: do not reach SQS
-		// deletion when CommDispatchTracking failed. SmsOutput remains log-only.
-		if trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
 			return false, false
 		}
 	} else if marketing && !result.AckSQS {
@@ -928,8 +947,22 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	return result.Processed, deleted
 }
 
-// RunParallelSMSPostSendWrites starts both independent post-send writes and
-// waits for both to finish. Callers retain sink-specific failure handling.
+func complianceFailureMessage(result sms.SendSmsResult) string {
+	message, _ := result.DBData["ResponseMessage"].(string)
+	return strings.TrimSpace(message)
+}
+
+// isWeCreditSMSComplianceFailure checks if the given result is a compliance failure for a WeCredit SMS
+func isWeCreditSMSComplianceFailure(result sms.SendSmsResult) bool {
+	message := complianceFailureMessage(result)
+	return strings.Contains(message, "WECREDIT_SMS_CUTOFF") ||
+		strings.Contains(message, "WECREDIT_SMS_EXPIRED") ||
+		strings.Contains(message, "WECREDIT_SMS_CAMPAIGN_DATE_INVALID")
+}
+
+// RunParallelSMSPostSendWrites executes the independent audit writes together
+// and waits for both results. The caller must not acknowledge SQS unless both
+// returned errors are nil.
 func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outputErr, trackingErr error) {
 	var group errgroup.Group
 	group.Go(func() error {
@@ -942,6 +975,23 @@ func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outp
 	})
 	_ = group.Wait()
 	return outputErr, trackingErr
+}
+
+func logSMSPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputErr, trackingErr error) {
+	outputStatus := "succeeded"
+	if outputErr != nil {
+		outputStatus = outputErr.Error()
+	}
+
+	trackingStatus := "succeeded"
+	if trackingErr != nil {
+		trackingStatus = trackingErr.Error()
+	}
+
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
+		data.Client, data.CommId, data.EventId, outputStatus, trackingStatus,
+	))
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
@@ -1068,7 +1118,6 @@ func isMarketingWPDispatch(data sdkModels.CommApiRequestBody) bool {
 	return strings.EqualFold(strings.TrimSpace(data.Source), "marketing") && data.SourceRowId != 0
 }
 
-
 func claimOrSkipMarketingDispatch(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
 	exists, txn, errMsg, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
@@ -1139,7 +1188,6 @@ func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
 		strings.ToLower(strings.TrimSpace(data.ProcessName)),
 		strings.TrimSpace(data.EventId))
 }
-
 
 // recordBlankMarketingWhatsappClaim records a blank marketing WhatsApp claim.
 func recordBlankMarketingWhatsappClaim(data sdkModels.CommApiRequestBody, msg *sqs.Message, redriveMaxReceiveCount int) {
@@ -1229,7 +1277,7 @@ func recordMarketingWPTrackingFromRedis(data sdkModels.CommApiRequestBody, redis
 }
 
 func recordMarketingWPTracking(data sdkModels.CommApiRequestBody, outcome, transactionID, errorMessage string) error {
-	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommMarketingInputTable, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
 		Channel:           "WHATSAPP",
@@ -1244,7 +1292,6 @@ func recordMarketingWPTracking(data sdkModels.CommApiRequestBody, outcome, trans
 		TemplateReference: data.TemplateReference,
 	})
 
-	
 	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
 		utils.Info(fmt.Sprintf("WhatsApp dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
 		return nil
@@ -1291,7 +1338,7 @@ func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, resul
 }
 
 func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
-	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommMarketingInputTable, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
 		Channel:           "SMS",
@@ -1309,6 +1356,12 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
 		return nil
 	}
+
+	if errors.Is(err, database.ErrDispatchSourceAlreadyTerminal) {
+		utils.Info(fmt.Sprintf("dispatch source already terminal sourceRowId=%d; preserving first terminal outcome", data.SourceRowId))
+		return nil
+	}
+
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
 		return err
