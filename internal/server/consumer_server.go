@@ -11,6 +11,7 @@ import (
 	"github.com/wecredit/communication-sdk/health"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
+	"github.com/wecredit/communication-sdk/internal/middleware"
 	apiServices "github.com/wecredit/communication-sdk/internal/services/apiServices"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -45,6 +46,13 @@ func StartConsumer(port string) {
 
 	r.GET("/health", health.HealthCheckHandler(port))
 
+	adminBasicAuth, err := middleware.NewAdminBasicAuth(config.Configs.CommAdminUsername, config.Configs.CommAdminPassword)
+	if err != nil {
+		log.Fatalf("Failed to configure communication admin authentication: %v", err)
+	}
+	admin := r.Group("")
+	admin.Use(adminBasicAuth)
+
 	vendorHandler := handlers.NewVendorHandler(apiServices.NewVendorService(database.DBtechRead)) // Create handler for vendors passing them database object
 	vendors := r.Group("/vendors")
 	{
@@ -66,14 +74,32 @@ func StartConsumer(port string) {
 		clients.POST("/validate-client", clientHandler.ValidateClient)
 	}
 
-	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead))
-	templates := r.Group("/templates")
+	templateHandler := handlers.NewTemplateHandler(apiServices.NewTemplateService(database.DBtechRead, database.DBtechWrite))
+	templates := admin.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)
 		templates.POST("/add-template", templateHandler.AddTemplate)
 		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)
 		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)
+	}
+
+	stageConfigurationHandler := handlers.NewStageConfigurationHandler(apiServices.NewStageConfigurationService(database.DBtechRead, database.DBtechWrite))
+	stageConfigurations := admin.Group("/stage-configurations")
+	{
+		stageConfigurations.POST("", stageConfigurationHandler.Create)
+		stageConfigurations.PUT("/lender-schedule/id/:id", stageConfigurationHandler.Update)
+	}
+	lenderSchedules := admin.Group("/lender-schedules")
+	{
+		lenderSchedules.GET("", stageConfigurationHandler.ListLenderSchedules)
+		lenderSchedules.GET("/id/:id", stageConfigurationHandler.GetLenderSchedule)
+		lenderSchedules.DELETE("/id/:id", stageConfigurationHandler.DeleteLenderSchedule)
+	}
+	stageMappings := admin.Group("/stage-mappings")
+	{
+		stageMappings.GET("", stageConfigurationHandler.ListStageMappings)
+		stageMappings.DELETE("/id/:id", stageConfigurationHandler.DeleteStageMapping)
 	}
 
 	// if err := r.Run(":" + port); err != nil {

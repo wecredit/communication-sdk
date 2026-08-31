@@ -9,7 +9,6 @@ import (
 
 	"github.com/dgraph-io/ristretto"
 
-	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -134,29 +133,14 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 
 		keyStr := fmt.Sprintf("%s:%v", columnNameToBeUsedAsKey, keyVal)
 		if suffixColumnName != "" {
-			if suffixVal, ok := row[suffixColumnName]; ok && tableName == config.Configs.TemplateDetailsTable {
-				stageFloat, err := parseStageFloat(suffixVal)
-				if err != nil {
-					// Keep the row for TemplateName/Id lookups; Process+Stage keys cannot use a nil Stage.
-					// Include Id so multiple NULL-Stage rows do not overwrite each other in the map.
-					utils.Warn(fmt.Sprintf("template row cached without Stage float key (Process=%v Id=%v): %v",
-						row["Process"], row["Id"], err))
-					keyStr = fmt.Sprintf("%s|%s:%v|Id:%v", keyStr, suffixColumnName, suffixVal, row["Id"])
-				} else {
-					keyStr = fmt.Sprintf("%s|%s:%.2f", keyStr, suffixColumnName, stageFloat)
-				}
-			} else if suffixVal, ok := row[suffixColumnName]; ok {
+			if suffixVal, ok := row[suffixColumnName]; ok {
 				keyStr = fmt.Sprintf("%s|%s:%v", keyStr, suffixColumnName, suffixVal)
 			} else {
 				utils.Warn(fmt.Sprintf("suffix column '%s' missing for a row", suffixColumnName))
 			}
 		}
 
-		if tableName == config.Configs.TemplateDetailsTable {
-			keyStr = fmt.Sprintf("%s|Client:%v|Channel:%v|Vendor:%v", keyStr, row["Client"], row["Channel"], row["Vendor"])
-		}
-
-		if tableName == config.Configs.VendorTable {
+		if key == VendorsData {
 			clientStr := strings.ToLower(strings.TrimSpace(row["Client"].(string)))
 			keyStr = fmt.Sprintf("%s|Client:%s", keyStr, clientStr)
 		}
@@ -185,22 +169,6 @@ func StoreMappedDataIntoCache(key, tableName, columnNameToBeUsedAsKey, suffixCol
 		TransformAndCacheVendors(mappedData)
 	}
 	utils.Info(fmt.Sprintf("Cache initialized successfully for key: %s", key))
-}
-
-// parseStageFloat converts TemplateDetails.Stage after GetDataFromTable (float64, or int64 for whole stages).
-// NULL Stage values are common for TemplateName-keyed rows and must not panic cache init.
-func parseStageFloat(val interface{}) (float64, error) {
-	if val == nil {
-		return 0, fmt.Errorf("Stage is nil")
-	}
-	switch v := val.(type) {
-	case float64:
-		return v, nil
-	case int64:
-		return float64(v), nil
-	default:
-		return 0, fmt.Errorf("unsupported Stage type %T", val)
-	}
 }
 
 func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
@@ -266,6 +234,15 @@ func TransformAndCacheVendors(raw map[string]map[string]interface{}) {
 
 // Get fetches the data from the cache for a given key
 func (c *Cache) GetMappedData(key string) (map[string]map[string]interface{}, bool) {
+	if key == TemplateDetailsData {
+		snapshot, found := CurrentTemplateSnapshot()
+		if !found {
+			return nil, false
+		}
+
+		return snapshot.Templates, true
+	}
+
 	value, found := c.store.Get(key)
 	if !found {
 		fmt.Println("Cache key not found:", key)
