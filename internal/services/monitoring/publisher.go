@@ -129,14 +129,20 @@ func inputTableForChannel(channel string) string {
 
 func validateProfile(profile Profile, variablesCSV string) error {
 	for _, raw := range strings.Split(variablesCSV, ",") {
-		key := strings.ToLower(strings.TrimSpace(raw))
-		if key == "" || key == "zapcashapp" || key == "overduedays" {
+		variable := strings.TrimSpace(raw)
+		key := strings.ToLower(variable)
+		if key == "" || key == "zapcashapp" {
 			continue
 		}
 		var value string
 		switch key {
 		case "customername", "customer_name":
+			if variable != "CustomerName" && variable != "Customer_Name" {
+				return fmt.Errorf("monitoring profile does not support template variable %q", raw)
+			}
 			value = profile.CustomerName
+		case "overduedays":
+			value = profile.DueDate
 		case "emiamount":
 			value = profile.EmiAmount
 		case "loanid":

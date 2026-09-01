@@ -35,3 +35,25 @@ func TestBuildMonitoringPayloadRejectsMissingProfileVariable(t *testing.T) {
 		t.Fatal("missing required profile field must fail before audit/publish")
 	}
 }
+
+func TestBuildMonitoringPayloadRequiresDueDateForOverDueDays(t *testing.T) {
+	result := monitoring.AcceptedResult{Payload: sdkModels.CommApiRequestBody{Channel: "RCS", Stage: 1}, ResolvedVendor: "PINNACLE", ResolvedTemplate: "template", TemplateVariables: "OverDueDays"}
+	if _, err := monitoring.BuildMonitoringPayload(monitoring.Profile{}, result, "9899074649", "dedup-key"); err == nil {
+		t.Fatal("OverDueDays must require DueDate before publish")
+	}
+	if _, err := monitoring.BuildMonitoringPayload(monitoring.Profile{DueDate: "2026-09-01"}, result, "9899074649", "dedup-key"); err != nil {
+		t.Fatalf("valid DueDate should satisfy OverDueDays: %v", err)
+	}
+}
+
+func TestBuildMonitoringPayloadRejectsUnsupportedCustomerNameCasing(t *testing.T) {
+	base := monitoring.AcceptedResult{Payload: sdkModels.CommApiRequestBody{Channel: "RCS", Stage: 1}, ResolvedVendor: "PINNACLE", ResolvedTemplate: "template"}
+	base.TemplateVariables = "customer_name"
+	if _, err := monitoring.BuildMonitoringPayload(monitoring.Profile{CustomerName: "Monitor"}, base, "9899074649", "dedup-key"); err == nil {
+		t.Fatal("provider-unsupported customer_name spelling must be rejected")
+	}
+	base.TemplateVariables = "Customer_Name"
+	if _, err := monitoring.BuildMonitoringPayload(monitoring.Profile{CustomerName: "Monitor"}, base, "9899074649", "dedup-key"); err != nil {
+		t.Fatalf("provider-supported Customer_Name spelling should pass: %v", err)
+	}
+}
