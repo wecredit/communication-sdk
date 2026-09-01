@@ -49,6 +49,11 @@ type Config struct {
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
 	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
+	// ZapCash monitoring copies ride the existing SNS -> shared SQS path.
+	ZapCashMonitoringEnabled  string `envconfig:"ZAPCASH_MONITORING_ENABLED" default:"false"`
+	ZapCashMonitorRecipients  string `envconfig:"ZAPCASH_MONITOR_RECIPIENTS"`
+	ZapCashMonitorProfileJSON string `envconfig:"ZAPCASH_MONITOR_PROFILE_JSON"`
+
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
 	RedisPassword     string `envconfig:"REDIS_PASSWORD"`

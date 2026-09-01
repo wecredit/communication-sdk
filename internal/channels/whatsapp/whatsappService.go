@@ -30,7 +30,17 @@ var paymentLinkStages = map[int]bool{
 	// 8: true,
 }
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
+type SendWhatsappResult struct {
+	Processed         bool
+	Accepted          bool
+	ResolvedVendor    string
+	ResolvedTemplate  string
+	TemplateVariables string
+	TransactionID     string
+	DBData            map[string]interface{}
+}
+
+func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
 		Mobile:             msg.Mobile,
 		Process:            msg.ProcessName,
@@ -52,12 +62,13 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return false, nil, errors.New("template data not found in cache")
+		return SendWhatsappResult{}, errors.New("template data not found in cache")
 	}
 
 	data, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
-		return channelHelper.HandleTemplateNotFoundError(msg, err)
+		processed, dbData, handleErr := channelHelper.HandleTemplateNotFoundError(msg, err)
+		return SendWhatsappResult{Processed: processed, DBData: dbData}, handleErr
 	}
 
 	msg.Vendor = matchedVendor
@@ -112,6 +123,16 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
 
+	result := SendWhatsappResult{
+		Processed:         true,
+		Accepted:          shouldHitVendor && response.IsSent,
+		ResolvedVendor:    msg.Vendor,
+		ResolvedTemplate:  requestBody.TemplateName,
+		TemplateVariables: requestBody.TemplateVariables,
+		TransactionID:     response.TransactionId,
+		DBData:            dbMappedData,
+	}
+
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
@@ -119,7 +140,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		if msg.Client == variables.CreditSea {
 			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
 		}
-		return true, dbMappedData, nil
+		return result, nil
 	}
 
 	if !shouldHitVendor {
@@ -131,7 +152,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	}
 
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
-	return true, dbMappedData, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
+	return result, nil // terminal, but not provider-accepted
 
 	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
 	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))

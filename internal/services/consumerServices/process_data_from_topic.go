@@ -27,6 +27,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/models/awsModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
+	"github.com/wecredit/communication-sdk/internal/services/monitoring"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
@@ -459,7 +460,9 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	var deleted bool
 	var delErr error
 
-	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
+	wpResult, err := whatsapp.SendWpByProcess(data)
+	isMessageProcessed := wpResult.Processed
+	dbMappedData = wpResult.DBData
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
 		// If processing failed, don't delete message - let it retry after visibility timeout
@@ -472,6 +475,16 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			}
 		}
 		return isMessageProcessed, deleted
+	}
+
+	if ShouldSubmitZapCashMonitoring(data, wpResult.Accepted) {
+		monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:           data,
+			ResolvedVendor:    wpResult.ResolvedVendor,
+			ResolvedTemplate:  wpResult.ResolvedTemplate,
+			TemplateVariables: wpResult.TemplateVariables,
+			TransactionID:     wpResult.TransactionID,
+		})
 	}
 
 	// if message processed successfully, delete it and then insert it into database
@@ -499,7 +512,10 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
-	isMessageProcessed, err := rcs.SendRcsByProcess(data)
+
+	rcsResult, err := rcs.SendRcsByProcess(data)
+	isMessageProcessed := rcsResult.Processed
+
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
 		// If processing failed, don't delete message - let it retry after visibility timeout
@@ -512,6 +528,17 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			}
 		}
 		return isMessageProcessed, deleted
+	}
+
+	if ShouldSubmitZapCashMonitoring(data, rcsResult.Accepted) {
+		monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:              data,
+			ResolvedVendor:       rcsResult.ResolvedVendor,
+			ResolvedTemplate:     rcsResult.ResolvedTemplate,
+			TemplateVariables:    rcsResult.TemplateVariables,
+			SMSFallbackVariables: rcsResult.SMSFallbackVariables,
+			TransactionID:        rcsResult.TransactionID,
+		})
 	}
 
 	if isMessageProcessed {
@@ -599,6 +626,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	result, err := sms.SendSmsByProcess(data)
+
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		if marketing && result.AckSQS {
@@ -616,6 +644,18 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			releaseMarketingSMSClaims(data)
 		}
 		return result.Processed, deleted
+	}
+
+	if ShouldSubmitZapCashMonitoring(data, result.Accepted) {
+		utils.Info(fmt.Sprintf("[Client:%s CommId:%s Channel:%s] submitting ZapCash monitoring copy for vendor=%s template=%s mobile=%s",
+			data.Client, data.CommId, data.Channel, result.ResolvedVendor, result.ResolvedTemplate, data.Mobile))
+		monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:           data,
+			ResolvedVendor:    result.ResolvedVendor,
+			ResolvedTemplate:  result.ResolvedTemplate,
+			TemplateVariables: result.TemplateVariables,
+			TransactionID:     result.TransactionID,
+		})
 	}
 
 	// Compliance failures are terminal only after both independent databases
@@ -842,11 +882,31 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 }
 
 func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	if data.IsMonitorCopy {
+		utils.Warn(fmt.Sprintf("ZapCash monitoring copy rejected because pinned vendor is inactive channel=%s stage=%.2f vendor=%s commId=%s",
+			data.Channel, data.Stage, data.Vendor, data.CommId))
+	}
+
 	deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
 	}
 	return true, deleted
+}
+
+// ShouldSubmitZapCashMonitoring is the pure production-handler gate. TrySubmit repeats
+// the identity checks defensively, but no ineligible result should reach that boundary.
+func ShouldSubmitZapCashMonitoring(data sdkModels.CommApiRequestBody, providerAccepted bool) bool {
+	if !providerAccepted || data.IsMonitorCopy || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") {
+		return false
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(data.Channel)) {
+	case variables.SMS, variables.RCS, variables.WhatsApp:
+		return true
+	default:
+		return false
+	}
 }
 
 func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
