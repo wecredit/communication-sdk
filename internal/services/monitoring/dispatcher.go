@@ -83,8 +83,8 @@ func (d *Dispatcher) Submit(result AcceptedResult) bool {
 	}
 }
 
-// TrySubmit is deliberately non-blocking and never returns an error to production handlers.
-func TrySubmit(result AcceptedResult) {
+// TrySubmit is deliberately non-blocking and returns whether the job was accepted by the bounded dispatcher.
+func TrySubmit(result AcceptedResult) bool {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			metrics.Count("zapcash_monitor_submit_panic_recovered_total", result.ResolvedVendor, "zapcash", 1)
@@ -94,13 +94,13 @@ func TrySubmit(result AcceptedResult) {
 	}()
 
 	if result.Payload.IsMonitorCopy || !strings.EqualFold(strings.TrimSpace(result.Payload.Client), "zapcash") {
-		return
+		return false
 	}
 
 	switch strings.ToUpper(strings.TrimSpace(result.Payload.Channel)) {
 	case "SMS", "RCS", "WHATSAPP":
 	default:
-		return
+		return false
 	}
 	dispatcherMu.RLock()
 	d := active
@@ -109,10 +109,18 @@ func TrySubmit(result AcceptedResult) {
 	if d == nil {
 		utils.Warn(fmt.Sprintf("ZapCash monitoring submit skipped because dispatcher is nil channel=%s stage=%.2f vendor=%s client=%s",
 			result.Payload.Channel, result.Payload.Stage, result.ResolvedVendor, result.Payload.Client))
-		return
+		return false
 	}
 
-	utils.Info(fmt.Sprintf("ZapCash monitoring queued channel=%s stage=%.2f vendor=%s template=%s client=%s mobile=%s",
-		result.Payload.Channel, result.Payload.Stage, result.ResolvedVendor, result.ResolvedTemplate, result.Payload.Client, result.Payload.Mobile))
-	d.Submit(result)
+	if !d.Submit(result) {
+		utils.Warn(fmt.Sprintf("ZapCash monitoring queue full, dropped job channel=%s stage=%.2f vendor=%s template=%s client=%s mobile_tail=%s",
+			result.Payload.Channel, result.Payload.Stage, result.ResolvedVendor, result.ResolvedTemplate, result.Payload.Client,
+			maskMobile(strings.TrimSpace(result.Payload.Mobile))))
+		return false
+	}
+
+	utils.Info(fmt.Sprintf("ZapCash monitoring queued channel=%s stage=%.2f vendor=%s template=%s client=%s mobile_tail=%s",
+		result.Payload.Channel, result.Payload.Stage, result.ResolvedVendor, result.ResolvedTemplate, result.Payload.Client,
+		maskMobile(strings.TrimSpace(result.Payload.Mobile))))
+	return true
 }

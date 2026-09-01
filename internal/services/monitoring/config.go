@@ -61,8 +61,8 @@ func ParseConfiguration(enabledRaw, recipientsRaw, profileRaw string) RuntimeCon
 		return RuntimeConfig{}
 	}
 
-	utils.Info(fmt.Sprintf("ZapCash monitoring configured enabled=true configured=%d active=%d rejected=%d duplicates=%d recipients=%v",
-		configured, len(result.Recipients), rejected, duplicates, result.Recipients))
+	utils.Info(fmt.Sprintf("ZapCash monitoring configured enabled=true configured=%d active=%d rejected=%d duplicates=%d",
+		configured, len(result.Recipients), rejected, duplicates))
 	return result
 }
 
@@ -81,6 +81,11 @@ func maskMobile(mobile string) string {
 	if len(mobile) <= 4 {
 		return "****"
 	}
-	
+
 	return strings.Repeat("*", len(mobile)-4) + mobile[len(mobile)-4:]
+}
+
+// MaskMobile hides the sensitive portion of a mobile number in structured logs.
+func MaskMobile(mobile string) string {
+	return maskMobile(strings.TrimSpace(mobile))
 }

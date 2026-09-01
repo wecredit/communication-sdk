@@ -53,7 +53,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 	templateData, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		return SendRcsResult{Processed: true}, nil // terminal, but no provider acceptance
+		return SendRcsResult{Processed: false}, nil
 	}
 	msg.Vendor = matchedVendor
 
@@ -115,6 +115,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 
 	if err := database.InsertData(config.Configs.RcsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
 		utils.Error(fmt.Errorf("error inserting RCS output for CommId %s: %v", msg.CommId, err))
+		return SendRcsResult{Processed: false}, fmt.Errorf("error inserting RCS output for CommId %s: %w", msg.CommId, err)
 	}
 
 	jsonBytes, _ := json.Marshal(response)

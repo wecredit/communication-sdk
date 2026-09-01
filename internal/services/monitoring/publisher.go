@@ -61,8 +61,8 @@ func processRecipient(cfg RuntimeConfig, result AcceptedResult, recipient string
 		return
 	}
 
-	utils.Info(fmt.Sprintf("ZapCash monitoring sending to recipient=%s channel=%s vendor=%s template=%s commId=%s",
-		recipient, payload.Channel, payload.Vendor, payload.TemplateReference, payload.CommId))
+	utils.Info(fmt.Sprintf("ZapCash monitoring sending to recipient_tail=%s channel=%s vendor=%s template=%s commId=%s",
+		maskMobile(strings.TrimSpace(recipient)), payload.Channel, payload.Vendor, payload.TemplateReference, payload.CommId))
 	if err := queue.SendMessageToAwsQueue(queue.SNSClient, payload, config.Configs.AwsSnsArn, variables.Priority); err != nil {
 		monitoringFailure("zapcash_monitor_publish_failure_total", result, err)
 		return
@@ -70,7 +70,8 @@ func processRecipient(cfg RuntimeConfig, result AcceptedResult, recipient string
 
 	succeeded = true
 	metrics.Count("zapcash_monitor_enqueued_total", result.ResolvedVendor, "zapcash", 1)
-	utils.Info(fmt.Sprintf("ZapCash monitoring sent successfully to recipient=%s channel=%s vendor=%s template=%s", recipient, payload.Channel, payload.Vendor, payload.TemplateReference))
+	utils.Info(fmt.Sprintf("ZapCash monitoring sent successfully to recipient_tail=%s channel=%s vendor=%s template=%s",
+		maskMobile(strings.TrimSpace(recipient)), payload.Channel, payload.Vendor, payload.TemplateReference))
 }
 
 func BuildMonitoringPayload(profile Profile, result AcceptedResult, recipient, key string) (sdkModels.CommApiRequestBody, error) {

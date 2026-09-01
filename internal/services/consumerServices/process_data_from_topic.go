@@ -478,13 +478,16 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	}
 
 	if ShouldSubmitZapCashMonitoring(data, wpResult.Accepted) {
-		monitoring.TrySubmit(monitoring.AcceptedResult{
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
 			Payload:           data,
 			ResolvedVendor:    wpResult.ResolvedVendor,
 			ResolvedTemplate:  wpResult.ResolvedTemplate,
 			TemplateVariables: wpResult.TemplateVariables,
 			TransactionID:     wpResult.TransactionID,
-		})
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted WhatsApp send for vendor=%s template=%s",
+				data.Client, data.CommId, wpResult.ResolvedVendor, wpResult.ResolvedTemplate))
+		}
 	}
 
 	// if message processed successfully, delete it and then insert it into database
@@ -531,14 +534,17 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if ShouldSubmitZapCashMonitoring(data, rcsResult.Accepted) {
-		monitoring.TrySubmit(monitoring.AcceptedResult{
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
 			Payload:              data,
 			ResolvedVendor:       rcsResult.ResolvedVendor,
 			ResolvedTemplate:     rcsResult.ResolvedTemplate,
 			TemplateVariables:    rcsResult.TemplateVariables,
 			SMSFallbackVariables: rcsResult.SMSFallbackVariables,
 			TransactionID:        rcsResult.TransactionID,
-		})
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted RCS send for vendor=%s template=%s",
+				data.Client, data.CommId, rcsResult.ResolvedVendor, rcsResult.ResolvedTemplate))
+		}
 	}
 
 	if isMessageProcessed {
@@ -647,15 +653,18 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if ShouldSubmitZapCashMonitoring(data, result.Accepted) {
-		utils.Info(fmt.Sprintf("[Client:%s CommId:%s Channel:%s] submitting ZapCash monitoring copy for vendor=%s template=%s mobile=%s",
-			data.Client, data.CommId, data.Channel, result.ResolvedVendor, result.ResolvedTemplate, data.Mobile))
-		monitoring.TrySubmit(monitoring.AcceptedResult{
+		utils.Info(fmt.Sprintf("[Client:%s CommId:%s Channel:%s] submitting ZapCash monitoring copy for vendor=%s template=%s mobile_tail=%s",
+			data.Client, data.CommId, data.Channel, result.ResolvedVendor, result.ResolvedTemplate, monitoring.MaskMobile(data.Mobile)))
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
 			Payload:           data,
 			ResolvedVendor:    result.ResolvedVendor,
 			ResolvedTemplate:  result.ResolvedTemplate,
 			TemplateVariables: result.TemplateVariables,
 			TransactionID:     result.TransactionID,
-		})
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted SMS send for vendor=%s template=%s",
+				data.Client, data.CommId, result.ResolvedVendor, result.ResolvedTemplate))
+		}
 	}
 
 	// Compliance failures are terminal only after both independent databases

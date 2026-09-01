@@ -18,6 +18,7 @@ func VariantKey(now time.Time, result AcceptedResult, recipient string) string {
 		"zapcash:monitor", date,
 		strings.ToUpper(strings.TrimSpace(result.Payload.Channel)),
 		fmt.Sprintf("%.2f", result.Payload.Stage),
+		strings.ToUpper(strings.TrimSpace(result.ResolvedVendor)),
 		url.QueryEscape(strings.TrimSpace(result.ResolvedTemplate)),
 		recipient,
 	}
