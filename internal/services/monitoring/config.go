@@ -34,7 +34,7 @@ func ParseConfiguration(enabledRaw, recipientsRaw, profileRaw string) RuntimeCon
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		
+
 		configured++
 		if !indianMobilePattern.MatchString(candidate) {
 			rejected++
@@ -60,10 +60,39 @@ func ParseConfiguration(enabledRaw, recipientsRaw, profileRaw string) RuntimeCon
 		utils.Error(fmt.Errorf("ZapCash monitoring disabled: invalid ZAPCASH_MONITOR_PROFILE_JSON: %v", err))
 		return RuntimeConfig{}
 	}
+	
+	if profileIsEmpty(result.Profile) {
+		utils.Error(fmt.Errorf("ZapCash monitoring disabled: ZAPCASH_MONITOR_PROFILE_JSON must contain at least one non-empty supported profile field"))
+		return RuntimeConfig{}
+	}
 
 	utils.Info(fmt.Sprintf("ZapCash monitoring configured enabled=true configured=%d active=%d rejected=%d duplicates=%d",
 		configured, len(result.Recipients), rejected, duplicates))
 	return result
+}
+
+func profileIsEmpty(profile Profile) bool {
+	values := []string{
+		profile.CustomerName,
+		profile.EmiAmount,
+		profile.LoanID,
+		profile.ApplicationNumber,
+		profile.DueDate,
+		profile.Description,
+		profile.PaymentLink,
+		profile.TotalPayableAmount,
+		profile.TodayPayableAmount,
+		profile.SavingAmount,
+		profile.BounceCharge,
+	}
+
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return false
+		}
+	}
+
+	return true
 }
 
 func normalizeMobile(raw string) string {

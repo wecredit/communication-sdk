@@ -19,4 +19,16 @@ func TestMasterSwitchAndConfigValidation(t *testing.T) {
 	if got := monitoring.ParseConfiguration("true", "9899074649", `{broken`); got.Enabled {
 		t.Fatal("malformed shared profile must disable monitoring")
 	}
+
+	for name, profile := range map[string]string{
+		"null":         `null`,
+		"empty object": `{}`,
+		"blank values": `{"customerName":"  "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := monitoring.ParseConfiguration("true", "9899074649", profile); got.Enabled {
+				t.Fatalf("empty shared profile %s must disable monitoring", profile)
+			}
+		})
+	}
 }
