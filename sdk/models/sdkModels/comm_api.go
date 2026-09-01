@@ -43,6 +43,10 @@ type CommApiRequestBody struct {
 	// CampaignDate is the Asia/Kolkata date portion of CommMarketingInput.CreatedOn.
 	// It is immutable across SQS retries and stale source-row reclaims.
 	CampaignDate string `json:"campaignDate,omitempty" gorm:"-"`
+
+	// Monitoring metadata is omitted for ordinary production payloads so their wire shape is unchanged.
+	IsMonitorCopy    bool   `json:"isMonitorCopy,omitempty" gorm:"-"`
+	MonitorVariantId string `json:"monitorVariantId,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {
