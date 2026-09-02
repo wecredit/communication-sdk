@@ -70,6 +70,7 @@ type Config struct {
 	CommAdminPassword               string `envconfig:"COMM_ADMIN_PASSWORD"`
 	CommSuperAdminRoles             string `envconfig:"COMM_SUPER_ADMIN_ROLES" default:"marketing"`
 	CommClientRolePrefix            string `envconfig:"COMM_CLIENT_ROLE_PREFIX" default:"marketing_"`
+	CommIdentitySecret              string `envconfig:"COMM_IDENTITY_SECRET"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`

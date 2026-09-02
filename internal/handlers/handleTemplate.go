@@ -133,17 +133,6 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.Service.GetTemplateByID(uint(id))
-	if err != nil {
-		writeTemplateServiceError(c, err)
-		return
-	}
-
-	if err := middleware.EnforceClientAccess(c, existing.Client); err != nil {
-		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
-		return
-	}
-
 	var updates apiModels.TemplateUpdateRequest
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
@@ -154,6 +143,17 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 
 	if err := ensureJSONBodyEnded(decoder); err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", err.Error())
+		return
+	}
+
+	existing, err := h.Service.GetTemplateByID(uint(id))
+	if err != nil {
+		writeTemplateServiceError(c, err)
+		return
+	}
+
+	if err := middleware.EnforceClientAccess(c, existing.Client); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 
