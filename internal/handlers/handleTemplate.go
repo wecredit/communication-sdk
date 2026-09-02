@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wecredit/communication-sdk/internal/middleware"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -45,12 +46,18 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 		return
 	}
 
+	client, err := middleware.ApplyClientListFilter(c, strings.TrimSpace(c.Query("client")))
+	if err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
 	result, err := h.Service.GetTemplates(apiModels.TemplateListParams{
 		Process:  strings.TrimSpace(c.Query("process")),
 		Stage:    stage,
 		Channel:  strings.TrimSpace(c.Query("channel")),
 		Vendor:   strings.TrimSpace(c.Query("vendor")),
-		Client:   strings.TrimSpace(c.Query("client")),
+		Client:   client,
 		Page:     page,
 		PageSize: pageSize,
 	})
@@ -83,6 +90,11 @@ func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
 		return
 	}
 
+	if err := middleware.EnforceClientAccess(c, template.Client); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
 	writeTemplateSuccess(c, http.StatusOK, apiModels.NewTemplateDetailsResponse(template), "Template details retrieved successfully", nil)
 }
 
@@ -101,6 +113,11 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 	}
 
 	template := request.Template()
+	if err := middleware.EnforceClientAccess(c, template.Client); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
 	if err := h.Service.AddTemplate(&template); err != nil {
 		writeTemplateServiceError(c, err)
 		return
@@ -113,6 +130,17 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 	id, err := parseTemplateID(c.Param("id"))
 	if err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", err.Error())
+		return
+	}
+
+	existing, err := h.Service.GetTemplateByID(uint(id))
+	if err != nil {
+		writeTemplateServiceError(c, err)
+		return
+	}
+
+	if err := middleware.EnforceClientAccess(c, existing.Client); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 
@@ -129,6 +157,13 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 		return
 	}
 
+	if updates.Client != nil {
+		if err := middleware.EnforceClientAccess(c, *updates.Client); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
+	}
+
 	template, err := h.Service.UpdateTemplateById(id, updates)
 	if err != nil {
 		writeTemplateServiceError(c, err)
@@ -142,6 +177,17 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	id, err := parseTemplateID(c.Param("id"))
 	if err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", err.Error())
+		return
+	}
+
+	existing, err := h.Service.GetTemplateByID(uint(id))
+	if err != nil {
+		writeTemplateServiceError(c, err)
+		return
+	}
+
+	if err := middleware.EnforceClientAccess(c, existing.Client); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 

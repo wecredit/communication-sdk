@@ -469,6 +469,19 @@ func (s *StageConfigurationService) GetStageMappings(params apiModels.StageConfi
 	return &apiModels.StageMappingListResult{Items: items, TotalItems: total}, nil
 }
 
+func (s *StageConfigurationService) GetStageMappingByID(id int) (*apiModels.StageMapping, error) {
+	var mapping apiModels.StageMapping
+	if err := s.ReadDB.Table(config.Configs.TemplateStageTable).Where("Id = ?", id).First(&mapping).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrConfigurationNotFound
+		}
+
+		return nil, err
+	}
+
+	return &mapping, nil
+}
+
 func applyStageConfigurationFilters(query *gorm.DB, params apiModels.StageConfigurationListParams, includeSubStage bool) *gorm.DB {
 	if params.LenderName != "" {
 		query = query.Where("LenderName = ?", strings.ToLower(strings.TrimSpace(params.LenderName)))

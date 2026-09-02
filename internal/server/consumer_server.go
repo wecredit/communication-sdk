@@ -52,8 +52,11 @@ func StartConsumer(port string) {
 	if err != nil {
 		log.Fatalf("Failed to configure communication admin authentication: %v", err)
 	}
+	commScopeConfig := middleware.NewCommScopeConfig(config.Configs.CommSuperAdminRoles, config.Configs.CommClientRolePrefix)
+	commAdminScope := middleware.NewCommAdminScopeMiddleware(commScopeConfig)
 	admin := r.Group("")
 	admin.Use(adminBasicAuth)
+	admin.Use(commAdminScope)
 
 	vendorHandler := handlers.NewVendorHandler(apiServices.NewVendorService(database.DBtechRead)) // Create handler for vendors passing them database object
 	vendors := r.Group("/vendors")
