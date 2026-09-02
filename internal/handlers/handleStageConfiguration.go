@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wecredit/communication-sdk/internal/middleware"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -28,6 +29,11 @@ func (h *StageConfigurationHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if err := middleware.EnforceClientAccess(c, request.LenderName); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
 	result, err := h.Service.Create(request)
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
@@ -44,8 +50,26 @@ func (h *StageConfigurationHandler) Update(c *gin.Context) {
 		return
 	}
 
+	existing, err := h.Service.GetLenderSchedule(id)
+	if err != nil {
+		writeStageConfigurationServiceError(c, err)
+		return
+	}
+
+	if existing.LenderSchedule != nil {
+		if err := middleware.EnforceClientAccess(c, existing.LenderSchedule.LenderName); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
+	}
+
 	request, ok := decodeStageConfigurationRequest(c)
 	if !ok {
+		return
+	}
+
+	if err := middleware.EnforceClientAccess(c, request.LenderName); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 
@@ -81,6 +105,13 @@ func (h *StageConfigurationHandler) ListLenderSchedules(c *gin.Context) {
 		return
 	}
 
+	lenderName, err := middleware.ApplyClientListFilter(c, params.LenderName)
+	if err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+	params.LenderName = lenderName
+
 	result, err := h.Service.GetLenderSchedules(params)
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
@@ -103,6 +134,13 @@ func (h *StageConfigurationHandler) GetLenderSchedule(c *gin.Context) {
 		return
 	}
 
+	if result.LenderSchedule != nil {
+		if err := middleware.EnforceClientAccess(c, result.LenderSchedule.LenderName); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
+	}
+
 	writeTemplateSuccess(c, http.StatusOK, result, "Lender schedule retrieved successfully", nil)
 }
 
@@ -111,6 +149,19 @@ func (h *StageConfigurationHandler) DeleteLenderSchedule(c *gin.Context) {
 	if err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
+	}
+
+	existing, err := h.Service.GetLenderSchedule(id)
+	if err != nil {
+		writeStageConfigurationServiceError(c, err)
+		return
+	}
+
+	if existing.LenderSchedule != nil {
+		if err := middleware.EnforceClientAccess(c, existing.LenderSchedule.LenderName); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
 	}
 
 	if err := h.Service.DeleteLenderSchedule(id); err != nil {
@@ -127,6 +178,13 @@ func (h *StageConfigurationHandler) ListStageMappings(c *gin.Context) {
 		return
 	}
 
+	lenderName, err := middleware.ApplyClientListFilter(c, params.LenderName)
+	if err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+	params.LenderName = lenderName
+
 	result, err := h.Service.GetStageMappings(params)
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
@@ -140,6 +198,17 @@ func (h *StageConfigurationHandler) DeleteStageMapping(c *gin.Context) {
 	id, err := parseConfigurationID(c.Param("id"))
 	if err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+
+	existing, err := h.Service.GetStageMappingByID(id)
+	if err != nil {
+		writeStageConfigurationServiceError(c, err)
+		return
+	}
+
+	if err := middleware.EnforceClientAccess(c, existing.LenderName); err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 

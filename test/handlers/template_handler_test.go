@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/internal/handlers"
+	"github.com/wecredit/communication-sdk/internal/middleware"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 )
 
@@ -111,6 +112,7 @@ func newTemplateContext(target string) (*gin.Context, *httptest.ResponseRecorder
 	recorder := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(recorder)
 	context.Request = httptest.NewRequest(http.MethodGet, target, nil)
+	middleware.SetCommAdminScope(context, middleware.CommAdminScope{Unrestricted: true})
 	return context, recorder
 }
 
