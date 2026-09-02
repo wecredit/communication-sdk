@@ -14,6 +14,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/middleware"
 	apiServices "github.com/wecredit/communication-sdk/internal/services/apiServices"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
+	"github.com/wecredit/communication-sdk/internal/services/monitoring"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
@@ -37,6 +38,7 @@ func GetLocalIP() string {
 }
 
 func StartConsumer(port string) {
+	monitoring.Init()
 	go services.ConsumerService(config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
 	utils.Debug(fmt.Sprintf("Starting Consumer Server on port %s", port))

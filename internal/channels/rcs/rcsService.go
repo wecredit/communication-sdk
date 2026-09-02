@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
@@ -19,15 +20,40 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
+type SendRcsResult struct {
+	Processed            bool
+	Accepted             bool
+	ResolvedVendor       string
+	ResolvedTemplate     string
+	TemplateVariables    string
+	SMSFallbackVariables string
+	TransactionID        string
+}
+
+func ApplyRcsResponseDefaults(response *extapimodels.RcsResponse, msg sdkModels.CommApiRequestBody, shouldHitVendor bool, templateName string) {
+	response.CommId = msg.CommId
+	response.TemplateName = templateName
+	response.Vendor = msg.Vendor
+	response.MobileNumber = msg.Mobile
+	if !shouldHitVendor && strings.TrimSpace(response.ResponseMessage) == "" {
+		response.ResponseMessage = "shouldHitVendor is off for mobile " + msg.Mobile
+		return
+	}
+
+	if strings.TrimSpace(response.ResponseMessage) == "" && !response.IsSent {
+		response.ResponseMessage = "RCS provider returned no response message for mobile " + msg.Mobile
+	}
+}
+
+func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
-		return false, errors.New("template data not found in cache")
+		return SendRcsResult{}, errors.New("template data not found in cache")
 	}
 	templateData, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
 		channelHelper.LogTemplateNotFound(msg, err)
-		return true, nil // message processed but not sent as Template not found
+		return SendRcsResult{Processed: false}, nil
 	}
 	msg.Vendor = matchedVendor
 
@@ -54,7 +80,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		rcsAppIdData, err := database.GetRcsAppId(database.DBtechRead, req.AppId)
 		if err != nil {
 			utils.Error(fmt.Errorf("failed to fetch RCS AppId data: %v", err))
-			return false, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
+			return SendRcsResult{}, fmt.Errorf("failed to fetch RCS AppId data: %v", err)
 		}
 		if val, ok := rcsAppIdData["AppIdKey"].(string); ok {
 			req.AppIdKey = val
@@ -80,23 +106,35 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (bool, error) {
 		}
 	}
 
-	response.CommId = msg.CommId
-	response.TemplateName = req.TemplateName
-	response.Vendor = msg.Vendor
-	response.MobileNumber = msg.Mobile
+	ApplyRcsResponseDefaults(&response, msg, shouldHitVendor, req.TemplateName)
 
 	dbMappedData, err := dbservices.MapIntoDbModel(response)
 	if err != nil {
 		utils.Error(fmt.Errorf("mapping error: %v", err))
 	}
-	database.InsertData(config.Configs.RcsOutputTable, database.DBtechWrite, dbMappedData)
+
+	if err := database.InsertData(config.Configs.RcsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("error inserting RCS output for CommId %s: %v", msg.CommId, err))
+		return SendRcsResult{Processed: false}, fmt.Errorf("error inserting RCS output for CommId %s: %w", msg.CommId, err)
+	}
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("RCS Response: %s", string(jsonBytes)))
 
+	result := SendRcsResult{
+		Processed:            true,
+		Accepted:             response.IsSent,
+		ResolvedVendor:       msg.Vendor,
+		ResolvedTemplate:     req.TemplateName,
+		TemplateVariables:    req.TemplateVariables,
+		SMSFallbackVariables: req.SmsFallbackVariables,
+		TransactionID:        response.TransactionId,
+	}
+
 	if response.IsSent {
 		utils.Info(fmt.Sprintf("RCS sent successfully for Process: %s on %s via %s", msg.ProcessName, msg.Mobile, msg.Vendor))
-		return true, nil
+		return result, nil
 	}
-	return true, nil // message processed but not sent as response.IsSent is false
+
+	return result, nil
 }

@@ -26,9 +26,14 @@ import (
 
 // SendSmsResult is the consumer-facing result of an SMS provider attempt.
 type SendSmsResult struct {
-	Processed bool
-	AckSQS    bool
-	DBData    map[string]interface{}
+	Processed         bool
+	AckSQS            bool
+	Accepted          bool
+	ResolvedVendor    string
+	ResolvedTemplate  string
+	TemplateVariables string
+	TransactionID     string
+	DBData            map[string]interface{}
 }
 
 // SendSmsByProcess resolves template/vendor, calls the provider, and classifies the outcome.
@@ -260,8 +265,13 @@ func buildSmsResult(msg sdkModels.CommApiRequestBody, req extapimodels.SmsReques
 	utils.Debug(fmt.Sprintf("SMS Response: %s", string(raw)))
 
 	return SendSmsResult{
-		Processed: true,
-		AckSQS:    outcome.IsTerminal(response.Outcome),
-		DBData:    dbMappedData,
+		Processed:         true,
+		AckSQS:            outcome.IsTerminal(response.Outcome),
+		Accepted:          response.Outcome == outcome.Submitted,
+		ResolvedVendor:    msg.Vendor,
+		ResolvedTemplate:  strconv.FormatInt(req.DltTemplateId, 10),
+		TemplateVariables: req.TemplateVariables,
+		TransactionID:     response.TransactionId,
+		DBData:            dbMappedData,
 	}, nil
 }
