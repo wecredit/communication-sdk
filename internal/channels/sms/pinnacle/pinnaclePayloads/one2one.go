@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	MessageTypeTXT = "TXT"
+	MessageTypeCLICK = "CLICK"
 	// DefaultSender is used only when TemplateHeader and TimesSmsApiSender are empty.
 	// Production WeCredit Branch templates use WECRLP.
 	DefaultSender = "WECRLP"
@@ -75,11 +75,10 @@ func BuildConsoleJSONPayload(data extapimodels.SmsRequestBody, sender, message, 
 }
 
 func chooseMessageType(message string) string {
-	// Console doc also supports CLICK/UCLICK for vendor URL shortening.
-	// Default TXT: JSON POST already avoids GET path breakage for https:// links.
+	// CLICK enables Pinnacle's vendor URL shortening for English SMS content.
 	// DLT URL whitelist (5901 URL_NOT_FOUND) remains a registration concern.
 	_ = message
-	return MessageTypeTXT
+	return MessageTypeCLICK
 }
 
 // NormalizeMSISDN returns digits in 91XXXXXXXXXX form when possible.

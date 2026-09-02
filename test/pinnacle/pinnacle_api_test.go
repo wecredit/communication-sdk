@@ -115,8 +115,8 @@ func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
 	if payload["sender"] != "WECRLP" {
 		t.Fatalf("sender=%v", payload["sender"])
 	}
-	if payload["messagetype"] != "TXT" {
-		t.Fatalf("messagetype=%v want TXT", payload["messagetype"])
+	if payload["messagetype"] != "CLICK" {
+		t.Fatalf("messagetype=%v want CLICK", payload["messagetype"])
 	}
 	if payload["dlttempid"] != "1777178764367201169" {
 		t.Fatalf("dlttempid=%v", payload["dlttempid"])
@@ -140,14 +140,14 @@ func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
 	}
 }
 
-func TestBuildPinnacleJSONPayloadTXTWithoutURL(t *testing.T) {
+func TestBuildPinnacleJSONPayloadCLICKWithoutURL(t *testing.T) {
 	payload, err := pinnaclepayloads.BuildConsoleJSONPayload(extapimodels.SmsRequestBody{
 		Mobile: "9220146969",
 	}, "WECRLP", "Abhi explore karein  wecredit.co.in WeCredit", "1701170417883448407")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload["messagetype"] != "TXT" {
-		t.Fatalf("messagetype=%v want TXT", payload["messagetype"])
+	if payload["messagetype"] != "CLICK" {
+		t.Fatalf("messagetype=%v want CLICK", payload["messagetype"])
 	}
 }
