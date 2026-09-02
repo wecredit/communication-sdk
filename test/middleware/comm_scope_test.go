@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -125,5 +126,60 @@ func TestEnforceClientAccess(t *testing.T) {
 	}
 	if err := middleware.EnforceClientAccess(context, "wecredit"); err == nil {
 		t.Fatal("expected forbidden for wecredit")
+	}
+}
+
+func TestCommAdminScopeMiddlewareRejectsInvalidIdentitySignature(t *testing.T) {
+	cfg := middleware.NewCommScopeConfig("marketing", "marketing_")
+	handler, err := middleware.NewCommAdminScopeMiddleware(cfg, "shared-secret")
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/templates/", handler, func(c *gin.Context) {
+		c.Status(200)
+	})
+
+	request := httptest.NewRequest("GET", "/templates/", nil)
+	request.Header.Set("X-Comm-Username", "wecredit.marketing@wecredit.co.in")
+	request.Header.Set("X-Comm-Role", "marketing")
+	request.Header.Set("X-Comm-Identity-Signature", "invalid")
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestCommAdminScopeMiddlewareAcceptsSignedIdentity(t *testing.T) {
+	const secret = "shared-secret"
+	cfg := middleware.NewCommScopeConfig("marketing", "marketing_")
+	handler, err := middleware.NewCommAdminScopeMiddleware(cfg, secret)
+	if err != nil {
+		t.Fatalf("create middleware: %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/templates/", handler, func(c *gin.Context) {
+		c.Status(200)
+	})
+
+	username := "marketing@wecredit.co.in"
+	role := "marketing"
+	request := httptest.NewRequest("GET", "/templates/", nil)
+	request.Header.Set("X-Comm-Username", username)
+	request.Header.Set("X-Comm-Role", role)
+	request.Header.Set("X-Comm-Identity-Signature", middleware.SignCommIdentity(secret, username, role))
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
 }

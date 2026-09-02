@@ -53,7 +53,10 @@ func StartConsumer(port string) {
 		log.Fatalf("Failed to configure communication admin authentication: %v", err)
 	}
 	commScopeConfig := middleware.NewCommScopeConfig(config.Configs.CommSuperAdminRoles, config.Configs.CommClientRolePrefix)
-	commAdminScope := middleware.NewCommAdminScopeMiddleware(commScopeConfig)
+	commAdminScope, err := middleware.NewCommAdminScopeMiddleware(commScopeConfig, config.Configs.CommIdentitySecret)
+	if err != nil {
+		log.Fatalf("Failed to configure communication admin scope: %v", err)
+	}
 	admin := r.Group("")
 	admin.Use(adminBasicAuth)
 	admin.Use(commAdminScope)

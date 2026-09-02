@@ -1,18 +1,37 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
+var ErrCommIdentitySecretNotConfigured = errors.New("COMM_IDENTITY_SECRET is not configured")
+
 const commAdminScopeContextKey = "commAdminScope"
 
-func NewCommAdminScopeMiddleware(cfg CommScopeConfig) gin.HandlerFunc {
+func NewCommAdminScopeMiddleware(cfg CommScopeConfig, identitySecret string) (gin.HandlerFunc, error) {
+	if identitySecret == "" {
+		return nil, ErrCommIdentitySecretNotConfigured
+	}
+
 	return func(c *gin.Context) {
 		role := strings.TrimSpace(c.GetHeader("X-Comm-Role"))
 		username := strings.TrimSpace(c.GetHeader("X-Comm-Username"))
+		signature := strings.TrimSpace(c.GetHeader("X-Comm-Identity-Signature"))
+
+		if !VerifyCommIdentity(identitySecret, username, role, signature) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error": gin.H{
+					"code":    "FORBIDDEN",
+					"message": "invalid communication admin identity",
+				},
+			})
+			return
+		}
 
 		scope, err := ResolveCommAdminScope(role, username, cfg)
 		if err != nil {
@@ -28,7 +47,7 @@ func NewCommAdminScopeMiddleware(cfg CommScopeConfig) gin.HandlerFunc {
 
 		c.Set(commAdminScopeContextKey, scope)
 		c.Next()
-	}
+	}, nil
 }
 
 func GetCommAdminScope(c *gin.Context) (CommAdminScope, bool) {

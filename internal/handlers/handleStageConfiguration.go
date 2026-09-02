@@ -50,6 +50,11 @@ func (h *StageConfigurationHandler) Update(c *gin.Context) {
 		return
 	}
 
+	request, ok := decodeStageConfigurationRequest(c)
+	if !ok {
+		return
+	}
+
 	existing, err := h.Service.GetLenderSchedule(id)
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
@@ -61,11 +66,6 @@ func (h *StageConfigurationHandler) Update(c *gin.Context) {
 			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 			return
 		}
-	}
-
-	request, ok := decodeStageConfigurationRequest(c)
-	if !ok {
-		return
 	}
 
 	if err := middleware.EnforceClientAccess(c, request.LenderName); err != nil {
