@@ -163,14 +163,22 @@ func TestCommAdminScopeMiddlewareAcceptsSignedIdentity(t *testing.T) {
 		t.Fatalf("create middleware: %v", err)
 	}
 
+	username := "marketing@wecredit.co.in"
+	role := "marketing"
+
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/templates/", handler, func(c *gin.Context) {
+		scope, ok := middleware.GetCommAdminScope(c)
+		if !ok {
+			t.Fatal("expected scope in context")
+		}
+		if scope.Username != username {
+			t.Fatalf("username = %q, want %q", scope.Username, username)
+		}
 		c.Status(200)
 	})
 
-	username := "marketing@wecredit.co.in"
-	role := "marketing"
 	request := httptest.NewRequest("GET", "/templates/", nil)
 	request.Header.Set("X-Comm-Username", username)
 	request.Header.Set("X-Comm-Role", role)

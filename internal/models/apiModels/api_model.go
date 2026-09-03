@@ -56,6 +56,8 @@ type Templatedetails struct {
 	Link                 string     `gorm:"column:Link" json:"link,omitempty"`
 	CreatedOn            time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn            *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
+	CreatedBy            string     `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
+	UpdatedBy            string     `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
 	TemplateCategory     int64      `gorm:"column:TemplateCategory" json:"templateCategory,omitempty"`
 	TemplateVariables    string     `gorm:"column:TemplateVariables" json:"templateVariables,omitempty"`
 	SmsFallbackVariables string     `gorm:"column:SmsFallbackVariables" json:"smsFallbackVariables,omitempty"`

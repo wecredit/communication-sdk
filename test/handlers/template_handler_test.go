@@ -66,6 +66,8 @@ func TestAddTemplateRejectsNonAllowlistedFields(t *testing.T) {
 		{name: "database ID", body: `{"id":123}`},
 		{name: "created timestamp", body: `{"createdOn":"2026-08-25T00:00:00Z"}`},
 		{name: "updated timestamp", body: `{"updatedOn":"2026-08-25T00:00:00Z"}`},
+		{name: "created by", body: `{"createdBy":"someone@wecredit.co.in"}`},
+		{name: "updated by", body: `{"updatedBy":"someone@wecredit.co.in"}`},
 		{name: "unknown field", body: `{"unexpected":"value"}`},
 	}
 

@@ -45,9 +45,19 @@ func NewCommAdminScopeMiddleware(cfg CommScopeConfig, identitySecret string) (gi
 			return
 		}
 
+		scope.Username = username
 		c.Set(commAdminScopeContextKey, scope)
 		c.Next()
 	}, nil
+}
+
+// CommAdminUsername returns the verified admin username from the request scope.
+func CommAdminUsername(c *gin.Context) string {
+	scope, ok := GetCommAdminScope(c)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(scope.Username)
 }
 
 func GetCommAdminScope(c *gin.Context) (CommAdminScope, bool) {

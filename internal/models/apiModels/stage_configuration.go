@@ -1,5 +1,7 @@
 package apiModels
 
+import "time"
+
 type StageMappingInput struct {
 	SubStage int `json:"subStage"`
 }
@@ -13,19 +15,27 @@ type StageConfigurationRequest struct {
 }
 
 type LenderSchedule struct {
-	ID         int    `gorm:"column:Id" json:"id"`
-	LenderName string `gorm:"column:LenderName" json:"lenderName"`
-	CommType   string `gorm:"column:CommType" json:"commType"`
-	Stage      int    `gorm:"column:Stage" json:"stage"`
-	Interval   string `gorm:"column:Interval" json:"interval"`
+	ID         int       `gorm:"column:Id" json:"id"`
+	LenderName string    `gorm:"column:LenderName" json:"lenderName"`
+	CommType   string    `gorm:"column:CommType" json:"commType"`
+	Stage      int       `gorm:"column:Stage" json:"stage"`
+	Interval   string    `gorm:"column:Interval" json:"interval"`
+	CreatedOn  time.Time `gorm:"column:CreatedOn" json:"createdOn"`
+	UpdatedOn  time.Time `gorm:"column:UpdatedOn" json:"updatedOn"`
+	CreatedBy  string    `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
+	UpdatedBy  string    `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
 }
 
 type StageMapping struct {
-	ID         int    `gorm:"column:Id" json:"id"`
-	LenderName string `gorm:"column:LenderName" json:"lenderName"`
-	CommType   string `gorm:"column:CommType" json:"commType"`
-	Stage      int    `gorm:"column:Stage" json:"stage"`
-	SubStage   int    `gorm:"column:SubStage" json:"subStage"`
+	ID         int       `gorm:"column:Id" json:"id"`
+	LenderName string    `gorm:"column:LenderName" json:"lenderName"`
+	CommType   string    `gorm:"column:CommType" json:"commType"`
+	Stage      int       `gorm:"column:Stage" json:"stage"`
+	SubStage   int       `gorm:"column:SubStage" json:"subStage"`
+	CreatedOn  time.Time `gorm:"column:CreatedOn" json:"createdOn"`
+	UpdatedOn  time.Time `gorm:"column:UpdatedOn" json:"updatedOn"`
+	CreatedBy  string    `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
+	UpdatedBy  string    `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
 }
 
 type StageConfigurationResponse struct {
