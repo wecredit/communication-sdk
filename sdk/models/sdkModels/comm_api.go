@@ -26,6 +26,13 @@ type CommApiRequestBody struct {
 	TodayPayableAmount  string   `json:"todayPayableAmount,omitempty" gorm:"-"` // today payable amount for the message
 	SavingAmount        string   `json:"savingAmount,omitempty" gorm:"-"`       // savings amount for the message
 	BounceCharge        string   `json:"bounceCharge,omitempty" gorm:"-"`       // bounce charge for the message
+	// PUSH targeting and navigation metadata. ZapCash remains the source of truth for
+	// device-token ownership; comm-sdk only uses the supplied tokens for delivery.
+	UserId            string            `json:"userId,omitempty" gorm:"-"`
+	DeviceTokens      []string          `json:"deviceTokens,omitempty" gorm:"-"`
+	NotificationEvent string            `json:"notificationEvent,omitempty" gorm:"-"`
+	DeepLink          string            `json:"deepLink,omitempty" gorm:"-"`
+	NavigationData    map[string]string `json:"navigationData,omitempty" gorm:"-"`
 	// TemplateReference is set only for CommMarketingInput dispatch rows; when present the SDK
 	// resolves TemplateDetails by DltTemplateId (SMS) or TemplateName (other channels).
 	TemplateReference string `json:"templateReference,omitempty" gorm:"-"`

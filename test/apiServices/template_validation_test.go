@@ -77,6 +77,20 @@ func TestValidateTemplateStructure(t *testing.T) {
 			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "WHATSAPP", Vendor: "V", TemplateName: "welcome"},
 		},
 		{
+			name:  "valid push template",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "PUSH", Vendor: "FCM", Stage: &stage, TemplateName: "offer", TemplateHeader: "Offer ready", TemplateText: "Open the app"},
+		},
+		{
+			name:    "push requires title",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "PUSH", Vendor: "FCM", Stage: &stage, TemplateName: "offer", TemplateText: "Open the app"},
+			wantErr: "templateHeader is required",
+		},
+		{
+			name:    "push requires body",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "PUSH", Vendor: "FCM", Stage: &stage, TemplateName: "offer", TemplateHeader: "Offer ready"},
+			wantErr: "templateText is required",
+		},
+		{
 			name:    "rcs fallback fields are paired",
 			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "RCS", Vendor: "V", TemplateName: "offer", DltTemplateId: 1, TemplateCategory: 1},
 			wantErr: "must both be present",

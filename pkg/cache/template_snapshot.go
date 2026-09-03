@@ -114,7 +114,7 @@ func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, c
 		}
 		return fmt.Sprintf("sms\x00%s\x00%d\x00%s", process, row.DltTemplateId, base), ""
 
-	case "RCS", "WHATSAPP", "EMAIL":
+	case "RCS", "WHATSAPP", "EMAIL", "PUSH":
 		name := strings.TrimSpace(row.TemplateName)
 		if name == "" {
 			return "", "reference template has no TemplateName"

@@ -9,6 +9,8 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/cron"
 	"github.com/wecredit/communication-sdk/health"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
+	pushAudit "github.com/wecredit/communication-sdk/internal/channels/push/audit"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
 	"github.com/wecredit/communication-sdk/internal/middleware"
@@ -39,6 +41,18 @@ func GetLocalIP() string {
 
 func StartConsumer(port string) {
 	monitoring.Init()
+	if err := pushAudit.Init(
+		database.DBtechWrite,
+		config.Configs.PushInputAuditTable,
+		config.Configs.PushOutputTable,
+		nil,
+	); err != nil {
+		utils.Error(fmt.Errorf("failed to initialize PUSH audit dispatcher: %w", err))
+	}
+	if err := push.Init(config.Configs, database.DBtechWrite); err != nil {
+		utils.Error(fmt.Errorf("failed to initialize PUSH service: %w", err))
+	}
+
 	go services.ConsumerService(config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
 	utils.Debug(fmt.Sprintf("Starting Consumer Server on port %s", port))
