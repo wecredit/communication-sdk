@@ -60,6 +60,18 @@ type Config struct {
 	RedisMapKey       string `envconfig:"REDIS_MAP_KEY"`
 	CommIdempotentKey string `envconfig:"COMM_IDEMPOTENT_KEY"`
 
+	// ConfigurationVersion is durable cache state. Redis pub/sub is only the
+	// fast notification path; polling this version recovers missed messages.
+	Environment                     string `envconfig:"ENVIRONMENT" default:"dev"`
+	ConfigurationVersionTable       string `envconfig:"CONFIGURATION_VERSION_TABLE" default:"ConfigurationVersion"`
+	CacheVersionPollIntervalSeconds string `envconfig:"CACHE_VERSION_POLL_INTERVAL_SECONDS" default:"90"`
+	CacheReloadMinIntervalSeconds   string `envconfig:"CACHE_RELOAD_MIN_INTERVAL_SECONDS" default:"60"`
+	CommAdminUsername               string `envconfig:"COMM_ADMIN_USERNAME"`
+	CommAdminPassword               string `envconfig:"COMM_ADMIN_PASSWORD"`
+	CommSuperAdminRoles             string `envconfig:"COMM_SUPER_ADMIN_ROLES" default:"marketing"`
+	CommClientRolePrefix            string `envconfig:"COMM_CLIENT_ROLE_PREFIX" default:"marketing_"`
+	CommIdentitySecret              string `envconfig:"COMM_IDENTITY_SECRET"`
+
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
 
@@ -82,6 +94,8 @@ type Config struct {
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
 	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
+	LenderStagesTable    string `envconfig:"LENDER_STAGES_TABLE_NAME" default:"LendersStages"`
+	TemplateStageTable   string `envconfig:"TEMPLATE_STAGE_TABLE_NAME" default:"TemplateStage"`
 
 	CommAuditTable string `envconfig:"COMM_AUDIT_TABLE"`
 
