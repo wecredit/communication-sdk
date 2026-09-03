@@ -86,8 +86,7 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 
 // AddTemplate adds a template
 func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails, actorUsername string) error {
-	istOffset := 5*time.Hour + 30*time.Minute
-	now := time.Now().UTC().Add(istOffset)
+	now := adminNow()
 	template.CreatedOn = now
 	template.UpdatedOn = &now
 	template.CreatedBy = actorUsername
@@ -234,8 +233,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 				return err
 			}
 
-			istOffset := 5*time.Hour + 30*time.Minute
-			now := time.Now().UTC().Add(istOffset)
+			now := adminNow()
 			saved.UpdatedOn = &now
 			saved.UpdatedBy = actorUsername
 			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).

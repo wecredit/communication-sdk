@@ -136,8 +136,7 @@ func applyAuditOnCreate(createdOn, updatedOn *time.Time, createdBy, updatedBy *s
 }
 
 func adminNow() time.Time {
-	istOffset := 5*time.Hour + 30*time.Minute
-	return time.Now().UTC().Add(istOffset)
+	return time.Now().UTC()
 }
 
 func sameScheduleIdentity(a, b apiModels.LenderSchedule) bool {
