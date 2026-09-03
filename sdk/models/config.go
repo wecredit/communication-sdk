@@ -54,6 +54,10 @@ type Config struct {
 	ZapCashMonitorRecipients  string `envconfig:"ZAPCASH_MONITOR_RECIPIENTS"`
 	ZapCashMonitorProfileJSON string `envconfig:"ZAPCASH_MONITOR_PROFILE_JSON"`
 
+	// FCMClientConfigJSON maps each PUSH client to its Firebase project and
+	// secret-manager-mounted service-account credential file.
+	FCMClientConfigJSON string `envconfig:"FCM_CLIENT_CONFIG_JSON"`
+
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
 	RedisPassword     string `envconfig:"REDIS_PASSWORD"`
@@ -90,6 +94,12 @@ type Config struct {
 
 	SdkEmailInputTable string `envconfig:"SDK_EMAIL_INPUT_TABLE"`
 	EmailOutputTable   string `envconfig:"EMAIL_OUTPUT_TABLE"`
+
+	// PUSH dispatch state is authoritative for claims, retries, and terminal outcomes.
+	// The table must be provisioned manually before PUSH delivery is enabled.
+	PushDispatchLedgerTable string `envconfig:"PUSH_DISPATCH_LEDGER_TABLE" default:"PushDispatchLedger"`
+	PushInputAuditTable     string `envconfig:"PUSH_INPUT_AUDIT_TABLE" default:"PushInputAuditTable"`
+	PushOutputTable         string `envconfig:"PUSH_OUTPUT_TABLE" default:"PushOutputTable"`
 
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`

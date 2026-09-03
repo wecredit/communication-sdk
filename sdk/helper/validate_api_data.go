@@ -32,10 +32,12 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 		if data.Mobile == "" {
 			return false, "Mobile is required for SMS communication"
 		}
+
 	case variables.RCS:
 		if data.Mobile == "" {
 			return false, "Mobile is required for RCS communication"
 		}
+
 	case variables.WhatsApp:
 		if data.Mobile == "" {
 			return false, "Mobile is required for WhatsApp Communication"
@@ -52,6 +54,28 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 		if !isValid {
 			return false, "Invalid email address format"
 		}
+
+	case variables.PUSH:
+		if strings.TrimSpace(data.Client) == "" {
+			return false, "Client is required for PUSH communication"
+		}
+
+		if strings.TrimSpace(data.EventId) == "" {
+			return false, "EventId is required for PUSH communication"
+		}
+
+		hasDeviceToken := false
+		for _, token := range data.DeviceTokens {
+			if strings.TrimSpace(token) != "" {
+				hasDeviceToken = true
+				break
+			}
+		}
+
+		if !hasDeviceToken {
+			return false, "At least one device token is required for PUSH communication"
+		}
+
 	default:
 		return false, "Invalid Channel"
 	}

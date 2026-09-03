@@ -20,6 +20,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
@@ -374,7 +375,12 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// 	utils.Error(fmt.Errorf("redis add failed: %v", err))
 	// }
 
-	utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	if strings.EqualFold(data.Channel, variables.PUSH) {
+		utils.Debug(fmt.Sprintf("PUSH payload received client=%s commId=%s eventId=%s deviceCount=%d",
+			data.Client, data.CommId, data.EventId, len(data.DeviceTokens)))
+	} else {
+		utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	}
 
 	data.Client = strings.ToLower(data.Client)
 	data.Channel = strings.ToUpper(data.Channel)
@@ -408,6 +414,9 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	case variables.Email:
 		isMessageProcessed, deleted := handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 		return isMessageProcessed, deleted
+	case variables.PUSH:
+		isMessageProcessed, deleted := handlePush(ctx, data, sqsClient, queueURL, msg)
+		return isMessageProcessed, deleted
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
 		// Delete invalid messages to prevent unnecessary retries
@@ -417,6 +426,24 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		}
 		return true, deleted // message processed (rejected due to invalid channel)
 	}
+}
+
+func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	result, err := push.Send(ctx, data)
+	if err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
+			data.Client, data.CommId, data.EventId, err))
+	}
+	if !result.AckSQS {
+		return result.Processed, false
+	}
+
+	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if deleteErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
+			data.Client, data.CommId, data.EventId, deleteErr))
+	}
+	return result.Processed, deleted
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
