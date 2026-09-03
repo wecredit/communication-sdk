@@ -11,6 +11,7 @@ const defaultSuperAdminRoles = "marketing"
 const defaultClientRolePrefix = "marketing_"
 
 type CommAdminScope struct {
+	Username       string
 	AllowedClients []string
 	Unrestricted   bool
 }

@@ -118,7 +118,7 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.AddTemplate(&template); err != nil {
+	if err := h.Service.AddTemplate(&template, middleware.CommAdminUsername(c)); err != nil {
 		writeTemplateServiceError(c, err)
 		return
 	}
@@ -164,7 +164,7 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 		}
 	}
 
-	template, err := h.Service.UpdateTemplateById(id, updates)
+	template, err := h.Service.UpdateTemplateById(id, updates, middleware.CommAdminUsername(c))
 	if err != nil {
 		writeTemplateServiceError(c, err)
 		return

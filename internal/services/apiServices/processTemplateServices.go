@@ -57,8 +57,8 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 	offset := (params.Page - 1) * params.PageSize
 
 	if err := query.
-		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, DltTemplateId, IsActive, CreatedOn, UpdatedOn").
-		Order("UpdatedOn DESC, Id DESC").
+		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, DltTemplateId, IsActive, CreatedOn, COALESCE(UpdatedOn, CreatedOn) AS UpdatedOn, CreatedBy, UpdatedBy").
+		Order("COALESCE(UpdatedOn, CreatedOn) DESC, Id DESC").
 		Limit(params.PageSize).
 		Offset(offset).
 		Find(&templates).Error; err != nil {
@@ -85,9 +85,13 @@ func (s *TemplateService) GetTemplateByID(id uint) (*apiModels.Templatedetails, 
 }
 
 // AddTemplate adds a template
-func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error {
+func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails, actorUsername string) error {
 	istOffset := 5*time.Hour + 30*time.Minute
-	template.CreatedOn = time.Now().UTC().Add(istOffset)
+	now := time.Now().UTC().Add(istOffset)
+	template.CreatedOn = now
+	template.UpdatedOn = &now
+	template.CreatedBy = actorUsername
+	template.UpdatedBy = actorUsername
 	normalizeTemplate(template)
 	if err := ValidateTemplateStructure(*template); err != nil {
 		return fmt.Errorf("%w: %v", ErrTemplateValidation, err)
@@ -159,7 +163,7 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails) error
 }
 
 // UpdateTemplateById updates a template by its ID
-func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateUpdateRequest) (*apiModels.Templatedetails, error) {
+func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateUpdateRequest, actorUsername string) (*apiModels.Templatedetails, error) {
 	var saved apiModels.Templatedetails
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
@@ -233,11 +237,12 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			istOffset := 5*time.Hour + 30*time.Minute
 			now := time.Now().UTC().Add(istOffset)
 			saved.UpdatedOn = &now
+			saved.UpdatedBy = actorUsername
 			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
 				Select(
 					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName",
 					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
-					"IsActive", "TemplateText", "Link", "UpdatedOn", "TemplateCategory",
+					"IsActive", "TemplateText", "Link", "UpdatedOn", "UpdatedBy", "TemplateCategory",
 					"TemplateVariables", "SmsFallbackVariables", "Subject", "FromEmail",
 				).
 				Updates(&saved)

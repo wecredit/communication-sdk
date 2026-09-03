@@ -34,7 +34,7 @@ func (h *StageConfigurationHandler) Create(c *gin.Context) {
 		return
 	}
 
-	result, err := h.Service.Create(request)
+	result, err := h.Service.Create(request, middleware.CommAdminUsername(c))
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
 		return
@@ -73,7 +73,7 @@ func (h *StageConfigurationHandler) Update(c *gin.Context) {
 		return
 	}
 
-	result, err := h.Service.Update(id, request)
+	result, err := h.Service.Update(id, request, middleware.CommAdminUsername(c))
 	if err != nil {
 		writeStageConfigurationServiceError(c, err)
 		return

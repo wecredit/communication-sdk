@@ -128,11 +128,23 @@ func mappingsFromRequest(request apiModels.StageConfigurationRequest) []apiModel
 	return mappings
 }
 
+func applyAuditOnCreate(createdOn, updatedOn *time.Time, createdBy, updatedBy *string, now time.Time, actorUsername string) {
+	*createdOn = now
+	*updatedOn = now
+	*createdBy = actorUsername
+	*updatedBy = actorUsername
+}
+
+func adminNow() time.Time {
+	istOffset := 5*time.Hour + 30*time.Minute
+	return time.Now().UTC().Add(istOffset)
+}
+
 func sameScheduleIdentity(a, b apiModels.LenderSchedule) bool {
 	return a.LenderName == b.LenderName && a.CommType == b.CommType && a.Stage == b.Stage
 }
 
-func (s *StageConfigurationService) Create(request apiModels.StageConfigurationRequest) (*apiModels.StageConfigurationResponse, error) {
+func (s *StageConfigurationService) Create(request apiModels.StageConfigurationRequest, actorUsername string) (*apiModels.StageConfigurationResponse, error) {
 	if err := NormalizeStageConfigurationRequest(&request); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigurationValidation, err)
 	}
@@ -141,8 +153,13 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	if !scheduleRequested && !mappingsRequested {
 		return nil, fmt.Errorf("%w: templateStages must contain at least one mapping when interval is omitted", ErrConfigurationValidation)
 	}
+	now := adminNow()
 	schedule := scheduleFromRequest(request)
+	applyAuditOnCreate(&schedule.CreatedOn, &schedule.UpdatedOn, &schedule.CreatedBy, &schedule.UpdatedBy, now, actorUsername)
 	mappings := mappingsFromRequest(request)
+	for i := range mappings {
+		applyAuditOnCreate(&mappings[i].CreatedOn, &mappings[i].UpdatedOn, &mappings[i].CreatedBy, &mappings[i].UpdatedBy, now, actorUsername)
+	}
 	var versions configurationcache.StageConfigurationVersions
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		locks, err := acquireStageConfigurationLocks(conn, stageConfigurationLockIdentity(schedule.LenderName, schedule.CommType, schedule.Stage))
@@ -186,7 +203,7 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	return response, nil
 }
 
-func (s *StageConfigurationService) Update(id int, request apiModels.StageConfigurationRequest) (*apiModels.StageConfigurationResponse, error) {
+func (s *StageConfigurationService) Update(id int, request apiModels.StageConfigurationRequest, actorUsername string) (*apiModels.StageConfigurationResponse, error) {
 	if err := NormalizeStageConfigurationRequest(&request); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigurationValidation, err)
 	}
@@ -202,6 +219,8 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 		target.Interval = discovered.Interval
 	}
 	target.ID = id
+	target.CreatedOn = discovered.CreatedOn
+	target.CreatedBy = discovered.CreatedBy
 	mappingsRequested := request.TemplateStages != nil
 	var savedMappings []apiModels.StageMapping
 	var versions configurationcache.StageConfigurationVersions
@@ -253,6 +272,10 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 				desiredSubs[desired[i].SubStage] = struct{}{}
 				if mapping, ok := existingBySub[desired[i].SubStage]; ok && sameScheduleIdentity(current, target) {
 					desired[i].ID = mapping.ID
+					desired[i].CreatedOn = mapping.CreatedOn
+					desired[i].CreatedBy = mapping.CreatedBy
+					desired[i].UpdatedOn = mapping.UpdatedOn
+					desired[i].UpdatedBy = mapping.UpdatedBy
 				}
 			}
 			if mappingsRequested {
@@ -266,14 +289,21 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 				}
 			}
 
+			now := adminNow()
 			scheduleChanged = current.LenderName != target.LenderName || current.CommType != target.CommType || current.Stage != target.Stage || current.Interval != target.Interval
 			mappingsChanged = mappingsRequested && !sameMappingSet(existing, desired, sameScheduleIdentity(current, target))
 			if scheduleChanged {
+				target.UpdatedOn = now
+				target.UpdatedBy = actorUsername
 				if err := tx.Table(config.Configs.LenderStagesTable).Where("Id = ?", id).Updates(map[string]interface{}{
 					"LenderName": target.LenderName, "CommType": target.CommType, "Stage": target.Stage, "Interval": target.Interval,
+					"UpdatedOn": target.UpdatedOn, "UpdatedBy": target.UpdatedBy,
 				}).Error; err != nil {
 					return fmt.Errorf("update lender schedule: %w", err)
 				}
+			} else {
+				target.UpdatedOn = current.UpdatedOn
+				target.UpdatedBy = current.UpdatedBy
 			}
 			if mappingsChanged {
 				deleteIDs := make([]int, 0, len(existing))
@@ -291,6 +321,7 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 				toCreate := make([]apiModels.StageMapping, 0, len(desired))
 				for i := range desired {
 					if desired[i].ID == 0 {
+						applyAuditOnCreate(&desired[i].CreatedOn, &desired[i].UpdatedOn, &desired[i].CreatedBy, &desired[i].UpdatedBy, now, actorUsername)
 						toCreate = append(toCreate, desired[i])
 					}
 				}
@@ -435,7 +466,7 @@ func (s *StageConfigurationService) GetLenderSchedules(params apiModels.StageCon
 		return nil, err
 	}
 	items := make([]apiModels.LenderSchedule, 0, params.PageSize)
-	if err := query.Order("LenderName ASC, CommType ASC, Stage ASC, Id ASC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order("UpdatedOn DESC, Id DESC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return &apiModels.LenderScheduleListResult{Items: items, TotalItems: total}, nil
@@ -463,7 +494,7 @@ func (s *StageConfigurationService) GetStageMappings(params apiModels.StageConfi
 		return nil, err
 	}
 	items := make([]apiModels.StageMapping, 0, params.PageSize)
-	if err := query.Order("LenderName ASC, CommType ASC, Stage ASC, SubStage ASC, Id ASC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order("UpdatedOn DESC, Id DESC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return &apiModels.StageMappingListResult{Items: items, TotalItems: total}, nil

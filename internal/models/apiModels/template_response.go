@@ -49,8 +49,10 @@ type TemplateListItem struct {
 	TemplateName  string     `gorm:"column:TemplateName" json:"templateName,omitempty"`
 	DltTemplateId int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
 	IsActive      bool       `gorm:"column:IsActive" json:"isActive"`
-	CreatedOn     time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
-	UpdatedOn     *time.Time `gorm:"column:UpdatedOn" json:"updatedOn,omitempty"`
+	CreatedOn     time.Time `gorm:"column:CreatedOn" json:"createdOn"`
+	UpdatedOn     time.Time `gorm:"column:UpdatedOn" json:"updatedOn"`
+	CreatedBy     string    `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
+	UpdatedBy     string    `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
 }
 
 type TemplateListResult struct {
@@ -70,6 +72,11 @@ func NewTemplateDetailsResponse(template *Templatedetails) TemplateDetailsRespon
 	if template.Stage != nil {
 		stage := strconv.FormatFloat(*template.Stage, 'f', 2, 64)
 		response.Stage = &stage
+	}
+	// Legacy rows may have NULL UpdatedOn; expose CreatedOn so UI sorting/display works.
+	if response.UpdatedOn == nil && !response.CreatedOn.IsZero() {
+		createdOn := response.CreatedOn
+		response.UpdatedOn = &createdOn
 	}
 	return response
 }

@@ -23,3 +23,20 @@ func TestStageConfigurationCreateRejectsUnknownFields(t *testing.T) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
+
+func TestStageConfigurationCreateRejectsAuditFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []string{
+		`{"lenderName":"x","commType":"SMS","stage":1,"interval":"0d","createdOn":"2026-08-31T10:00:00Z"}`,
+		`{"lenderName":"x","commType":"SMS","stage":1,"interval":"0d","updatedBy":"someone@wecredit.co.in"}`,
+	}
+	for _, body := range tests {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodPost, "/stage-configurations", strings.NewReader(body))
+		(&handlers.StageConfigurationHandler{}).Create(context)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d for body %s", recorder.Code, body)
+		}
+	}
+}
