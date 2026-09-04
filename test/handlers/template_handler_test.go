@@ -57,6 +57,17 @@ func TestGetTemplatesRejectsSearchTooLong(t *testing.T) {
 	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_SEARCH")
 }
 
+func TestGetTemplatesRejectsSearchTooLongByRunes(t *testing.T) {
+	// 101 runes that are multi-byte in UTF-8; byte length would exceed 100 differently.
+	longSearch := strings.Repeat("你", 101)
+	context, recorder := newTemplateContext("/templates/?search=" + longSearch)
+	handler := handlers.NewTemplateHandler(nil)
+
+	handler.GetTemplates(context)
+
+	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_SEARCH")
+}
+
 func TestGetTemplatesRejectsInvalidSortBy(t *testing.T) {
 	// Service validates sort; need a non-nil service with no DB call path — invalid sort fails before DB.
 	context, recorder := newTemplateContext("/templates/?sortBy=not_a_column")

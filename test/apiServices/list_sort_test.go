@@ -50,6 +50,21 @@ func TestResolveTemplateListOrderRejectsBadDir(t *testing.T) {
 	}
 }
 
+func TestResolveTemplateListOrderRejectsBadDirWithoutSortBy(t *testing.T) {
+	_, err := apiServices.ResolveTemplateListOrder("", "sideways", true)
+	if !errors.Is(err, apiServices.ErrInvalidSort) {
+		t.Fatalf("err = %v, want ErrInvalidSort", err)
+	}
+
+	got, err := apiServices.ResolveTemplateListOrder("", "asc", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != apiServices.TemplateListOrderClause(true) {
+		t.Fatalf("valid sortDir without sortBy should keep role default, got %q", got)
+	}
+}
+
 func TestResolveStageMappingListOrder(t *testing.T) {
 	got, err := apiServices.ResolveStageMappingListOrder("", "")
 	if err != nil {

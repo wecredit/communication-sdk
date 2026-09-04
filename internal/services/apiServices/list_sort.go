@@ -18,6 +18,10 @@ type listSortColumn struct {
 func resolveListOrderClause(sortBy, sortDir, defaultClause string, allowlist map[string]listSortColumn) (string, error) {
 	sortBy = strings.TrimSpace(sortBy)
 	if sortBy == "" {
+		// Still validate sortDir when provided so bad dirs are not silently ignored.
+		if _, err := normalizeSortDir(sortDir, false); err != nil {
+			return "", err
+		}
 		return defaultClause, nil
 	}
 

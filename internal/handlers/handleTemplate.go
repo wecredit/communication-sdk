@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wecredit/communication-sdk/internal/middleware"
@@ -48,7 +49,7 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 	}
 
 	search := strings.TrimSpace(c.Query("search"))
-	if len(search) > maxTemplateSearchLength {
+	if utf8.RuneCountInString(search) > maxTemplateSearchLength {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_SEARCH", fmt.Sprintf("search must be at most %d characters", maxTemplateSearchLength))
 		return
 	}
