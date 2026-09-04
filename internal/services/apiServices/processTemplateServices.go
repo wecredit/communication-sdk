@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -15,6 +16,31 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+const likeEscapeChar = "!"
+
+// templateListOrderClause returns the role-based default ORDER BY when sortBy is omitted.
+func templateListOrderClause(unrestricted bool) string {
+	if unrestricted {
+		return "Client ASC, Process ASC, TemplateName ASC, Channel ASC, COALESCE(UpdatedOn, CreatedOn) DESC, Id DESC"
+	}
+	return "Process ASC, Channel ASC, TemplateName ASC, COALESCE(UpdatedOn, CreatedOn) DESC, Id DESC"
+}
+
+// TemplateListOrderClause is the role-based default ORDER BY when sortBy is omitted.
+func TemplateListOrderClause(unrestricted bool) string {
+	return templateListOrderClause(unrestricted)
+}
+
+// EscapeLikePattern escapes !, %, and _ for MySQL LIKE ... ESCAPE '!'.
+func EscapeLikePattern(term string) string {
+	replacer := strings.NewReplacer(
+		"!", "!!",
+		"%", "!%",
+		"_", "!_",
+	)
+	return replacer.Replace(term)
+}
 
 type TemplateService struct {
 	ReadDB  *gorm.DB
@@ -27,6 +53,11 @@ func NewTemplateService(readDB, writeDB *gorm.DB) *TemplateService {
 
 // GetTemplates gets the templates from the database
 func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*apiModels.TemplateListResult, error) {
+	orderClause, err := ResolveTemplateListOrder(params.SortBy, params.SortDir, params.Unrestricted)
+	if err != nil {
+		return nil, err
+	}
+
 	query := s.ReadDB.Table(config.Configs.TemplateDetailsTable)
 	if params.Process != "" {
 		query = query.Where("Process = ?", params.Process)
@@ -48,6 +79,14 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 		query = query.Where("Vendor = ?", params.Vendor)
 	}
 
+	if params.Search != "" {
+		like := "%" + EscapeLikePattern(params.Search) + "%"
+		query = query.Where(
+			"(TemplateName LIKE ? ESCAPE '"+likeEscapeChar+"' OR Process LIKE ? ESCAPE '"+likeEscapeChar+"' OR Channel LIKE ? ESCAPE '"+likeEscapeChar+"' OR Vendor LIKE ? ESCAPE '"+likeEscapeChar+"')",
+			like, like, like, like,
+		)
+	}
+
 	var totalItems int64
 	if err := query.Count(&totalItems).Error; err != nil {
 		return nil, fmt.Errorf("count templates: %w", err)
@@ -58,7 +97,7 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 
 	if err := query.
 		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, DltTemplateId, IsActive, CreatedOn, COALESCE(UpdatedOn, CreatedOn) AS UpdatedOn, CreatedBy, UpdatedBy").
-		Order("COALESCE(UpdatedOn, CreatedOn) DESC, Id DESC").
+		Order(orderClause).
 		Limit(params.PageSize).
 		Offset(offset).
 		Find(&templates).Error; err != nil {
@@ -66,6 +105,25 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 	}
 
 	return &apiModels.TemplateListResult{Items: templates, TotalItems: totalItems}, nil
+}
+
+// ListDistinctProcesses returns distinct non-empty Process values, optionally scoped by client.
+func (s *TemplateService) ListDistinctProcesses(client string) ([]string, error) {
+	query := s.ReadDB.Table(config.Configs.TemplateDetailsTable).
+		Distinct("Process").
+		Where("Process <> ?", "").
+		Order("Process ASC")
+
+	if client != "" {
+		query = query.Where("Client = ?", client)
+	}
+
+	processes := make([]string, 0)
+	if err := query.Pluck("Process", &processes).Error; err != nil {
+		return nil, fmt.Errorf("list distinct processes: %w", err)
+	}
+
+	return processes, nil
 }
 
 // GetTemplateByID gets a template by its ID

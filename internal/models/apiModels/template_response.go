@@ -28,27 +28,31 @@ type TemplatePaginationMeta struct {
 }
 
 type TemplateListParams struct {
-	Process  string
-	Stage    string
-	Client   string
-	Channel  string
-	Vendor   string
-	Page     int
-	PageSize int
+	Process      string
+	Stage        string
+	Client       string
+	Channel      string
+	Vendor       string
+	Search       string
+	SortBy       string
+	SortDir      string
+	Unrestricted bool // marketing super-admin: Client-first multi-column sort when SortBy empty
+	Page         int
+	PageSize     int
 }
 
 // TemplateListItem contains only fields needed to identify and manage a
 // template in list views. Payload content remains available from the detail API.
 type TemplateListItem struct {
-	Id            int        `gorm:"column:Id" json:"id"`
-	Client        string     `gorm:"column:Client" json:"client"`
-	Channel       string     `gorm:"column:Channel" json:"channel"`
-	Process       string     `gorm:"column:Process" json:"process"`
-	Stage         *string    `gorm:"column:Stage" json:"stage"`
-	Vendor        string     `gorm:"column:Vendor" json:"vendor"`
-	TemplateName  string     `gorm:"column:TemplateName" json:"templateName,omitempty"`
-	DltTemplateId int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
-	IsActive      bool       `gorm:"column:IsActive" json:"isActive"`
+	Id            int       `gorm:"column:Id" json:"id"`
+	Client        string    `gorm:"column:Client" json:"client"`
+	Channel       string    `gorm:"column:Channel" json:"channel"`
+	Process       string    `gorm:"column:Process" json:"process"`
+	Stage         *string   `gorm:"column:Stage" json:"stage"`
+	Vendor        string    `gorm:"column:Vendor" json:"vendor"`
+	TemplateName  string    `gorm:"column:TemplateName" json:"templateName,omitempty"`
+	DltTemplateId int64     `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
+	IsActive      bool      `gorm:"column:IsActive" json:"isActive"`
 	CreatedOn     time.Time `gorm:"column:CreatedOn" json:"createdOn"`
 	UpdatedOn     time.Time `gorm:"column:UpdatedOn" json:"updatedOn"`
 	CreatedBy     string    `gorm:"column:CreatedBy" json:"createdBy,omitempty"`

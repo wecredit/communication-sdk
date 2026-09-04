@@ -459,13 +459,18 @@ func ensureMappingUnused(tx *gorm.DB, mapping apiModels.StageMapping) error {
 }
 
 func (s *StageConfigurationService) GetLenderSchedules(params apiModels.StageConfigurationListParams) (*apiModels.LenderScheduleListResult, error) {
+	orderClause, err := ResolveLenderScheduleListOrder(params.SortBy, params.SortDir)
+	if err != nil {
+		return nil, err
+	}
+
 	query := applyStageConfigurationFilters(s.ReadDB.Table(config.Configs.LenderStagesTable), params, false)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, err
 	}
 	items := make([]apiModels.LenderSchedule, 0, params.PageSize)
-	if err := query.Order("UpdatedOn DESC, Id DESC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order(orderClause).Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return &apiModels.LenderScheduleListResult{Items: items, TotalItems: total}, nil
@@ -487,13 +492,18 @@ func (s *StageConfigurationService) GetLenderSchedule(id int) (*apiModels.StageC
 }
 
 func (s *StageConfigurationService) GetStageMappings(params apiModels.StageConfigurationListParams) (*apiModels.StageMappingListResult, error) {
+	orderClause, err := ResolveStageMappingListOrder(params.SortBy, params.SortDir)
+	if err != nil {
+		return nil, err
+	}
+
 	query := applyStageConfigurationFilters(s.ReadDB.Table(config.Configs.TemplateStageTable), params, true)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, err
 	}
 	items := make([]apiModels.StageMapping, 0, params.PageSize)
-	if err := query.Order("UpdatedOn DESC, Id DESC").Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
+	if err := query.Order(orderClause).Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return &apiModels.StageMappingListResult{Items: items, TotalItems: total}, nil
