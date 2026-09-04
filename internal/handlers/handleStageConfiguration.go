@@ -228,6 +228,7 @@ func parseStageConfigurationListParams(c *gin.Context, includeSubStage bool) (ap
 	}
 
 	params := apiModels.StageConfigurationListParams{LenderName: c.Query("lenderName"), CommType: c.Query("commType"), Page: page, PageSize: pageSize}
+	params.SortBy, params.SortDir = parseListSortQuery(c)
 
 	if raw := strings.TrimSpace(c.Query("stage")); raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -270,6 +271,9 @@ func writeStageConfigurationServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, services.ErrConfigurationValidation):
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", strings.TrimPrefix(err.Error(), services.ErrConfigurationValidation.Error()+": "))
+
+	case errors.Is(err, services.ErrInvalidSort):
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_SORT", err.Error())
 
 	case errors.Is(err, services.ErrConfigurationNotFound):
 		writeTemplateError(c, http.StatusNotFound, "CONFIGURATION_NOT_FOUND", "stage configuration was not found")
