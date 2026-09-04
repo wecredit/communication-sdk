@@ -86,6 +86,7 @@ func StartConsumer(port string) {
 	templates := admin.Group("/templates")
 	{
 		templates.GET("/", templateHandler.GetTemplates)
+		templates.GET("/processes", templateHandler.ListTemplateProcesses)
 		templates.POST("/add-template", templateHandler.AddTemplate)
 		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)

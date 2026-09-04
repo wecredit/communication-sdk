@@ -11,6 +11,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/handlers"
 	"github.com/wecredit/communication-sdk/internal/middleware"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
+	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
 )
 
 func TestGetTemplatesRejectsInvalidPagination(t *testing.T) {
@@ -44,6 +45,39 @@ func TestGetTemplatesRejectsInvalidStage(t *testing.T) {
 	handler.GetTemplates(context)
 
 	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_STAGE")
+}
+
+func TestGetTemplatesRejectsSearchTooLong(t *testing.T) {
+	longSearch := strings.Repeat("a", 101)
+	context, recorder := newTemplateContext("/templates/?search=" + longSearch)
+	handler := handlers.NewTemplateHandler(nil)
+
+	handler.GetTemplates(context)
+
+	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_SEARCH")
+}
+
+func TestGetTemplatesRejectsInvalidSortBy(t *testing.T) {
+	// Service validates sort; need a non-nil service with no DB call path — invalid sort fails before DB.
+	context, recorder := newTemplateContext("/templates/?sortBy=not_a_column")
+	handler := handlers.NewTemplateHandler(services.NewTemplateService(nil, nil))
+
+	handler.GetTemplates(context)
+
+	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_SORT")
+}
+
+func TestListTemplateProcessesForbiddenForWrongClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/templates/processes?client=zapcash", nil)
+	middleware.SetCommAdminScope(context, middleware.CommAdminScope{AllowedClients: []string{"wecredit"}})
+
+	handler := handlers.NewTemplateHandler(nil)
+	handler.ListTemplateProcesses(context)
+
+	assertTemplateError(t, recorder, http.StatusForbidden, "FORBIDDEN")
 }
 
 func TestGetTemplateByIDRejectsInvalidID(t *testing.T) {

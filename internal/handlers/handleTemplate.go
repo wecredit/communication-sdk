@@ -21,6 +21,7 @@ import (
 const (
 	defaultTemplatePageSize = 25
 	maxTemplatePageSize     = 100
+	maxTemplateSearchLength = 100
 )
 
 var canonicalStagePattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$`)
@@ -46,20 +47,32 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 		return
 	}
 
+	search := strings.TrimSpace(c.Query("search"))
+	if len(search) > maxTemplateSearchLength {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_SEARCH", fmt.Sprintf("search must be at most %d characters", maxTemplateSearchLength))
+		return
+	}
+
 	client, err := middleware.ApplyClientListFilter(c, strings.TrimSpace(c.Query("client")))
 	if err != nil {
 		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
 		return
 	}
 
+	scope, _ := middleware.GetCommAdminScope(c)
+	sortBy, sortDir := parseListSortQuery(c)
 	result, err := h.Service.GetTemplates(apiModels.TemplateListParams{
-		Process:  strings.TrimSpace(c.Query("process")),
-		Stage:    stage,
-		Channel:  strings.TrimSpace(c.Query("channel")),
-		Vendor:   strings.TrimSpace(c.Query("vendor")),
-		Client:   client,
-		Page:     page,
-		PageSize: pageSize,
+		Process:      strings.ToUpper(strings.TrimSpace(c.Query("process"))),
+		Stage:        stage,
+		Channel:      strings.ToUpper(strings.TrimSpace(c.Query("channel"))),
+		Vendor:       strings.ToUpper(strings.TrimSpace(c.Query("vendor"))),
+		Client:       client,
+		Search:       search,
+		SortBy:       sortBy,
+		SortDir:      sortDir,
+		Unrestricted: scope.Unrestricted,
+		Page:         page,
+		PageSize:     pageSize,
 	})
 	if err != nil {
 		writeTemplateServiceError(c, err)
@@ -75,6 +88,22 @@ func (h *TemplateHandler) GetTemplates(c *gin.Context) {
 		HasNextPage:     int64(page) < totalPages,
 		HasPreviousPage: page > 1 && result.TotalItems > 0,
 	})
+}
+
+func (h *TemplateHandler) ListTemplateProcesses(c *gin.Context) {
+	client, err := middleware.ApplyClientListFilter(c, strings.TrimSpace(c.Query("client")))
+	if err != nil {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
+	processes, err := h.Service.ListDistinctProcesses(client)
+	if err != nil {
+		writeTemplateServiceError(c, err)
+		return
+	}
+
+	writeTemplateSuccess(c, http.StatusOK, processes, "Processes retrieved successfully", nil)
 }
 
 func (h *TemplateHandler) GetTemplateByID(c *gin.Context) {
@@ -217,6 +246,25 @@ func parseTemplatePagination(c *gin.Context) (int, int, error) {
 	return page, pageSize, nil
 }
 
+// parseListSortQuery reads sortBy/sort_by and sortDir/sort_order/sortOrder (camelCase preferred).
+func parseListSortQuery(c *gin.Context) (sortBy, sortDir string) {
+	sortBy = strings.TrimSpace(c.Query("sortBy"))
+	if sortBy == "" {
+		sortBy = strings.TrimSpace(c.Query("sort_by"))
+	}
+
+	sortDir = strings.TrimSpace(c.Query("sortDir"))
+	if sortDir == "" {
+		sortDir = strings.TrimSpace(c.Query("sort_order"))
+	}
+
+	if sortDir == "" {
+		sortDir = strings.TrimSpace(c.Query("sortOrder"))
+	}
+
+	return sortBy, sortDir
+}
+
 func parsePositiveQueryInt(raw string, defaultValue int) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return defaultValue, nil
@@ -291,6 +339,9 @@ func writeTemplateServiceError(c *gin.Context, err error) {
 	case errors.Is(err, services.ErrTemplateValidation):
 		message := strings.TrimPrefix(err.Error(), services.ErrTemplateValidation.Error()+": ")
 		writeTemplateError(c, http.StatusBadRequest, "TEMPLATE_VALIDATION_FAILED", message)
+
+	case errors.Is(err, services.ErrInvalidSort):
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_SORT", err.Error())
 
 	case errors.Is(err, services.ErrTemplateBusy), errors.Is(err, services.ErrConfigurationBusy):
 		writeTemplateError(c, http.StatusServiceUnavailable, "TEMPLATE_BUSY", "template configuration is busy; retry the request")

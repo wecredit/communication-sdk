@@ -48,6 +48,8 @@ type StageConfigurationListParams struct {
 	CommType   string
 	Stage      *int
 	SubStage   *int
+	SortBy     string
+	SortDir    string
 	Page       int
 	PageSize   int
 }
