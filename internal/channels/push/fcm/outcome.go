@@ -68,7 +68,7 @@ type ClassifiedOutcome struct {
 	Code    string
 }
 
-// Classify converts one FCM attempt into a ledger-safe outcome. Unknown
+// Classify converts one FCM attempt into a terminal claim-safe outcome. Unknown
 // transport errors are retryable; callers should wrap known configuration or
 // credential errors with PermanentAttemptError.
 func Classify(response SendResponse, err error) ClassifiedOutcome {

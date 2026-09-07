@@ -95,11 +95,10 @@ type Config struct {
 	SdkEmailInputTable string `envconfig:"SDK_EMAIL_INPUT_TABLE"`
 	EmailOutputTable   string `envconfig:"EMAIL_OUTPUT_TABLE"`
 
-	// PUSH dispatch state is authoritative for claims, retries, and terminal outcomes.
-	// The table must be provisioned manually before PUSH delivery is enabled.
-	PushDispatchLedgerTable string `envconfig:"PUSH_DISPATCH_LEDGER_TABLE" default:"PushDispatchLedger"`
-	PushInputAuditTable     string `envconfig:"PUSH_INPUT_AUDIT_TABLE" default:"PushInputAuditTable"`
-	PushOutputTable         string `envconfig:"PUSH_OUTPUT_TABLE" default:"PushOutputTable"`
+	// PUSH Redis (CommIdempotentKey) is the claim/dedupe authority.
+	// These tables are audit-only and must be provisioned before PUSH delivery is enabled.
+	PushInputAuditTable string `envconfig:"PUSH_INPUT_AUDIT_TABLE" default:"PushInputAuditTable"`
+	PushOutputTable     string `envconfig:"PUSH_OUTPUT_TABLE" default:"PushOutputTable"`
 
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`

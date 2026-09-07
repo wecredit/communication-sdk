@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
-	"github.com/wecredit/communication-sdk/internal/channels/push/audit"
 	"github.com/wecredit/communication-sdk/internal/channels/push/fcm"
-	"github.com/wecredit/communication-sdk/internal/channels/push/ledger"
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -21,20 +19,17 @@ import (
 const (
 	providerName          = "FCM"
 	maxParallelTokenSends = 10
-)
 
-type ledgerStore interface {
-	CreateOrGetPending(context.Context, ledger.Identity, string) (ledger.Dispatch, bool, error)
-	Claim(context.Context, uint64) (ledger.Dispatch, bool, error)
-	IsClaimCurrent(context.Context, uint64) (bool, time.Duration, error)
-	RecordAttempt(context.Context, uint64, int) (bool, error)
-	Finalize(context.Context, uint64, ledger.Status, int, string, string) (bool, error)
-}
+	outcomeSubmitted      = "submitted"
+	outcomeFailedFinal    = "failed_final"
+	outcomeCancelledStale = "cancelled_stale"
+)
 
 type retryExecutor interface {
 	ExecuteWithObserver(context.Context, string, fcm.SendRequest, fcm.RetryGuard, fcm.AttemptObserver) (fcm.ExecutionResult, error)
 }
 
+// Result mirrors SMS SendSmsResult shape: consumer owns InsertData for audits.
 type Result struct {
 	Processed      bool
 	AckSQS         bool
@@ -42,63 +37,63 @@ type Result struct {
 	FailedFinal    int
 	CancelledStale int
 	Skipped        int
+	// InputAudit is one PushInputAuditTable row (nil when ShouldHitVendor off / no send).
+	InputAudit map[string]interface{}
+	// OutputAudits are PushOutputTable rows (one per token that reached a terminal FCM outcome).
+	OutputAudits []map[string]interface{}
 }
 
 type Service struct {
-	ledger   ledgerStore
+	claims   tokenClaimStore
 	executor retryExecutor
 }
 
-func NewService(store ledgerStore, executor retryExecutor) (*Service, error) {
-	if store == nil {
-		return nil, errors.New("PUSH ledger store is required")
+func NewService(claims tokenClaimStore, executor retryExecutor) (*Service, error) {
+	if claims == nil {
+		return nil, errors.New("PUSH token claim store is required")
 	}
 	if executor == nil {
 		return nil, errors.New("PUSH retry executor is required")
 	}
-	return &Service{ledger: store, executor: executor}, nil
+	return &Service{claims: claims, executor: executor}, nil
 }
 
 // Send resolves one template and fans out independently to each unique device
-// token. A token is acknowledged only after its ledger row is terminal.
+// token. Per-token Redis claims (EventId:fingerprint) are the dedupe authority.
+// Audit maps are returned for the consumer to InsertData (SMS-style).
+//
+// ShouldHitVendor lives here (SMS-style inside the channel Send). AssignVendor
+// lives in handlePush — do not duplicate it here.
 func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody) (Result, error) {
 	if strings.TrimSpace(request.Vendor) == "" {
 		request.Vendor = providerName
 	}
+
+	tokens := uniqueTokens(request.DeviceTokens)
+
+	if !channelHelper.ShouldHitVendor(request.Client, request.Channel) {
+		skipMsg := fmt.Sprintf(
+			"shouldHitVendor is off for client=%s channel=%s eventId=%s",
+			request.Client, request.Channel, request.EventId,
+		)
+		skipped := markShouldHitVendorOff(s.claims, request, tokens, skipMsg)
+		return Result{Processed: true, AckSQS: true, Skipped: skipped}, nil
+	}
+
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
 	if err != nil {
 		return Result{}, err
 	}
 
-	tokens := uniqueTokens(request.DeviceTokens)
 	if len(tokens) == 0 {
 		return Result{}, errors.New("PUSH request contains no usable device tokens")
 	}
 
-	if !audit.TrySubmitInput(audit.Input{
-		CommID:            request.CommId,
-		EventID:           request.EventId,
-		Client:            request.Client,
-		ProcessName:       request.ProcessName,
-		Stage:             request.Stage,
-		Vendor:            resolvedVendor,
-		TemplateName:      templateName,
-		Title:             title,
-		Body:              body,
-		NotificationEvent: request.NotificationEvent,
-		DeepLink:          request.DeepLink,
-		UserID:            request.UserId,
-		ApplicationNumber: request.ApplicationNumber,
-		DeviceCount:       len(tokens),
-	}) {
-		utils.Warn(fmt.Sprintf("PUSH input audit queue unavailable client=%s eventId=%s", request.Client, request.EventId))
-	}
-
-	identity := ledgerIdentity(request, templateName)
 	type tokenResult struct {
-		status  ledger.Status
-		skipped bool
-		err     error
+		outcome  string
+		skipped  bool
+		err      error
+		output   map[string]interface{}
 	}
 	results := make(chan tokenResult, len(tokens))
 	var workers sync.WaitGroup
@@ -113,8 +108,8 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 		go func() {
 			defer workers.Done()
 			for deviceToken := range tokenJobs {
-				status, skipped, sendErr := s.sendTokenSafely(ctx, request, identity, title, body, deviceToken)
-				results <- tokenResult{status: status, skipped: skipped, err: sendErr}
+				outcome, skipped, output, sendErr := s.sendTokenSafely(ctx, request, title, body, deviceToken)
+				results <- tokenResult{outcome: outcome, skipped: skipped, output: output, err: sendErr}
 			}
 		}()
 	}
@@ -126,7 +121,11 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	workers.Wait()
 	close(results)
 
-	result := Result{Processed: true, AckSQS: true}
+	result := Result{
+		Processed:  true,
+		AckSQS:     true,
+		InputAudit: buildInputAudit(request, resolvedVendor, templateName, title, body, len(tokens)),
+	}
 	var failures []error
 	for tokenResult := range results {
 		if tokenResult.err != nil {
@@ -139,140 +138,216 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 			result.Skipped++
 			continue
 		}
-		switch tokenResult.status {
-		case ledger.StatusSubmitted:
+		if tokenResult.output != nil {
+			result.OutputAudits = append(result.OutputAudits, tokenResult.output)
+		}
+		switch tokenResult.outcome {
+		case outcomeSubmitted:
 			result.Submitted++
-		case ledger.StatusFailedFinal:
+		case outcomeFailedFinal:
 			result.FailedFinal++
-		case ledger.StatusCancelledStale:
+		case outcomeCancelledStale:
 			result.CancelledStale++
 		default:
 			result.Processed = false
 			result.AckSQS = false
-			failures = append(failures, fmt.Errorf("PUSH token ended in non-terminal status %q", tokenResult.status))
+			failures = append(failures, fmt.Errorf("PUSH token ended in non-terminal status %q", tokenResult.outcome))
 		}
 	}
 
 	return result, errors.Join(failures...)
 }
 
+func buildInputAudit(
+	request sdkModels.CommApiRequestBody,
+	vendor, templateName, title, body string,
+	deviceCount int,
+) map[string]interface{} {
+	return map[string]interface{}{
+		"CommId":            strings.TrimSpace(request.CommId),
+		"EventId":           strings.TrimSpace(request.EventId),
+		"Client":            strings.TrimSpace(request.Client),
+		"ProcessName":       strings.TrimSpace(request.ProcessName),
+		"Stage":             request.Stage,
+		"Vendor":            strings.TrimSpace(vendor),
+		"TemplateName":      strings.TrimSpace(templateName),
+		"Title":             title,
+		"Body":              body,
+		"NotificationEvent": strings.TrimSpace(request.NotificationEvent),
+		"DeepLink":          strings.TrimSpace(request.DeepLink),
+		"UserId":            strings.TrimSpace(request.UserId),
+		"ApplicationNumber": strings.TrimSpace(request.ApplicationNumber),
+		"CampaignDate":      strings.TrimSpace(request.CampaignDate),
+		"DeviceCount":       deviceCount,
+		"CreatedOn":         time.Now().UTC(),
+	}
+}
+
+func buildOutputAudit(
+	request sdkModels.CommApiRequestBody,
+	fingerprint, outcome string,
+	execution fcm.ExecutionResult,
+) map[string]interface{} {
+	return map[string]interface{}{
+		"CommId":            strings.TrimSpace(request.CommId),
+		"EventId":           strings.TrimSpace(request.EventId),
+		"Client":            strings.TrimSpace(request.Client),
+		"TokenFingerprint":  fingerprint,
+		"Outcome":           outcome,
+		"AttemptCount":      execution.AttemptCount,
+		"ErrorCode":         strings.TrimSpace(execution.Code),
+		"ProviderMessageId": strings.TrimSpace(execution.MessageID),
+		"CreatedOn":         time.Now().UTC(),
+	}
+}
+
+func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) int {
+	if len(tokens) == 0 {
+		if err := channelHelper.UpdateRedisErrorMessage(request, skipMsg); err != nil {
+			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off for PUSH: %v", err))
+		}
+		return 1
+	}
+	skipped := 0
+	for _, token := range tokens {
+		fp, err := FingerprintToken(token)
+		if err != nil {
+			utils.Error(fmt.Errorf("PUSH fingerprint failed during ShouldHitVendor-off: %v", err))
+			continue
+		}
+		field := TokenRedisField(request, fp)
+		skip, claimErr := claimTokenField(claims, request, field)
+		if claimErr != nil {
+			utils.Error(fmt.Errorf("PUSH ShouldHitVendor-off claim failed: %v", claimErr))
+			continue
+		}
+		if skip {
+			skipped++
+			continue
+		}
+		if err := claims.SetErrorMessage(field, skipMsg); err != nil {
+			utils.Error(fmt.Errorf("PUSH ShouldHitVendor-off redis update failed: %v", err))
+		}
+		skipped++
+	}
+	if skipped == 0 {
+		return 1
+	}
+	return skipped
+}
+
 func (s *Service) sendTokenSafely(
 	ctx context.Context,
 	request sdkModels.CommApiRequestBody,
-	identity ledger.Identity,
 	title, body, deviceToken string,
-) (status ledger.Status, skipped bool, err error) {
+) (outcome string, skipped bool, output map[string]interface{}, err error) {
 	defer func() {
 		if recover() != nil {
-			status = ""
+			outcome = ""
 			skipped = false
+			output = nil
 			err = errors.New("PUSH token worker panic recovered")
 		}
 	}()
-	return s.sendToken(ctx, request, identity, title, body, deviceToken)
+	return s.sendToken(ctx, request, title, body, deviceToken)
 }
 
 func (s *Service) sendToken(
 	ctx context.Context,
 	request sdkModels.CommApiRequestBody,
-	identity ledger.Identity,
 	title, body, deviceToken string,
-) (ledger.Status, bool, error) {
-	dispatch, _, err := s.ledger.CreateOrGetPending(ctx, identity, deviceToken)
+) (string, bool, map[string]interface{}, error) {
+	fingerprint, err := FingerprintToken(deviceToken)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
-	if dispatch.Status.Terminal() {
-		return dispatch.Status, true, nil
-	}
+	field := TokenRedisField(request, fingerprint)
 
-	dispatch, claimed, err := s.ledger.Claim(ctx, dispatch.ID)
+	skip, err := claimTokenField(s.claims, request, field)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
-	if !claimed {
-		return "", false, errors.New("PUSH ledger row is already claimed")
-	}
-	if dispatch.ReclaimCount > 0 {
-		metrics.Count("PushClaimReclaimed", providerName, request.Client, 1)
-	}
-
-	current, claimAge, err := s.ledger.IsClaimCurrent(ctx, dispatch.ID)
-	if err != nil {
-		return "", false, err
-	}
-	emitClaimAge(request.Client, claimAge)
-	if !current {
-		return "", false, errors.New("PUSH claim expired before initial provider attempt")
+	if skip {
+		return "", true, nil, nil
 	}
 
 	payload, err := fcm.BuildDataOnlyRequest(deviceToken, title, body, request)
 	if err != nil {
-		return s.finalize(ctx, request, dispatch, fcm.ExecutionResult{
+		return s.finalizeToken(request, field, fingerprint, fcm.ExecutionResult{
 			Outcome: fcm.OutcomeFailedFinal,
 			Code:    "FCM_PAYLOAD_INVALID",
 		})
 	}
 
-	guard := func(guardCtx context.Context) (bool, error) {
-		owned, age, guardErr := s.ledger.IsClaimCurrent(guardCtx, dispatch.ID)
-		emitClaimAge(request.Client, age)
-		return owned, guardErr
-	}
-	observer := func(attemptCtx context.Context, attempt int) error {
-		recorded, recordErr := s.ledger.RecordAttempt(attemptCtx, dispatch.ID, attempt)
-		if recordErr != nil {
-			return recordErr
-		}
-		if !recorded {
-			return errors.New("PUSH claim expired before provider attempt")
-		}
+	observer := func(_ context.Context, attempt int) error {
 		metrics.Count("PushProviderAttempts", providerName, request.Client, 1)
 		return nil
 	}
 
-	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, guard, observer)
+	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, nil, observer)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
-	return s.finalize(ctx, request, dispatch, execution)
+	return s.finalizeToken(request, field, fingerprint, execution)
 }
 
-func (s *Service) finalize(
-	ctx context.Context,
+func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBody, field string) (skip bool, err error) {
+	exists, txn, errMsg, err := claims.Get(field)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		if strings.TrimSpace(txn) != "" || strings.TrimSpace(errMsg) != "" {
+			return true, nil
+		}
+
+		if strings.TrimSpace(request.EventId) != "" {
+			reclaimed, reclaimErr := claims.ReclaimBlank(field)
+			if reclaimErr != nil {
+				return false, reclaimErr
+			}
+			
+			if !reclaimed {
+				return true, nil
+			}
+		} else {
+			return true, nil
+		}
+	}
+
+	if err := claims.Claim(field); err != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *Service) finalizeToken(
 	request sdkModels.CommApiRequestBody,
-	dispatch ledger.Dispatch,
+	field, fingerprint string,
 	execution fcm.ExecutionResult,
-) (ledger.Status, bool, error) {
-	status, err := ledgerStatus(execution.Outcome)
+) (string, bool, map[string]interface{}, error) {
+	outcome, err := mapOutcome(execution.Outcome)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 
-	finalized, err := s.ledger.Finalize(ctx, dispatch.ID, status, execution.AttemptCount, execution.Code, execution.MessageID)
-	if err != nil {
-		return "", false, err
-	}
-	if !finalized {
-		return "", false, errors.New("PUSH ledger claim was lost before finalization")
-	}
-
-	metrics.Count("PushProviderOutcome_"+string(status), providerName, request.Client, 1)
-	if !audit.TrySubmitOutput(audit.Output{
-		LedgerID:          dispatch.ID,
-		CommID:            request.CommId,
-		EventID:           request.EventId,
-		Client:            request.Client,
-		TokenFingerprint:  dispatch.TokenFingerprint,
-		Outcome:           string(status),
-		AttemptCount:      execution.AttemptCount,
-		ErrorCode:         execution.Code,
-		ProviderMessageID: execution.MessageID,
-	}) {
-		utils.Warn(fmt.Sprintf("PUSH output audit queue unavailable client=%s eventId=%s ledgerId=%d", request.Client, request.EventId, dispatch.ID))
+	switch outcome {
+	case outcomeSubmitted:
+		if err := s.claims.SetTransactionID(field, execution.MessageID); err != nil {
+			return "", false, nil, err
+		}
+	default:
+		msg := execution.Code
+		if strings.TrimSpace(msg) == "" {
+			msg = string(execution.Outcome)
+		}
+		if err := s.claims.SetErrorMessage(field, msg); err != nil {
+			return "", false, nil, err
+		}
 	}
 
-	return status, false, nil
+	metrics.Count("PushProviderOutcome_"+outcome, providerName, request.Client, 1)
+	return outcome, false, buildOutputAudit(request, fingerprint, outcome, execution), nil
 }
 
 func resolveContent(request sdkModels.CommApiRequestBody) (title, body, templateName, vendor string, err error) {
@@ -280,10 +355,12 @@ func resolveContent(request sdkModels.CommApiRequestBody) (title, body, template
 	if applicationCache == nil {
 		return "", "", "", "", errors.New("PUSH template cache is not initialized")
 	}
+
 	templateDetails, found := applicationCache.GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		return "", "", "", "", errors.New("PUSH template data not found in cache")
 	}
+	
 	template, vendor, err := channelHelper.ResolveTemplateData(request, templateDetails)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("resolve PUSH template: %w", err)
@@ -297,9 +374,11 @@ func resolveContent(request sdkModels.CommApiRequestBody) (title, body, template
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(body) == "" {
 		return "", "", "", "", errors.New("PUSH template title and body are required")
 	}
+
 	if strings.TrimSpace(vendor) == "" {
 		vendor = providerName
 	}
+
 	return title, body, templateName, vendor, nil
 }
 
@@ -311,19 +390,36 @@ func applyKnownVariables(value string, request sdkModels.CommApiRequestBody) str
 	).Replace(value)
 }
 
-func ledgerIdentity(request sdkModels.CommApiRequestBody, templateName string) ledger.Identity {
+// PushIdentity is attempt metadata for eligibility/audit fields (not a SQL ledger).
+type PushIdentity struct {
+	Client              string
+	EventID             string
+	Campaign            string
+	CampaignDate        string
+	Variant             string
+	EligibilityIdentity string
+}
+
+func PushIdentityFromRequest(request sdkModels.CommApiRequestBody, templateName string) PushIdentity {
 	variant := strings.TrimSpace(request.TemplateReference)
 	if variant == "" {
 		variant = strings.TrimSpace(templateName)
 	}
-	return ledger.Identity{
+	return PushIdentity{
 		Client:              request.Client,
 		EventID:             request.EventId,
 		Campaign:            request.ProcessName,
 		CampaignDate:        request.CampaignDate,
 		Variant:             variant,
-		EligibilityIdentity: request.EventId,
+		EligibilityIdentity: EligibilityIdentity(request),
 	}
+}
+
+func EligibilityIdentity(request sdkModels.CommApiRequestBody) string {
+	if userID := strings.TrimSpace(request.UserId); userID != "" {
+		return userID
+	}
+	return request.EventId
 }
 
 func uniqueTokens(tokens []string) []string {
@@ -343,27 +439,15 @@ func uniqueTokens(tokens []string) []string {
 	return unique
 }
 
-func ledgerStatus(outcome fcm.Outcome) (ledger.Status, error) {
+func mapOutcome(outcome fcm.Outcome) (string, error) {
 	switch outcome {
 	case fcm.OutcomeSubmitted:
-		return ledger.StatusSubmitted, nil
+		return outcomeSubmitted, nil
 	case fcm.OutcomeFailedFinal:
-		return ledger.StatusFailedFinal, nil
+		return outcomeFailedFinal, nil
 	case fcm.OutcomeCancelledStale:
-		return ledger.StatusCancelledStale, nil
+		return outcomeCancelledStale, nil
 	default:
 		return "", fmt.Errorf("cannot finalize retryable PUSH outcome %q", outcome)
-	}
-}
-
-func emitClaimAge(client string, age time.Duration) {
-	if age < 0 {
-		return
-	}
-	seconds := int(age / time.Second)
-	metrics.Value("PushClaimAgeSeconds", "Seconds", providerName, client, float64(seconds))
-	if age >= ledger.ClaimAgeWarning {
-		metrics.Count("PushClaimAgeWarning", providerName, client, 1)
-		utils.Warn(fmt.Sprintf("PUSH claim age warning client=%s ageSeconds=%d", client, seconds))
 	}
 }

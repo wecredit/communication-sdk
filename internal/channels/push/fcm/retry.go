@@ -52,7 +52,7 @@ func NewRetryExecutor(sender attemptSender) (*RetryExecutor, error) {
 
 // Execute performs one initial FCM attempt and at most one retry. The executor
 // owns no durable state; its result is intended to be persisted atomically by
-// the dispatch-ledger layer added separately.
+// the Redis per-token claim layer added separately.
 func (e *RetryExecutor) Execute(ctx context.Context, client string, payload SendRequest, guard RetryGuard) (ExecutionResult, error) {
 	return e.ExecuteWithObserver(ctx, client, payload, guard, nil)
 }

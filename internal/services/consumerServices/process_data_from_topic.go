@@ -429,11 +429,31 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 }
 
 func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
 	result, err := push.Send(ctx, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
 			data.Client, data.CommId, data.EventId, err))
 	}
+
+	// Same pattern as SMS: channel returns audit maps; consumer InsertData.
+	if result.InputAudit != nil {
+		if insertErr := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); insertErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push input audit: %v",
+				data.Client, data.CommId, data.EventId, insertErr))
+		}
+	}
+	
+	for _, output := range result.OutputAudits {
+		if insertErr := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); insertErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push output audit: %v",
+				data.Client, data.CommId, data.EventId, insertErr))
+		}
+	}
+
 	if !result.AckSQS {
 		return result.Processed, false
 	}
@@ -910,6 +930,10 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
+	} else if data.Channel == variables.PUSH {
+		// Channel-scoped empty-vendor default (Email→SINCH pattern). No IsVendorActive
+		// on this hardcode; ShouldHitVendor in push.Send is the kill switch.
+		data.Vendor = variables.FCM
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))

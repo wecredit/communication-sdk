@@ -8,12 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/wecredit/communication-sdk/internal/channels/push"
-	"github.com/wecredit/communication-sdk/internal/channels/push/audit"
 	"github.com/wecredit/communication-sdk/internal/channels/push/fcm"
-	"github.com/wecredit/communication-sdk/internal/channels/push/ledger"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
@@ -127,32 +124,9 @@ func TestRetryExecutorMakesExactlyTwoTotalAttempts(t *testing.T) {
 	}
 }
 
-func TestAuditDispatcherIsNonBlockingWhenFull(t *testing.T) {
-	dispatcher, err := audit.NewDispatcher(1, 1, func(audit.Job) error {
-		select {}
-	}, nil)
-	if err != nil {
-		t.Fatalf("new dispatcher: %v", err)
-	}
-	if !dispatcher.TrySubmit(audit.Job{Input: &audit.Input{EventID: "one"}}) {
-		t.Fatal("first audit should be accepted")
-	}
-
-	deadline := time.Now().Add(time.Second)
-	for dispatcher.TrySubmit(audit.Job{Input: &audit.Input{EventID: "fill"}}) && time.Now().Before(deadline) {
-	}
-	start := time.Now()
-	if dispatcher.TrySubmit(audit.Job{Output: &audit.Output{EventID: "drop"}}) {
-		t.Fatal("audit should be dropped when dispatcher is saturated")
-	}
-	if time.Since(start) > 100*time.Millisecond {
-		t.Fatal("saturated audit submission blocked")
-	}
-}
-
 func TestTokenFingerprintDoesNotContainToken(t *testing.T) {
 	const token = "complete-secret-device-token"
-	fingerprint, err := ledger.FingerprintToken(token)
+	fingerprint, err := push.FingerprintToken(token)
 	if err != nil {
 		t.Fatalf("fingerprint token: %v", err)
 	}
@@ -161,41 +135,88 @@ func TestTokenFingerprintDoesNotContainToken(t *testing.T) {
 	}
 }
 
-type fakeLedger struct {
-	mu       sync.Mutex
-	nextID   uint64
-	attempts map[uint64]int
-}
-
-func (l *fakeLedger) CreateOrGetPending(_ context.Context, _ ledger.Identity, token string) (ledger.Dispatch, bool, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.nextID++
-	fingerprint, _ := ledger.FingerprintToken(token)
-	return ledger.Dispatch{ID: l.nextID, Status: ledger.StatusPending, TokenFingerprint: fingerprint}, true, nil
-}
-
-func (l *fakeLedger) Claim(_ context.Context, id uint64) (ledger.Dispatch, bool, error) {
-	now := time.Now()
-	return ledger.Dispatch{ID: id, Status: ledger.StatusClaimed, ClaimedAt: &now, TokenFingerprint: strings.Repeat("a", 64)}, true, nil
-}
-
-func (l *fakeLedger) IsClaimCurrent(context.Context, uint64) (bool, time.Duration, error) {
-	return true, time.Second, nil
-}
-
-func (l *fakeLedger) RecordAttempt(_ context.Context, id uint64, attempt int) (bool, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.attempts == nil {
-		l.attempts = make(map[uint64]int)
+func TestTokenRedisFieldUsesEventIdBase(t *testing.T) {
+	fp, err := push.FingerprintToken("token-a")
+	if err != nil {
+		t.Fatal(err)
 	}
-	l.attempts[id] = attempt
+	field := push.TokenRedisField(sdkModels.CommApiRequestBody{
+		EventId: "event-hash-1",
+		CommId:  "WC-ZAPCASH-should-not-appear",
+		Mobile:  "9876543210",
+		Channel: "PUSH",
+		Stage:   1,
+	}, fp)
+	if !strings.HasPrefix(field, "event-hash-1:") {
+		t.Fatalf("field = %q, want EventId base", field)
+	}
+	if strings.Contains(field, "WC-ZAPCASH") {
+		t.Fatalf("CommId leaked into Redis field: %q", field)
+	}
+	if !strings.HasSuffix(field, ":"+fp) {
+		t.Fatalf("field missing fingerprint suffix: %q", field)
+	}
+}
+
+// fakeClaims is an in-memory tokenClaimStore for unit tests.
+type fakeClaims struct {
+	mu     sync.Mutex
+	fields map[string]string // "" blank, "txn:..." or "err:..."
+}
+
+func newFakeClaims() *fakeClaims {
+	return &fakeClaims{fields: make(map[string]string)}
+}
+
+func (c *fakeClaims) Get(field string) (bool, string, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	val, ok := c.fields[field]
+	if !ok {
+		return false, "", "", nil
+	}
+	if strings.HasPrefix(val, "txn:") {
+		return true, strings.TrimPrefix(val, "txn:"), "", nil
+	}
+	if strings.HasPrefix(val, "err:") {
+		return true, "", strings.TrimPrefix(val, "err:"), nil
+	}
+	return true, "", "", nil // blank claim
+}
+
+func (c *fakeClaims) Claim(field string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.fields[field]; exists {
+		return errors.New("key already exists in redis")
+	}
+	c.fields[field] = ""
+	return nil
+}
+
+func (c *fakeClaims) ReclaimBlank(field string) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	val, ok := c.fields[field]
+	if !ok || val != "" {
+		return false, nil
+	}
+	delete(c.fields, field)
 	return true, nil
 }
 
-func (l *fakeLedger) Finalize(context.Context, uint64, ledger.Status, int, string, string) (bool, error) {
-	return true, nil
+func (c *fakeClaims) SetTransactionID(field, transactionID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fields[field] = "txn:" + transactionID
+	return nil
+}
+
+func (c *fakeClaims) SetErrorMessage(field, errorMessage string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fields[field] = "err:" + errorMessage
+	return nil
 }
 
 type fakeExecutor struct {
@@ -221,6 +242,7 @@ func (e *fakeExecutor) ExecuteWithObserver(
 
 func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
 	stage := 1.0
 	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
 		Id: 1, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
@@ -234,9 +256,9 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 		t.Fatalf("install template snapshot: %v", err)
 	}
 
-	store := &fakeLedger{}
+	claims := newFakeClaims()
 	executor := &fakeExecutor{}
-	service, err := push.NewService(store, executor)
+	service, err := push.NewService(claims, executor)
 	if err != nil {
 		t.Fatalf("new PUSH service: %v", err)
 	}
@@ -251,6 +273,12 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	if !result.AckSQS || result.Submitted != 2 {
 		t.Fatalf("result = %+v, want two submitted unique tokens", result)
 	}
+	if result.InputAudit == nil || result.InputAudit["EventId"] != "event-1" {
+		t.Fatalf("InputAudit = %#v, want EventId event-1 for consumer InsertData", result.InputAudit)
+	}
+	if len(result.OutputAudits) != 2 {
+		t.Fatalf("OutputAudits = %d, want 2 for consumer InsertData", len(result.OutputAudits))
+	}
 	if len(executor.payloads) != 2 {
 		t.Fatalf("provider payload count = %d, want 2", len(executor.payloads))
 	}
@@ -259,6 +287,74 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 			t.Fatalf("template variables were not resolved: %+v", payload.Message.Data)
 		}
 	}
+
+	// Replay same EventId + tokens → Redis skip, no more FCM.
+	executor2 := &fakeExecutor{}
+	service2, err := push.NewService(claims, executor2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := service2.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-2", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, CustomerName: "Ronit",
+		DeviceTokens: []string{"token-a", "token-b"},
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if replay.Skipped != 2 || len(executor2.payloads) != 0 {
+		t.Fatalf("replay = %+v payloads=%d, want skip both without FCM", replay, len(executor2.payloads))
+	}
+}
+
+func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, false)
+
+	claims := newFakeClaims()
+	executor := &fakeExecutor{}
+	service, err := push.NewService(claims, executor)
+	if err != nil {
+		t.Fatalf("new PUSH service: %v", err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1,
+		DeviceTokens: []string{"token-a", "token-b"},
+	})
+	if err != nil {
+		t.Fatalf("send PUSH: %v", err)
+	}
+	if !result.AckSQS || !result.Processed || result.Skipped != 2 {
+		t.Fatalf("result = %+v, want terminal skip of 2 tokens", result)
+	}
+	if len(executor.payloads) != 0 {
+		t.Fatalf("FCM was called despite ShouldHitVendor off: %d payloads", len(executor.payloads))
+	}
+}
+
+func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
+	t.Helper()
+	var status int64
+	if on {
+		status = 1
+	}
+
+	c := cache.GetCache()
+	if c == nil {
+		t.Fatal("cache not initialized")
+	}
+	ok := c.Set(cache.ClientsData, map[string]map[string]interface{}{
+		"Name:zapcash|Channel:PUSH": {
+			"Name":            "zapcash",
+			"Channel":         "PUSH",
+			"ShouldHitVendor": status,
+		},
+	})
+	if !ok {
+		t.Fatal("failed to seed ClientsData cache")
+	}
+	c.Wait()
 }
 
 func TestAttemptObserverFailurePreventsProviderCall(t *testing.T) {
@@ -268,7 +364,7 @@ func TestAttemptObserverFailurePreventsProviderCall(t *testing.T) {
 		t.Fatalf("new retry executor: %v", err)
 	}
 	_, err = executor.ExecuteWithObserver(context.Background(), "zapcash", fcm.SendRequest{}, nil,
-		func(context.Context, int) error { return errors.New("ledger unavailable") })
+		func(context.Context, int) error { return errors.New("claim store unavailable") })
 	if err == nil {
 		t.Fatal("expected observer failure")
 	}

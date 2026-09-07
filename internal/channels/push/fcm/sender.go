@@ -56,7 +56,7 @@ func NewSender(configs map[string]ClientConfig, tokenSource accessTokenSource, h
 }
 
 // Send performs exactly one FCM provider attempt. Retry policy is owned by the
-// caller so attempt counts and ledger transitions remain explicit.
+// caller so attempt counts and Redis claim updates remain explicit.
 func (s *Sender) Send(ctx context.Context, client string, payload SendRequest) (SendResponse, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, fcmSendTimeout)
 	defer cancel()

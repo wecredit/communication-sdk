@@ -6,10 +6,8 @@ import (
 	"sync"
 
 	"github.com/wecredit/communication-sdk/internal/channels/push/fcm"
-	"github.com/wecredit/communication-sdk/internal/channels/push/ledger"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
-	"gorm.io/gorm"
 )
 
 var (
@@ -18,8 +16,8 @@ var (
 )
 
 // Init constructs the per-client FCM sender, bounded retry executor, and
-// durable ledger service. It does not contact FCM or mutate database schema.
-func Init(cfg models.Config, db *gorm.DB) error {
+// Redis-backed per-token claim store. It does not contact FCM or mutate schema.
+func Init(cfg models.Config) error {
 	clientConfigs, err := fcm.ParseClientConfigs(cfg.FCMClientConfigJSON)
 	if err != nil {
 		return err
@@ -34,11 +32,11 @@ func Init(cfg models.Config, db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	store, err := ledger.NewStore(db, cfg.PushDispatchLedgerTable)
+	claims, err := newRedisTokenClaims()
 	if err != nil {
 		return err
 	}
-	service, err := NewService(store, executor)
+	service, err := NewService(claims, executor)
 	if err != nil {
 		return err
 	}
