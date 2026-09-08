@@ -204,10 +204,14 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
-	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
-		rollbackSendClaims()
-		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+	// SMS/RCS/Email write a generic input-audit row here (Mobile, IsPriority, …).
+	// PUSH lean audit is written later in handlePush from push.Send (EventId/TemplateName/…).
+	if strings.TrimSpace(data.InputTableName) != "" && !strings.EqualFold(data.Channel, variables.PUSH) {
+		if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+			rollbackSendClaims()
+			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+		}
 	}
 
 	// Enqueue for async provider workers: SQS-direct (WeCredit SMS) or SNS (legacy).

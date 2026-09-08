@@ -1,2 +1,8 @@
 .env
 .env_mssql
+
+# Firebase / FCM service-account private keys — never commit
+secrets/
+*.pem
+*-firebase-adminsdk-*.json
+*-fcm-service-account.json

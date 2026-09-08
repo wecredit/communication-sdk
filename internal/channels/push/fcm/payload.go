@@ -17,21 +17,32 @@ const (
 	dataKeyApplicationNumber = "applicationNumber"
 )
 
-// SendRequest is the FCM HTTP v1 send request. Message deliberately exposes
-// only token and data so comm-sdk cannot accidentally emit a notification
-// block with different background or killed-state behavior.
+// SendRequest is the FCM HTTP v1 send request.
+// Includes notification (system-tray display, Firebase Console parity) plus
+// data (deep link / event fields for the app).
 type SendRequest struct {
 	Message Message `json:"message"`
 }
 
-type Message struct {
-	Token string            `json:"token"`
-	Data  map[string]string `json:"data"`
+type Notification struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
 }
 
-// BuildDataOnlyRequest creates the platform-neutral data payload rendered by
-// the ZapCash app. Reserved fields always override navigationData entries.
-func BuildDataOnlyRequest(token, title, body string, request sdkModels.CommApiRequestBody) (SendRequest, error) {
+type AndroidConfig struct {
+	Priority string `json:"priority,omitempty"`
+}
+
+type Message struct {
+	Token        string            `json:"token"`
+	Notification *Notification     `json:"notification,omitempty"`
+	Android      *AndroidConfig    `json:"android,omitempty"`
+	Data         map[string]string `json:"data"`
+}
+
+// BuildSendRequest builds notification + data (Console-style display + app extras).
+// Reserved data fields always override navigationData entries.
+func BuildSendRequest(token, title, body string, request sdkModels.CommApiRequestBody) (SendRequest, error) {
 	token = strings.TrimSpace(token)
 	title = strings.TrimSpace(title)
 	body = strings.TrimSpace(body)
@@ -67,7 +78,21 @@ func BuildDataOnlyRequest(token, title, body string, request sdkModels.CommApiRe
 	setDataValue(data, dataKeyUserID, request.UserId)
 	setDataValue(data, dataKeyApplicationNumber, request.ApplicationNumber)
 
-	return SendRequest{Message: Message{Token: token, Data: data}}, nil
+	return SendRequest{Message: Message{
+		Token: token,
+		Notification: &Notification{
+			Title: title,
+			Body:  body,
+		},
+		Android: &AndroidConfig{Priority: "HIGH"},
+		Data:    data,
+	}}, nil
+}
+
+// BuildDataOnlyRequest is kept as an alias for older call sites/tests during the
+// notification-parity trial. Prefer BuildSendRequest.
+func BuildDataOnlyRequest(token, title, body string, request sdkModels.CommApiRequestBody) (SendRequest, error) {
+	return BuildSendRequest(token, title, body, request)
 }
 
 func setDataValue(data map[string]string, key, value string) {

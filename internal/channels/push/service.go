@@ -124,7 +124,7 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	result := Result{
 		Processed:  true,
 		AckSQS:     true,
-		InputAudit: buildInputAudit(request, resolvedVendor, templateName, title, body, len(tokens)),
+		InputAudit: buildInputAudit(request, resolvedVendor, templateName, len(tokens)),
 	}
 	var failures []error
 	for tokenResult := range results {
@@ -160,26 +160,19 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 
 func buildInputAudit(
 	request sdkModels.CommApiRequestBody,
-	vendor, templateName, title, body string,
+	vendor, templateName string,
 	deviceCount int,
 ) map[string]interface{} {
 	return map[string]interface{}{
-		"CommId":            strings.TrimSpace(request.CommId),
-		"EventId":           strings.TrimSpace(request.EventId),
-		"Client":            strings.TrimSpace(request.Client),
-		"ProcessName":       strings.TrimSpace(request.ProcessName),
-		"Stage":             request.Stage,
-		"Vendor":            strings.TrimSpace(vendor),
-		"TemplateName":      strings.TrimSpace(templateName),
-		"Title":             title,
-		"Body":              body,
-		"NotificationEvent": strings.TrimSpace(request.NotificationEvent),
-		"DeepLink":          strings.TrimSpace(request.DeepLink),
-		"UserId":            strings.TrimSpace(request.UserId),
-		"ApplicationNumber": strings.TrimSpace(request.ApplicationNumber),
-		"CampaignDate":      strings.TrimSpace(request.CampaignDate),
-		"DeviceCount":       deviceCount,
-		"CreatedOn":         time.Now().UTC(),
+		"CommId":       strings.TrimSpace(request.CommId),
+		"EventId":      strings.TrimSpace(request.EventId),
+		"Client":       strings.TrimSpace(request.Client),
+		"ProcessName":  strings.TrimSpace(request.ProcessName),
+		"Stage":        request.Stage,
+		"Vendor":       strings.TrimSpace(vendor),
+		"TemplateName": strings.TrimSpace(templateName),
+		"DeviceCount":  deviceCount,
+		"CreatedOn":    time.Now().UTC(),
 	}
 }
 
@@ -271,7 +264,7 @@ func (s *Service) sendToken(
 		return "", true, nil, nil
 	}
 
-	payload, err := fcm.BuildDataOnlyRequest(deviceToken, title, body, request)
+	payload, err := fcm.BuildSendRequest(deviceToken, title, body, request)
 	if err != nil {
 		return s.finalizeToken(request, field, fingerprint, fcm.ExecutionResult{
 			Outcome: fcm.OutcomeFailedFinal,

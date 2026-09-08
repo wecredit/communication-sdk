@@ -67,7 +67,7 @@ func (s *Sender) Send(ctx context.Context, client string, payload SendRequest) (
 	}
 
 	if strings.TrimSpace(payload.Message.Token) == "" || len(payload.Message.Data) == 0 {
-		return SendResponse{}, PermanentAttemptError("FCM_PAYLOAD_INCOMPLETE", errors.New("FCM data-only payload is incomplete"))
+		return SendResponse{}, PermanentAttemptError("FCM_PAYLOAD_INCOMPLETE", errors.New("FCM payload is incomplete"))
 	}
 
 	accessToken, err := s.tokenSource.Token(attemptCtx, client, cfg)

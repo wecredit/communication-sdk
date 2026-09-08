@@ -37,8 +37,8 @@ func TestPushRequestValidation(t *testing.T) {
 	}
 }
 
-func TestDataOnlyFCMPayload(t *testing.T) {
-	request, err := fcm.BuildDataOnlyRequest("secret-device-token", "Offer ready", "Open the app", sdkModels.CommApiRequestBody{
+func TestFCMPayloadIncludesNotificationAndData(t *testing.T) {
+	request, err := fcm.BuildSendRequest("secret-device-token", "Offer ready", "Open the app", sdkModels.CommApiRequestBody{
 		EventId:           "event-1",
 		UserId:            "user-1",
 		NotificationEvent: "offer_view",
@@ -54,13 +54,19 @@ func TestDataOnlyFCMPayload(t *testing.T) {
 	if request.Message.Data["title"] != "Offer ready" {
 		t.Fatalf("reserved title was overridden: %q", request.Message.Data["title"])
 	}
+	if request.Message.Notification == nil || request.Message.Notification.Title != "Offer ready" || request.Message.Notification.Body != "Open the app" {
+		t.Fatalf("notification = %+v, want title/body matching template", request.Message.Notification)
+	}
+	if request.Message.Android == nil || request.Message.Android.Priority != "HIGH" {
+		t.Fatalf("android = %+v, want priority HIGH", request.Message.Android)
+	}
 
 	raw, err := json.Marshal(request)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	if strings.Contains(string(raw), `"notification"`) {
-		t.Fatalf("payload contains forbidden notification block: %s", raw)
+	if !strings.Contains(string(raw), `"notification"`) {
+		t.Fatalf("payload missing notification block: %s", raw)
 	}
 }
 
