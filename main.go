@@ -20,7 +20,8 @@ func main() {
 	// ZapCash PUSH UAT placeholders — replace before running.
 	username := os.Getenv("ZAPCASH_USERNAME")
 	password := os.Getenv("ZAPCASH_PASSWORD")
-channel := "PUSH"	baseURL := "http://localhost:8080"
+	channel := "PUSH"
+	baseURL := "http://localhost:8080"
 	deviceToken := "f3ZSUamCQPS64eCXlu2-VL:APA91bErwa3sXWts0QW94yFL-VYioHlT5ZEblyoGZ0X24AfLyPl8KfmN7SkLUtISnFu6CTEbbE4kggv2YfNzkUCdr7F9DTVL2Qb_UJk3wSWhPLhh1qIsZSM"
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseURL)
