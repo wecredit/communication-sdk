@@ -32,6 +32,10 @@ type Config struct {
 	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
 	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
 	CommMarketingInputTable   string `envconfig:"COMM_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommMarketingInput"`
+	// WeCredit WhatsApp marketing tables (Marketing SQL Server). Lender WhatsApp
+	// continues to use MySQL WhatsappOutputTable below.
+	CommWhatsappMarketingInputTable  string `envconfig:"COMM_WHATSAPP_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingInput"`
+	CommWhatsappMarketingOutputTable string `envconfig:"COMM_WHATSAPP_MARKETING_OUTPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingOutput"`
 
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
@@ -44,6 +48,9 @@ type Config struct {
 	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
 	// WeCredit SMS: prefer SQS-direct (plan A). When set, SDK Send skips SNS for wecredit+SMS.
 	AwsWeCreditSmsQueueUrl string `envconfig:"AWS_WECREDIT_SMS_QUEUE_URL"`
+	
+	// WeCredit WhatsApp staging queue. Leave unset in production until rate limiting is approved.
+	AwsWeCreditWhatsappQueueUrl string `envconfig:"AWS_WECREDIT_WHATSAPP_QUEUE_URL"`
 	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
 	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
@@ -144,8 +151,10 @@ type Config struct {
 	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
 	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
 
-	// Per-provider SMS outbound rate limits (token bucket; no external deps).
-	// Overrides format: vendor:client:rps or vendor:rps (comma-separated).
+	// Per-provider SMS and WhatsApp outbound rate limits (in-process token bucket
+	// per ECS task — N tasks ≈ N × configured RPS). Overrides format:
+	// vendor:client:rps or vendor:rps (comma-separated). Shared registry for SMS
+	// and WhatsApp WaitFor call sites.
 	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 

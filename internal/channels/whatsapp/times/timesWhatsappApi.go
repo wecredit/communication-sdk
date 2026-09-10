@@ -1,13 +1,15 @@
 package timesWhatsapp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
-	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/config"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times/timesPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -32,6 +34,11 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while getting Times Whatsapp payload: %v", err)
+		return responseBody
+	}
+
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.TIMES, timesApiModel.Client)); err != nil {
+		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		return responseBody
 	}
 

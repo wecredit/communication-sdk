@@ -1,6 +1,7 @@
 package pinnacleWhatsapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -42,6 +44,11 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 	apiPayload, err := getPayload(pinnacleApiModel)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
+	}
+
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, pinnacleApiModel.Client)); err != nil {
+		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody
 	}
 
 	fmt.Println("Pinnacle Whatsapp payload:", apiPayload)
