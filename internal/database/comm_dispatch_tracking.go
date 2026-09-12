@@ -49,6 +49,9 @@ type CommDispatchTrackingRow struct {
 	TemplateReference string
 }
 
+// InsertCommDispatchTracking writes one tracking row with a plain INSERT.
+// Temporary speed path (sms-query-fix): no UPDLOCK on CommMarketingInput and
+// no WHERE NOT EXISTS. SQS redelivery can create duplicate tracking rows.
 func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row CommDispatchTrackingRow) error {
 	if db == nil {
 		return fmt.Errorf("marketing database is not initialized")
@@ -57,11 +60,7 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 	if tableName == "" {
 		return fmt.Errorf("tracking table name is required")
 	}
-
-	sourceTable = strings.TrimSpace(sourceTable)
-	if sourceTable == "" {
-		return fmt.Errorf("source table name is required")
-	}
+	_ = sourceTable // kept in signature for callers; locking path removed
 
 	source := clampTracking(row.Source, trackingSourceMax)
 	channel := clampTracking(row.Channel, trackingChannelMax)
@@ -72,63 +71,13 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 		return fmt.Errorf("invalid tracking outcome %q", row.Outcome)
 	}
 
-	// The locked CommMarketingInput source row serializes terminal writes for a
-	// SourceRowId. NOT EXISTS makes redelivery idempotent without a separate
-	// tracking-table existence check outside this transaction.
 	query := fmt.Sprintf(`INSERT INTO %s (
 		[Source], SourceRowId, Channel, Client, Vendor, Process, EventId,
 		CommId, TransactionId, Outcome, ErrorMessage, TemplateReference,
 		CreatedOn, UpdatedOn
-	)
-	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), SYSDATETIME()
-	WHERE NOT EXISTS (
-		SELECT 1 FROM %s t
-		WHERE t.[Source] = ? AND t.SourceRowId = ? AND t.Channel = ?
-	)`, tableName, tableName)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), SYSDATETIME())`, tableName)
 
-	tx := db.Begin()
-	if tx.Error != nil {
-		return fmt.Errorf("begin dispatch tracking transaction: %w", tx.Error)
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			panic(r)
-		}
-	}()
-
-	// Serialize SDK terminal persistence with the 21:00 reconciliation job.
-	// The first committed terminal source transition wins.
-	var sourceStatus string
-	lockSource := fmt.Sprintf(`SELECT Status FROM %s WITH (UPDLOCK, HOLDLOCK, ROWLOCK) WHERE Id = ?`, sourceTable)
-	if err := tx.Raw(lockSource, row.SourceRowId).Scan(&sourceStatus).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("lock dispatch source row: %w", err)
-	}
-
-	if strings.TrimSpace(sourceStatus) == "" {
-		tx.Rollback()
-		return fmt.Errorf("dispatch source row %d not found", row.SourceRowId)
-	}
-
-	if strings.EqualFold(sourceStatus, "SENT") || strings.EqualFold(sourceStatus, "FAILED") {
-		var existing int64
-		check := fmt.Sprintf(`SELECT COUNT(1) FROM %s WITH (UPDLOCK, HOLDLOCK)
-			WHERE [Source] = ? AND SourceRowId = ? AND Channel = ?`, tableName)
-		if err := tx.Raw(check, source, row.SourceRowId, channel).Scan(&existing).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("check terminal dispatch tracking: %w", err)
-		}
-
-		tx.Rollback()
-		if existing > 0 {
-			return ErrDispatchTrackingAlreadyExists
-		}
-
-		return ErrDispatchSourceAlreadyTerminal
-	}
-
-	result := tx.Exec(query,
+	result := db.Exec(query,
 		source,
 		row.SourceRowId,
 		channel,
@@ -141,26 +90,14 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 		row.Outcome,
 		nullIfBlank(sanitizeTrackingError(row.ErrorMessage)),
 		nullIfBlank(clampTracking(row.TemplateReference, trackingTemplateMax)),
-		source,
-		row.SourceRowId,
-		channel,
 	)
 	if result.Error != nil {
-		tx.Rollback()
 		if isSQLServerUniqueViolation(result.Error) {
 			return ErrDispatchTrackingAlreadyExists
 		}
 		return fmt.Errorf("insert dispatch tracking: %w", result.Error)
 	}
 
-	if result.RowsAffected == 0 {
-		tx.Rollback()
-		return ErrDispatchTrackingAlreadyExists
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("commit dispatch tracking: %w", err)
-	}
 	utils.Info(fmt.Sprintf("inserted dispatch tracking sourceRowId=%d outcome=%s", row.SourceRowId, row.Outcome))
 	return nil
 }
