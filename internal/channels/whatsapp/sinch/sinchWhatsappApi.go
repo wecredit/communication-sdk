@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
@@ -16,14 +17,25 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// sinchAPIResponse is the Sinch WA send contract (success is the string "true"/"false").
+type sinchAPIResponse struct {
+	Success     string `json:"success"`
+	ResponseID  string `json:"responseId"`
+	Description []struct {
+		ErrorCode        string `json:"errorCode"`
+		ErrorDescription string `json:"errorDescription"`
+	} `json:"description"`
+}
+
 func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 
-	if sinchApiModel.Client == variables.CreditSea {
-		sinchApiModel.AppId = "creditseapd"
-	} else {
-		sinchApiModel.AppId = "wecreditpd"
+	// AppId must come from TemplateDetails (PopulateWhatsappFields). Stale Client
+	// hardcodes (wecreditpd / creditseapd) removed — live WeCredit Sinch uses wecreditpd4.
+	if strings.TrimSpace(sinchApiModel.AppId) == "" {
+		responseBody.ResponseMessage = "sinch AppId missing from template details"
+		return responseBody
 	}
 
 	accessToken, err := cache.GetSinchWhatsappAccessToken(sinchApiModel.Client)
@@ -33,11 +45,6 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 		return responseBody
 	}
 	sinchApiModel.AccessToken = accessToken
-
-	// Legacy per-send token fetch kept for rollback (commented, not deleted):
-	// headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
-	// generateTokenURL := config.Configs.SinchWhatsappTokenApiUrl
-	// ... ApiHit token then set AccessToken ...
 
 	responseBody = sendSinchWhatsappMessage(sinchApiModel)
 	if isSinchWhatsappUnauthorized(responseBody) {
@@ -76,48 +83,47 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) ex
 	}
 
 	jsonBytes, _ := json.Marshal(apiPayload)
+	responseBody.RawPayload = string(jsonBytes)
 	utils.Debug(fmt.Sprintf("Sinch Whatsapp payload for mobile: %s and templateName: %s is: %s", sinchApiModel.Mobile, sinchApiModel.TemplateName, string(jsonBytes)))
 
-	apiResponse, err := utils.ApiHit("POST", sendMessageURL, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
+	var apiResponse sinchAPIResponse
+	statusCode, rawBody, err := utils.ApiHitJSON("POST", sendMessageURL, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
+	if rawBody != "" {
+		responseBody.RawResponse = rawBody
+	}
+	
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
 		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, sinchApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
 		}
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
-		if status, ok := apiResponse["ApistatusCode"].(int); ok && status == 401 {
+		if statusCode == http.StatusUnauthorized {
 			responseBody.ResponseMessage = "unauthorized: " + responseBody.ResponseMessage
 		}
 		return responseBody
 	}
 
-	if status, ok := apiResponse["ApistatusCode"].(int); ok && status == 401 {
+	if statusCode == http.StatusUnauthorized {
 		responseBody.ResponseMessage = "unauthorized"
 		return responseBody
 	}
 
-	success, ok := apiResponse["success"].(string)
-	if !ok {
-		utils.Error(fmt.Errorf("success field is missing or not a string in API response"))
-		responseBody.IsSent = false
+	if strings.TrimSpace(apiResponse.Success) == "" {
+		utils.Error(fmt.Errorf("success field is missing in Sinch WA API response"))
 		responseBody.ResponseMessage = "failed to send message due to missing success field"
 		return responseBody
 	}
 
-	if success == "true" {
+	if apiResponse.Success == "true" {
 		responseBody.IsSent = true
 		responseBody.ResponseMessage = "Message submitted successfully"
-		responseBody.TransactionId = apiResponse["responseId"].(string)
+		responseBody.TransactionId = strings.TrimSpace(apiResponse.ResponseID)
 	} else {
 		responseBody.IsSent = false
-		description, ok := apiResponse["description"].([]interface{})
-		if ok && len(description) > 0 {
-			firstDesc, ok := description[0].(map[string]interface{})
-			if ok {
-				errorCode, _ := firstDesc["errorCode"].(string)
-				errorDesc, _ := firstDesc["errorDescription"].(string)
-				responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s", errorCode, errorDesc)
-			}
+		if len(apiResponse.Description) > 0 {
+			responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s",
+				apiResponse.Description[0].ErrorCode, apiResponse.Description[0].ErrorDescription)
 		} else {
 			responseBody.ResponseMessage = "failed to send message"
 		}

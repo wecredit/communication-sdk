@@ -7,30 +7,36 @@ import (
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
+	whatsappPayload "github.com/wecredit/communication-sdk/internal/channels/whatsapp/whatsappPayload"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
 	var buttonURL string
+	mobileSub := whatsappPayload.ButtonMobileSubstitute(pinnacleApiModel)
 
 	// Customize the mobile number for poonawalla if required
 	if strings.Contains(pinnacleApiModel.Process, "poonawalla") {
-		buttonURL = strings.Replace(pinnacleApiModel.ButtonLink, "<mobile>", pinnacleApiModel.Mobile[len(pinnacleApiModel.Mobile)-5:]+pinnacleApiModel.Mobile[:5], 1)
+		buttonURL = strings.Replace(pinnacleApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1)
 	} else {
-		buttonURL = strings.Replace(pinnacleApiModel.ButtonLink, "<mobile>", pinnacleApiModel.Mobile, 1)
+		buttonURL = strings.Replace(pinnacleApiModel.ButtonLink, "<mobile>", mobileSub, 1)
 	}
 
 	var components []map[string]interface{}
 	var bodyParams []map[string]interface{}
 
-	languageCode := "en"
-	if strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
-		languageCode = "en_US"
+	languageCode := strings.TrimSpace(pinnacleApiModel.LanguageCode)
+	if languageCode == "" {
+		languageCode = "en"
+		if strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
+			languageCode = "en_US"
+		}
 	}
 
-	// Add dynamic text values to a single body component
-	if pinnacleApiModel.TemplateVariables != "" {
+	if positional := whatsappPayload.PositionalBodyParams(pinnacleApiModel.TemplateVariableValues); len(positional) > 0 {
+		bodyParams = positional
+	} else if pinnacleApiModel.TemplateVariables != "" {
 		keys := strings.Split(pinnacleApiModel.TemplateVariables, ",")
 		for _, key := range keys {
 			key = strings.TrimSpace(key)
@@ -114,6 +120,21 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		})
 	}
 
+	waba := strings.TrimSpace(pinnacleApiModel.WabaNumber)
+	if waba == "" {
+		waba = config.Configs.PinnacleZapcashWabaId
+	}
+
+	campaignID := strings.TrimSpace(pinnacleApiModel.CampaignId)
+	if campaignID == "" {
+		campaignID = "0"
+	}
+
+	ctaID := strings.TrimSpace(pinnacleApiModel.CtaId)
+	if ctaID == "" {
+		ctaID = "1"
+	}
+
 	// Add the button component
 	components = append(components, map[string]interface{}{
 		"type":     "button",
@@ -122,7 +143,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		"parameters": []map[string]interface{}{
 			{
 				"type":    "payload",
-				"payload": fmt.Sprintf("cta/%s/%s/0/1/%s", config.Configs.PinnacleZapcashWabaId, pinnacleApiModel.Mobile, buttonURL),
+				"payload": fmt.Sprintf("cta/%s/%s/%s/%s/%s", waba, pinnacleApiModel.Mobile, campaignID, ctaID, buttonURL),
 			},
 		},
 	})
