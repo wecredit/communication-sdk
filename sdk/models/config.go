@@ -118,6 +118,27 @@ type Config struct {
 	SinchWhatsappPassword      string `envconfig:"SINCH_API_PASSWORD"`
 	SinchWhatsappCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
 	SinchRcsApiUrl             string `envconfig:"SINCH_RCS_API_URL"`
+	// WhatsappTemplateSyncEnabled gates SDK Times/Pinnacle category sync cron body.
+	WhatsappTemplateSyncEnabled string `envconfig:"WHATSAPP_TEMPLATE_SYNC_ENABLED" default:"false"`
+	// WhatsappTemplateSyncAllowSingleHostFallback UAT-only: if true and AppConfig
+	// WHATSAPP_VENDOR_BASE_URLS is empty/missing, fall back to single env host +
+	// TemplateDetails AppIds. Must be unset/false in prod.
+	WhatsappTemplateSyncAllowSingleHostFallback string `envconfig:"WHATSAPP_TEMPLATE_SYNC_ALLOW_SINGLE_HOST_FALLBACK" default:"false"`
+	// AppConfigTableName Communication MySQL key/value table (panel list + nurture knobs).
+	AppConfigTableName string `envconfig:"APP_CONFIG_TABLE_NAME" default:"AppConfig"`
+	// TimesWpTemplateListBaseUrl optional origin for Times template get-list (defaults to host of TIMES_WP_API_URL).
+	TimesWpTemplateListBaseUrl string `envconfig:"TIMES_WP_TEMPLATE_LIST_BASE_URL"`
+	// TimesWpTemplateListEndpoint path appended to base (default /wa/v1/templates/get-list).
+	TimesWpTemplateListEndpoint string `envconfig:"TIMES_WP_TEMPLATE_LIST_ENDPOINT" default:"/wa/v1/templates/get-list"`
+	// PinnacleWhatsappTemplateListBaseUrl is the Graph-style base for GET {base}/{appId}/message_templates
+	// and preferred send path {base}/{appId}/messages when AppId is set.
+	PinnacleWhatsappTemplateListBaseUrl string `envconfig:"PINNACLE_WP_TEMPLATE_LIST_BASE_URL"`
+	// PinnacleWhatsappBaseUrl optional alias for send URL construction (falls back to list base).
+	PinnacleWhatsappBaseUrl string `envconfig:"PINNACLE_WP_BASE_URL"`
+	// PinnacleWhatsappApiKey used for WeCredit marketing Pinnacle (falls back to ZapCash key).
+	PinnacleWhatsappApiKey string `envconfig:"PINNACLE_WP_API_KEY"`
+	// PinnacleWhatsappMessageApiUrl full send URL override when base+AppId path not used.
+	PinnacleWhatsappMessageApiUrl string `envconfig:"PINNACLE_WP_MESSAGE_API_URL"`
 
 	// Sinch Whatsapp CreditSea  Variables
 	CreditSeaSinchWhatsappUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
