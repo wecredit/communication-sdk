@@ -48,8 +48,8 @@ type sqsQueueAttributesAPI interface {
 }
 
 type sqsRedrivePolicy struct {
-	DeadLetterTargetARN string `json:"deadLetterTargetArn"`
-	MaxReceiveCount     string `json:"maxReceiveCount"`
+	DeadLetterTargetARN string          `json:"deadLetterTargetArn"`
+	MaxReceiveCount     json.RawMessage `json:"maxReceiveCount"`
 }
 
 type ConsumerQueueRuntime struct {
@@ -139,12 +139,40 @@ func ParseRedriveMaxReceiveCount(raw string) (int, error) {
 		return 0, fmt.Errorf("WhatsApp queue redrive policy has no dead-letter target")
 	}
 
-	maxReceiveCount, err := strconv.Atoi(strings.TrimSpace(policy.MaxReceiveCount))
+	maxReceiveCount, err := parseRedriveMaxReceiveCountValue(policy.MaxReceiveCount)
 	if err != nil || maxReceiveCount < 1 {
 		return 0, fmt.Errorf("WhatsApp queue redrive policy has invalid maxReceiveCount")
 	}
 
 	return maxReceiveCount, nil
+}
+
+// parseRedriveMaxReceiveCountValue accepts AWS RedrivePolicy shapes where
+// maxReceiveCount is either a JSON number (5) or a JSON string ("5").
+func parseRedriveMaxReceiveCountValue(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 {
+		return 0, fmt.Errorf("missing maxReceiveCount")
+	}
+
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return 0, fmt.Errorf("missing maxReceiveCount")
+	}
+
+	if trimmed[0] == '"' {
+		var asString string
+		if err := json.Unmarshal(raw, &asString); err != nil {
+			return 0, err
+		}
+		return strconv.Atoi(strings.TrimSpace(asString))
+	}
+
+	var asNumber int
+	if err := json.Unmarshal(raw, &asNumber); err != nil {
+		return 0, err
+	}
+
+	return asNumber, nil
 }
 
 // PrepareConsumerQueues validates queue URLs and redrive policies for WhatsApp.
@@ -612,13 +640,13 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 }
 
 // MarketingWhatsappDependencies defines the dependencies for marketing WhatsApp dispatch.
+// Terminal outcomes write CommWhatsappMarketingOutput only (not CommDispatchTracking).
 type MarketingWhatsappDependencies struct {
 	Claim       func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error)
 	Assign      func(*sdkModels.CommApiRequestBody) bool
 	Send        func(sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error)
 	UpdateError func(sdkModels.CommApiRequestBody, string) error
 	WriteOutput func(map[string]interface{}) error
-	Track       func(sdkModels.CommApiRequestBody, string, string, string) error
 	Delete      func(sdkModels.CommApiRequestBody) (bool, error)
 	Release     func(sdkModels.CommApiRequestBody)
 	Blank       func(sdkModels.CommApiRequestBody, *sqs.Message, int)
@@ -638,10 +666,8 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 			// Marketing WA responses land on Marketing SQL Server
 			// (CommWhatsappMarketingOutput). Lender WhatsApp still uses MySQL
 			// WhatsappOutputTable in handleWhatsapp below.
-			// return database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, output)
-			return database.InsertData(config.Configs.CommWhatsappMarketingOutputTable, database.DBMarketing, mapMarketingWhatsappOutput(data, output))
+			return database.InsertData(config.Configs.CommWhatsappMarketingOutputTable, database.DBMarketing, MapMarketingWhatsappOutput(data, output))
 		},
-		Track: recordMarketingWPTracking,
 		Delete: func(payload sdkModels.CommApiRequestBody) (bool, error) {
 			return deleteMessage(ctx, sqsClient, queueURL, msg, payload)
 		},
@@ -650,6 +676,21 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 	}
 
 	return HandleMarketingWhatsappWithDependencies(data, dbMappedData, msg, redriveMaxReceiveCount, deps)
+}
+
+// writeMarketingWhatsappTerminalOutput persists a terminal WA outcome to Output, then ACKs SQS.
+func writeMarketingWhatsappTerminalOutput(data sdkModels.CommApiRequestBody, deps MarketingWhatsappDependencies, output map[string]interface{}, deleteFailMsg string) (bool, bool) {
+	if err := deps.WriteOutput(output); err != nil {
+		logWhatsappPostSendPersistenceFailure(data, err)
+		return false, false
+	}
+
+	deleted, err := deps.Delete(data)
+	if !deleted {
+		utils.Error(fmt.Errorf("%s: %v", deleteFailMsg, err))
+	}
+
+	return true, deleted
 }
 
 // HandleMarketingWhatsappWithDependencies handles marketing WhatsApp dispatch with dependencies.
@@ -666,36 +707,23 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 			return false, false
 		}
 
-		outcome := database.DispatchTrackingSent
-		if strings.TrimSpace(redisTxn) == "" {
-			outcome = database.DispatchTrackingFailed
+		output := map[string]interface{}{}
+		if txn := strings.TrimSpace(redisTxn); txn != "" {
+			output["IsSent"] = true
+			output["TransactionId"] = txn
 		} else {
-			redisErr = ""
+			output["IsSent"] = false
+			output["ResponseMessage"] = strings.TrimSpace(redisErr)
 		}
 
-		if trackErr := deps.Track(data, outcome, strings.TrimSpace(redisTxn), strings.TrimSpace(redisErr)); trackErr != nil {
-			return false, false
-		}
-
-		deleted, err := deps.Delete(data)
-		if !deleted {
-			utils.Error(fmt.Errorf("failed to delete terminal Redis duplicate marketing WhatsApp: %v", err))
-		}
-
-		return true, deleted
+		return writeMarketingWhatsappTerminalOutput(data, deps, output, "failed to delete terminal Redis duplicate marketing WhatsApp")
 	}
 
 	if campaignDuplicate {
-		if trackErr := deps.Track(data, database.DispatchTrackingSkippedDuplicate, "", campaignDuplicateError(data)); trackErr != nil {
-			return false, false
-		}
-
-		deleted, err := deps.Delete(data)
-		if !deleted {
-			utils.Error(fmt.Errorf("failed to delete campaign-duplicate marketing WhatsApp: %v", err))
-		}
-
-		return true, deleted
+		return writeMarketingWhatsappTerminalOutput(data, deps, map[string]interface{}{
+			"IsSent":          false,
+			"ResponseMessage": campaignDuplicateError(data),
+		}, "failed to delete campaign-duplicate marketing WhatsApp")
 	}
 
 	data.CommId = sdkServices.ResolveCommID(data.CommId, data.Client)
@@ -706,17 +734,10 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 			return false, false
 		}
 
-		// Track the failed dispatch for inactive vendor.
-		if err := deps.Track(data, database.DispatchTrackingFailed, "", inactiveVendorError); err != nil {
-			return false, false
-		}
-
-		// Delete the message to prevent infinite retries for inactive vendor.
-		deleted, err := deps.Delete(data)
-		if !deleted {
-			utils.Error(fmt.Errorf("failed to delete WhatsApp rejected for inactive vendor: %v", err))
-		}
-		return true, deleted
+		return writeMarketingWhatsappTerminalOutput(data, deps, map[string]interface{}{
+			"IsSent":          false,
+			"ResponseMessage": inactiveVendorError,
+		}, "failed to delete WhatsApp rejected for inactive vendor")
 	}
 
 	isMessageProcessed, outputData, sendErr := deps.Send(data)
@@ -734,35 +755,30 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 	if outputData == nil {
 		outputData = dbMappedData
 	}
-
-	// Write the output data to the database.
-	if err := deps.WriteOutput(outputData); err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting WhatsApp output: %v", data.Client, data.CommId, err))
+	if outputData == nil {
+		outputData = map[string]interface{}{}
 	}
 
-	transactionID := mapString(outputData, "TransactionId")
 	responseMessage := mapString(outputData, "ResponseMessage")
 	isSent := mapBool(outputData, "IsSent")
-	outcome := database.DispatchTrackingSent
 	if !isSent {
-		outcome = database.DispatchTrackingFailed
 		if responseMessage == "" && sendErr != nil {
 			responseMessage = sendErr.Error()
 		}
-
 		if responseMessage == "" {
 			responseMessage = "WhatsApp provider rejected the request"
 		}
-
+		outputData["ResponseMessage"] = responseMessage
+		outputData["IsSent"] = false
 		if err := deps.UpdateError(data, responseMessage); err != nil {
 			utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record terminal WhatsApp rejection in Redis: %v", data.Client, data.EventId, err))
 			return false, false
 		}
-	} else {
-		responseMessage = ""
 	}
 
-	if err := deps.Track(data, outcome, transactionID, responseMessage); err != nil {
+	// WA audit sink is CommWhatsappMarketingOutput only (SMS uses CommDispatchTracking).
+	if err := deps.WriteOutput(outputData); err != nil {
+		logWhatsappPostSendPersistenceFailure(data, err)
 		return false, false
 	}
 
@@ -1017,8 +1033,8 @@ func isWeCreditSMSComplianceFailure(result sms.SendSmsResult) bool {
 }
 
 // RunParallelSMSPostSendWrites executes the independent audit writes together
-// and waits for both results. The caller must not acknowledge SQS unless both
-// returned errors are nil.
+// and waits for both results. Used by marketing SMS and WhatsApp. The caller
+// must not acknowledge SQS unless both returned errors are nil.
 func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outputErr, trackingErr error) {
 	var group errgroup.Group
 	group.Go(func() error {
@@ -1047,6 +1063,18 @@ func logSMSPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputE
 	utils.Error(fmt.Errorf(
 		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
 		data.Client, data.CommId, data.EventId, outputStatus, trackingStatus,
+	))
+}
+
+func logWhatsappPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputErr error) {
+	outputStatus := "succeeded"
+	if outputErr != nil {
+		outputStatus = outputErr.Error()
+	}
+
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s EventId:%s] WhatsApp output persistence failure: whatsapp_output=%s",
+		data.Client, data.CommId, data.EventId, outputStatus,
 	))
 }
 
@@ -1340,69 +1368,36 @@ func mapBool(data map[string]interface{}, key string) bool {
 	}
 }
 
-func recordMarketingWPTrackingFromRedis(data sdkModels.CommApiRequestBody, redisTxn, redisErr string) error {
-	txn := strings.TrimSpace(redisTxn)
-	errMsg := strings.TrimSpace(redisErr)
-	outcome := database.DispatchTrackingSent
-	if txn == "" {
-		outcome = database.DispatchTrackingFailed
-	} else {
-		errMsg = ""
-	}
-	return recordMarketingWPTracking(data, outcome, txn, errMsg)
-}
-
-func recordMarketingWPTracking(data sdkModels.CommApiRequestBody, outcome, transactionID, errorMessage string) error {
-	// sourceTable must be CommWhatsappMarketingInput so UPDLOCK serializes against
-	// the WA row (not CommMarketingInput used for SMS).
-	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommWhatsappMarketingInputTable, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
-		Source:            data.Source,
-		SourceRowId:       data.SourceRowId,
-		Channel:           "WHATSAPP",
-		Client:            data.Client,
-		Vendor:            data.Vendor,
-		Process:           data.ProcessName,
-		EventId:           data.EventId,
-		CommId:            data.CommId,
-		TransactionId:     transactionID,
-		Outcome:           outcome,
-		ErrorMessage:      errorMessage,
-		TemplateReference: data.TemplateReference,
-	})
-
-	if errors.Is(err, database.ErrDispatchTrackingAlreadyExists) {
-		utils.Info(fmt.Sprintf("WhatsApp dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
-		return nil
-	}
-
-	if errors.Is(err, database.ErrDispatchSourceAlreadyTerminal) {
-		utils.Info(fmt.Sprintf("WhatsApp dispatch source already terminal sourceRowId=%d; preserving first terminal outcome", data.SourceRowId))
-		return nil
-	}
-
-	if err != nil {
-		utils.Error(fmt.Errorf("failed to insert WhatsApp dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
-		return err
-	}
-
-	return nil
-}
-
-// mapMarketingWhatsappOutput projects SDK send DBData onto CommWhatsappMarketingOutput columns.
-func mapMarketingWhatsappOutput(data sdkModels.CommApiRequestBody, output map[string]interface{}) map[string]interface{} {
+// MapMarketingWhatsappOutput projects SDK send DBData onto CommWhatsappMarketingOutput columns.
+func MapMarketingWhatsappOutput(data sdkModels.CommApiRequestBody, output map[string]interface{}) map[string]interface{} {
 	row := map[string]interface{}{
-		"SourceRowId":       data.SourceRowId,
-		"EventId":           data.EventId,
-		"CommId":            data.CommId,
-		"Mobile":            data.Mobile,
-		"Vendor":            data.Vendor,
-		"Process":           data.ProcessName,
-		"Client":            data.Client,
-		"TemplateReference": data.TemplateReference,
-		"HitTime":           time.Now(),
+		"SourceRowId":    data.SourceRowId,
+		"EventId":        data.EventId,
+		"CommId":         data.CommId,
+		"Mobile":         data.Mobile,
+		"Vendor":         data.Vendor,
+		"Process":        data.ProcessName,
+		"Client":         data.Client,
+		"TemplateName":   data.TemplateReference,
+		"AppId":          data.AppId,
+		"Tag1":           data.Tag1,
+		"Tag2":           data.Tag2,
+		"DynamicMobile":  data.DynamicMobile,
+		"VariablesValue": data.TemplateVariableValues,
+		"HitTime":        time.Now(),
+	}
+
+	if !data.ScheduledAt.IsZero() {
+		row["ScheduledAt"] = data.ScheduledAt
 	}
 
 	if output != nil {
+		if v, ok := output["AppId"]; ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				row["AppId"] = strings.TrimSpace(s)
+			}
+		}
+
 		if v, ok := output["TransactionId"]; ok {
 			row["TransactionId"] = v
 			row["MessageId"] = v
@@ -1414,6 +1409,14 @@ func mapMarketingWhatsappOutput(data sdkModels.CommApiRequestBody, output map[st
 
 		if v, ok := output["IsSent"]; ok {
 			row["IsSent"] = mapBool(output, "IsSent") || v == 1 || v == true || v == "1"
+		}
+
+		if v, ok := output["RawPayload"]; ok {
+			row["RawPayload"] = v
+		}
+
+		if v, ok := output["RawResponse"]; ok {
+			row["RawResponse"] = v
 		}
 
 		if v, ok := output["MobileNumber"]; ok {

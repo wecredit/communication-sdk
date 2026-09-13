@@ -55,15 +55,36 @@ func (s queueAttributesStub) GetQueueAttributes(*sqs.GetQueueAttributesInput) (*
 }
 
 func TestParseRedriveMaxReceiveCount(t *testing.T) {
-	valid := `{"deadLetterTargetArn":"arn:aws:sqs:ap-south-1:123:wp-dlq","maxReceiveCount":"5"}`
-	if got, err := services.ParseRedriveMaxReceiveCount(valid); err != nil || got != 5 {
-		t.Fatalf("valid policy = %d, %v", got, err)
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{
+			name: "string maxReceiveCount",
+			raw:  `{"deadLetterTargetArn":"arn:aws:sqs:ap-south-1:123:wp-dlq","maxReceiveCount":"5"}`,
+			want: 5,
+		},
+		{
+			name: "numeric maxReceiveCount",
+			raw:  `{"deadLetterTargetArn":"arn:aws:sqs:ap-south-1:123:wp-dlq","maxReceiveCount":5}`,
+			want: 5,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := services.ParseRedriveMaxReceiveCount(tc.raw)
+			if err != nil || got != tc.want {
+				t.Fatalf("got = %d, %v want %d", got, err, tc.want)
+			}
+		})
 	}
+
 	for _, raw := range []string{
 		``,
 		`not-json`,
 		`{"maxReceiveCount":"5"}`,
 		`{"deadLetterTargetArn":"arn:dlq","maxReceiveCount":"0"}`,
+		`{"deadLetterTargetArn":"arn:dlq","maxReceiveCount":0}`,
 		`{"deadLetterTargetArn":"arn:dlq","maxReceiveCount":"invalid"}`,
 	} {
 		if _, err := services.ParseRedriveMaxReceiveCount(raw); err == nil {
