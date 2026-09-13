@@ -45,6 +45,12 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 	template.TemplateName = strings.TrimSpace(template.TemplateName)
 	template.TemplateVariables = strings.TrimSpace(template.TemplateVariables)
 	template.SmsFallbackVariables = strings.TrimSpace(template.SmsFallbackVariables)
+	template.AppId = strings.TrimSpace(template.AppId)
+	template.ProviderTemplateCategory = strings.TrimSpace(template.ProviderTemplateCategory)
+	template.LanguageCode = strings.TrimSpace(template.LanguageCode)
+	template.CampaignId = strings.TrimSpace(template.CampaignId)
+	template.CtaId = strings.TrimSpace(template.CtaId)
+	template.WabaNumber = strings.TrimSpace(template.WabaNumber)
 }
 
 // validateCreateDuplicate rejects a repeated create with identical business
@@ -100,7 +106,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	switch template.Channel {
-	case "SMS", "RCS", "WHATSAPP", "EMAIL":
+	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH":
 	default:
 		return fmt.Errorf("unsupported channel %q", template.Channel)
 	}

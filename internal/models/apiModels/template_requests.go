@@ -32,75 +32,93 @@ func (v *NullableFloat64) UnmarshalJSON(data []byte) error {
 // TemplateCreateRequest is the complete allowlist for template creation.
 // Database identity and audit fields are intentionally absent.
 type TemplateCreateRequest struct {
-	Client               string   `json:"client"`
-	Channel              string   `json:"channel"`
-	Process              string   `json:"process"`
-	Stage                *float64 `json:"stage"`
-	Vendor               string   `json:"vendor"`
-	TemplateName         string   `json:"templateName"`
-	ImageId              string   `json:"imageId"`
-	ImageUrl             string   `json:"imageUrl"`
-	DltTemplateId        int64    `json:"dltTemplateId"`
-	TemplateEntityId     int64    `json:"templateEntityId"`
-	TemplateHeader       string   `json:"templateHeader"`
-	IsActive             bool     `json:"isActive"`
-	TemplateText         string   `json:"templateText"`
-	Link                 string   `json:"link"`
-	TemplateCategory     int64    `json:"templateCategory"`
-	TemplateVariables    string   `json:"templateVariables"`
-	SmsFallbackVariables string   `json:"smsFallbackVariables"`
-	Subject              string   `json:"subject"`
-	FromEmail            string   `json:"fromEmail"`
+	Client                   string   `json:"client"`
+	Channel                  string   `json:"channel"`
+	Process                  string   `json:"process"`
+	Stage                    *float64 `json:"stage"`
+	Vendor                   string   `json:"vendor"`
+	TemplateName             string   `json:"templateName"`
+	ImageId                  string   `json:"imageId"`
+	ImageUrl                 string   `json:"imageUrl"`
+	DltTemplateId            int64    `json:"dltTemplateId"`
+	TemplateEntityId         int64    `json:"templateEntityId"`
+	TemplateHeader           string   `json:"templateHeader"`
+	IsActive                 bool     `json:"isActive"`
+	TemplateText             string   `json:"templateText"`
+	Link                     string   `json:"link"`
+	TemplateCategory         int64    `json:"templateCategory"`
+	TemplateVariables        string   `json:"templateVariables"`
+	SmsFallbackVariables     string   `json:"smsFallbackVariables"`
+	Subject                  string   `json:"subject"`
+	FromEmail                string   `json:"fromEmail"`
+	AppId                    string   `json:"appId"`
+	ProviderTemplateCategory string   `json:"providerTemplateCategory"`
+	LanguageCode             string   `json:"languageCode"`
+	CampaignId               string   `json:"campaignId"`
+	CtaId                    string   `json:"ctaId"`
+	WabaNumber               string   `json:"wabaNumber"`
 }
-
 
 // Template converts the TemplateCreateRequest to a Templatedetails object
 func (r TemplateCreateRequest) Template() Templatedetails {
 	return Templatedetails{
-		Client:               r.Client,
-		Channel:              r.Channel,
-		Process:              r.Process,
-		Stage:                r.Stage,
-		Vendor:               r.Vendor,
-		TemplateName:         r.TemplateName,
-		ImageId:              r.ImageId,
-		ImageUrl:             r.ImageUrl,
-		DltTemplateId:        r.DltTemplateId,
-		TemplateEntityId:     r.TemplateEntityId,
-		TemplateHeader:       r.TemplateHeader,
-		IsActive:             r.IsActive,
-		TemplateText:         r.TemplateText,
-		Link:                 r.Link,
-		TemplateCategory:     r.TemplateCategory,
-		TemplateVariables:    r.TemplateVariables,
-		SmsFallbackVariables: r.SmsFallbackVariables,
-		Subject:              r.Subject,
-		FromEmail:            r.FromEmail,
+		Client:                   r.Client,
+		Channel:                  r.Channel,
+		Process:                  r.Process,
+		Stage:                    r.Stage,
+		Vendor:                   r.Vendor,
+		TemplateName:             r.TemplateName,
+		ImageId:                  r.ImageId,
+		ImageUrl:                 r.ImageUrl,
+		DltTemplateId:            r.DltTemplateId,
+		TemplateEntityId:         r.TemplateEntityId,
+		TemplateHeader:           r.TemplateHeader,
+		IsActive:                 r.IsActive,
+		TemplateText:             r.TemplateText,
+		Link:                     r.Link,
+		TemplateCategory:         r.TemplateCategory,
+		TemplateVariables:        r.TemplateVariables,
+		SmsFallbackVariables:     r.SmsFallbackVariables,
+		Subject:                  r.Subject,
+		FromEmail:                r.FromEmail,
+		AppId:                    r.AppId,
+		ProviderTemplateCategory: r.ProviderTemplateCategory,
+		LanguageCode:             r.LanguageCode,
+		CampaignId:               r.CampaignId,
+		CtaId:                    r.CtaId,
+		WabaNumber:               r.WabaNumber,
 	}
 }
 
 // TemplateUpdateRequest is the complete allowlist for the legacy template PUT.
 // Lifecycle, identity, and audit columns are intentionally absent.
+// Error / CategoryUpdatedOn are owned by the category-sync cron, not this API.
 type TemplateUpdateRequest struct {
-	Client               *string         `json:"client"`
-	Channel              *string         `json:"channel"`
-	Process              *string         `json:"process"`
-	Stage                NullableFloat64 `json:"stage"`
-	Vendor               *string         `json:"vendor"`
-	TemplateName         *string         `json:"templateName"`
-	ImageId              *string         `json:"imageId"`
-	ImageUrl             *string         `json:"imageUrl"`
-	DltTemplateId        *int64          `json:"dltTemplateId"`
-	TemplateEntityId     *int64          `json:"templateEntityId"`
-	TemplateHeader       *string         `json:"templateHeader"`
-	IsActive             *bool           `json:"isActive"`
-	TemplateText         *string         `json:"templateText"`
-	Link                 *string         `json:"link"`
-	TemplateCategory     *int64          `json:"templateCategory"`
-	TemplateVariables    *string         `json:"templateVariables"`
-	SmsFallbackVariables *string         `json:"smsFallbackVariables"`
-	Subject              *string         `json:"subject"`
-	FromEmail            *string         `json:"fromEmail"`
+	Client                   *string         `json:"client"`
+	Channel                  *string         `json:"channel"`
+	Process                  *string         `json:"process"`
+	Stage                    NullableFloat64 `json:"stage"`
+	Vendor                   *string         `json:"vendor"`
+	TemplateName             *string         `json:"templateName"`
+	ImageId                  *string         `json:"imageId"`
+	ImageUrl                 *string         `json:"imageUrl"`
+	DltTemplateId            *int64          `json:"dltTemplateId"`
+	TemplateEntityId         *int64          `json:"templateEntityId"`
+	TemplateHeader           *string         `json:"templateHeader"`
+	IsActive                 *bool           `json:"isActive"`
+	TemplateText             *string         `json:"templateText"`
+	Link                     *string         `json:"link"`
+	TemplateCategory         *int64          `json:"templateCategory"`
+	TemplateVariables        *string         `json:"templateVariables"`
+	SmsFallbackVariables     *string         `json:"smsFallbackVariables"`
+	Subject                  *string         `json:"subject"`
+	FromEmail                *string         `json:"fromEmail"`
+	AppId                    *string         `json:"appId"`
+	ProviderTemplateCategory *string         `json:"providerTemplateCategory"`
+	LanguageCode             *string         `json:"languageCode"`
+	CampaignId               *string         `json:"campaignId"`
+	CtaId                    *string         `json:"ctaId"`
+	WabaNumber               *string         `json:"wabaNumber"`
 }
 
 func (r TemplateUpdateRequest) Apply(template *Templatedetails) {
@@ -160,5 +178,23 @@ func (r TemplateUpdateRequest) Apply(template *Templatedetails) {
 	}
 	if r.FromEmail != nil {
 		template.FromEmail = *r.FromEmail
+	}
+	if r.AppId != nil {
+		template.AppId = *r.AppId
+	}
+	if r.ProviderTemplateCategory != nil {
+		template.ProviderTemplateCategory = *r.ProviderTemplateCategory
+	}
+	if r.LanguageCode != nil {
+		template.LanguageCode = *r.LanguageCode
+	}
+	if r.CampaignId != nil {
+		template.CampaignId = *r.CampaignId
+	}
+	if r.CtaId != nil {
+		template.CtaId = *r.CtaId
+	}
+	if r.WabaNumber != nil {
+		template.WabaNumber = *r.WabaNumber
 	}
 }

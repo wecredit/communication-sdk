@@ -63,4 +63,12 @@ type Templatedetails struct {
 	SmsFallbackVariables string     `gorm:"column:SmsFallbackVariables" json:"smsFallbackVariables,omitempty"`
 	Subject              string     `gorm:"column:Subject" json:"subject,omitempty"`
 	FromEmail            string     `gorm:"column:FromEmail" json:"fromEmail,omitempty"`
+	AppId                string     `gorm:"column:AppId" json:"appId,omitempty"`
+	ProviderTemplateCategory string `gorm:"column:ProviderTemplateCategory" json:"providerTemplateCategory,omitempty"`
+	LanguageCode         string     `gorm:"column:LanguageCode" json:"languageCode,omitempty"`
+	CampaignId           string     `gorm:"column:CampaignId" json:"campaignId,omitempty"`
+	CtaId                string     `gorm:"column:CtaId" json:"ctaId,omitempty"`
+	WabaNumber           string     `gorm:"column:WabaNumber" json:"wabaNumber,omitempty"`
+	Error                string     `gorm:"column:Error" json:"error,omitempty"`
+	CategoryUpdatedOn    *time.Time `gorm:"column:CategoryUpdatedOn" json:"categoryUpdatedOn,omitempty"`
 }

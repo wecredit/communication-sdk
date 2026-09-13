@@ -161,6 +161,14 @@ func templateCacheData(row apiModels.Templatedetails) map[string]interface{} {
 		"SmsFallbackVariables": row.SmsFallbackVariables,
 		"Subject":              row.Subject,
 		"FromEmail":            row.FromEmail,
+		"AppId":                row.AppId,
+		"ProviderTemplateCategory": row.ProviderTemplateCategory,
+		"LanguageCode":         row.LanguageCode,
+		"CampaignId":           row.CampaignId,
+		"CtaId":                row.CtaId,
+		"WabaNumber":           row.WabaNumber,
+		"Error":                row.Error,
+		"CategoryUpdatedOn":    row.CategoryUpdatedOn,
 	}
 }
 
