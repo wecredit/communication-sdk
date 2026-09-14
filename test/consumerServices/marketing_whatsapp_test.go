@@ -2,6 +2,7 @@ package consumerServices_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -54,7 +55,7 @@ func marketingWhatsappTestDependencies(state *whatsappTestState) services.Market
 			state.updateCalls++
 			return nil
 		},
-		WriteOutput: func(output map[string]interface{}) error {
+		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
 			state.outputCalls++
 			state.lastOutput = output
 			return nil
@@ -134,6 +135,7 @@ func TestMarketingWhatsappTerminalOutcomesAcknowledgeAfterOutput(t *testing.T) {
 					return false, true, "", "", nil
 				}
 			},
+			wantUpdate:    1,
 			wantOutput:    1,
 			wantIsSent:    boolPtr(false),
 			wantProcessed: true,
@@ -219,7 +221,7 @@ func TestMarketingWhatsappRetryBlankAndOutputFailureDoNotAcknowledge(t *testing.
 			state.sendCalls++
 			return configuredSend(data)
 		}
-		deps.WriteOutput = func(map[string]interface{}) error {
+		deps.WriteOutput = func(sdkModels.CommApiRequestBody, map[string]interface{}) error {
 			state.outputCalls++
 			return errors.New("output unavailable")
 		}
@@ -237,7 +239,7 @@ func TestTerminalRejectionOutputRetryDoesNotRepeatVendorCall(t *testing.T) {
 		state.sendCalls++
 		return true, map[string]interface{}{"IsSent": false, "ResponseMessage": "rejected"}, nil
 	}
-	deps.WriteOutput = func(map[string]interface{}) error {
+	deps.WriteOutput = func(sdkModels.CommApiRequestBody, map[string]interface{}) error {
 		state.outputCalls++
 		return errors.New("output unavailable")
 	}
@@ -249,7 +251,7 @@ func TestTerminalRejectionOutputRetryDoesNotRepeatVendorCall(t *testing.T) {
 	deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
 		return true, false, "", "rejected", nil
 	}
-	deps.WriteOutput = func(output map[string]interface{}) error {
+	deps.WriteOutput = func(_ sdkModels.CommApiRequestBody, output map[string]interface{}) error {
 		state.outputCalls++
 		state.lastOutput = output
 		return nil
@@ -270,5 +272,34 @@ func TestWhatsappDLQImminentUsesDiscoveredThreshold(t *testing.T) {
 	}
 	if services.ShouldEmitWhatsappDLQImminent(msg, 10) {
 		t.Fatal("fired imminent metric before discovered threshold")
+	}
+}
+
+func TestMarketingWhatsappWriteOutputSeesAssignedVendorAndResolvedCommId(t *testing.T) {
+	state := &whatsappTestState{}
+	var captured sdkModels.CommApiRequestBody
+	deps := marketingWhatsappTestDependencies(state)
+	deps.Assign = func(data *sdkModels.CommApiRequestBody) bool {
+		data.Vendor = "TIMES"
+		return true
+	}
+	deps.WriteOutput = func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
+		captured = payload
+		state.outputCalls++
+		state.lastOutput = output
+		return nil
+	}
+	data := marketingWhatsappTestData()
+	data.CommId = ""
+	data.Vendor = ""
+	processed, deleted := services.HandleMarketingWhatsappWithDependencies(data, nil, nil, 5, deps)
+	if !processed || !deleted {
+		t.Fatalf("result=(%t,%t)", processed, deleted)
+	}
+	if captured.Vendor != "TIMES" {
+		t.Fatalf("WriteOutput vendor=%q, want TIMES", captured.Vendor)
+	}
+	if strings.TrimSpace(captured.CommId) == "" {
+		t.Fatal("WriteOutput CommId should be resolved")
 	}
 }

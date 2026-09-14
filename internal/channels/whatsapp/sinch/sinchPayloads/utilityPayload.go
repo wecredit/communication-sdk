@@ -14,15 +14,15 @@ import (
 )
 
 func GetSinchUtilityPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
-	var buttonURL string
 	mobileSub := whatsappPayload.ButtonMobileSubstitute(sinchApiModel)
-
-	// Customize the mobile number for poonawalla if required
-	if strings.Contains(sinchApiModel.Process, "poonawalla") {
-		buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1)
-	} else {
-		buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub, 1)
-	}
+	// Hermis: plain <mobile> → dynamic_mobile replace.
+	buttonURL := whatsappPayload.SubstituteButtonLinkMobile(sinchApiModel.ButtonLink, mobileSub)
+	// Legacy SDK-only poonawalla digit rotation (not in hermis). Kept for reference:
+	// if strings.Contains(sinchApiModel.Process, "poonawalla") {
+	// 	buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1)
+	// } else {
+	// 	buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub, 1)
+	// }
 
 	var components []map[string]interface{}
 	var bodyParams []map[string]interface{}

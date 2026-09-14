@@ -53,10 +53,11 @@ type CommDispatchTrackingRow struct {
 }
 
 // InsertCommDispatchTracking writes one tracking row with a plain INSERT.
-// No UPDLOCK on the source input row and no WHERE NOT EXISTS pre-read — those
-// caused SMS SLOW SQL (800–1300ms) under concurrency. Idempotency relies on a
-// unique key (2627/2601 → ErrDispatchTrackingAlreadyExists) when present;
-// without it, SQS redelivery can insert duplicate tracking rows.
+// Hermis has no CommDispatchTracking path (WA-only plain output INSERTs). This
+// SMS speed path intentionally skips UPDLOCK / WHERE NOT EXISTS (those caused
+// 800–1300ms SLOW SQL under concurrency). Idempotency relies on a unique key
+// (2627/2601 → ErrDispatchTrackingAlreadyExists) when present; without it, SQS
+// redelivery can insert duplicate tracking rows.
 func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row CommDispatchTrackingRow) error {
 	if db == nil {
 		return fmt.Errorf("marketing database is not initialized")

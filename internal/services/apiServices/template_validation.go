@@ -56,6 +56,9 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 // validateCreateDuplicate rejects a repeated create with identical business
 // fields. IsActive is deliberately excluded: callers should update the
 // existing row when only its active state needs to change.
+// AppId / WabaNumber / LanguageCode / CampaignId / CtaId match hermis template
+// identity (whatsapp_process_temp.app_id + waba/cta metadata). ProviderTemplateCategory
+// is owned by category sync and is not part of create uniqueness.
 func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) error {
 	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 		Where(
@@ -64,13 +67,15 @@ func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) er
 			AND DltTemplateId = ? AND TemplateEntityId = ? AND TemplateHeader = ?
 			AND TemplateText = ? AND Link = ? AND TemplateCategory = ?
 			AND TemplateVariables = ? AND SmsFallbackVariables = ?
-			AND Subject = ? AND FromEmail = ?`,
+			AND Subject = ? AND FromEmail = ?
+			AND AppId = ? AND LanguageCode = ? AND CampaignId = ? AND CtaId = ? AND WabaNumber = ?`,
 			template.Client, template.Channel, template.Process, template.Vendor,
 			template.TemplateName, template.ImageId, template.ImageUrl,
 			template.DltTemplateId, template.TemplateEntityId, template.TemplateHeader,
 			template.TemplateText, template.Link, template.TemplateCategory,
 			template.TemplateVariables, template.SmsFallbackVariables,
 			template.Subject, template.FromEmail,
+			template.AppId, template.LanguageCode, template.CampaignId, template.CtaId, template.WabaNumber,
 		)
 
 	if template.Stage == nil {

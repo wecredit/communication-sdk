@@ -27,3 +27,31 @@ func TestButtonMobileSubstitute(t *testing.T) {
 		t.Fatalf("fallback got %q", got)
 	}
 }
+
+func TestSubstituteButtonLinkMobileHermesParity(t *testing.T) {
+	got := whatsappPayload.SubstituteButtonLinkMobile("https://x/<mobile>/y", "ab")
+	if got != "https://x/ab/y" {
+		t.Fatalf("short DynamicMobile replace got %q", got)
+	}
+	if got := whatsappPayload.SubstituteButtonLinkMobile("https://static", "ab"); got != "https://static" {
+		t.Fatalf("no placeholder got %q", got)
+	}
+}
+
+func TestBodyParamsFallsBackToNamed(t *testing.T) {
+	req := extapimodels.WhatsappRequestBody{
+		TemplateVariables: "CustomerName,LoanId",
+		CustomerName:      "Ronit",
+		LoanId:            "L-1",
+	}
+	got := whatsappPayload.BodyParams(req)
+	if len(got) != 2 || got[0]["text"] != "Ronit" || got[1]["text"] != "L-1" {
+		t.Fatalf("named fallback got %#v", got)
+	}
+
+	req.TemplateVariableValues = "a,b"
+	got = whatsappPayload.BodyParams(req)
+	if len(got) != 2 || got[0]["text"] != "a" || got[1]["text"] != "b" {
+		t.Fatalf("positional preferred got %#v", got)
+	}
+}

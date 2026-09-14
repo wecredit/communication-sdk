@@ -14,6 +14,8 @@ import (
 )
 
 // RetryApiCall handles retries for an API call using the shared HTTP client/transport.
+// Non-2xx responses still return (result, nil) with ApistatusCode set — many callers
+// inspect status themselves. Use ErrIfHTTPNotOK when a call site needs hard failure.
 func RetryApiCall(
 	method, apiURL string,
 	headers map[string]string,
@@ -41,6 +43,30 @@ func RetryApiCall(
 // ApiHit makes an API call using the shared HTTP client (no per-call goroutine/client).
 func ApiHit(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int) (map[string]interface{}, error) {
 	return RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0, 0)
+}
+
+// HTTPStatusFromResponse reads ApistatusCode set by RetryApiCall/ApiHit.
+func HTTPStatusFromResponse(result map[string]interface{}) int {
+	if result == nil {
+		return 0
+	}
+	switch v := result["ApistatusCode"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+// ErrIfHTTPNotOK returns an error when ApistatusCode is missing or outside 2xx.
+func ErrIfHTTPNotOK(result map[string]interface{}) error {
+	code := HTTPStatusFromResponse(result)
+	if code < 200 || code >= 300 {
+		return fmt.Errorf("HTTP status %d", code)
+	}
+	return nil
 }
 
 // ApiHitJSON POSTs/GETs like ApiHit but unmarshals the body into dest (typed struct).

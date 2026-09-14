@@ -14,8 +14,8 @@ import (
 )
 
 // Sinch WhatsApp token cache is in-process / per ECS task (not cross-task shared).
-// Fetch, proactive refresh, and 401-driven invalidate+refetch all go through
-// singleflight so concurrent senders do not stampede the token endpoint.
+// Fetch, proactive refresh, and 401-driven invalidate+refetch all go through the
+// same singleflight key so concurrent senders do not stampede the token endpoint.
 
 type waTokenEntry struct {
 	accessToken  string
@@ -26,21 +26,36 @@ type waTokenEntry struct {
 var (
 	waTokenMu    sync.RWMutex
 	waTokenStore = map[string]*waTokenEntry{}
+	waTokenGen   = map[string]uint64{}
 	waTokenSF    singleflight.Group
+
+	// Optional test override for minting tokens (nil → live OAuth).
+	waTokenFetchHook func(client string) (*extapimodels.SinchTokenResponse, error)
 )
 
 // ResetSinchWhatsappTokenCacheForTest clears in-process WA token state (tests only).
 func ResetSinchWhatsappTokenCacheForTest() {
 	waTokenMu.Lock()
 	waTokenStore = map[string]*waTokenEntry{}
+	waTokenGen = map[string]uint64{}
+	waTokenFetchHook = nil
+	waTokenMu.Unlock()
+}
+
+// SetSinchWhatsappTokenFetchHookForTest overrides OAuth minting in unit tests.
+func SetSinchWhatsappTokenFetchHookForTest(fn func(client string) (*extapimodels.SinchTokenResponse, error)) {
+	waTokenMu.Lock()
+	waTokenFetchHook = fn
 	waTokenMu.Unlock()
 }
 
 // InvalidateSinchWhatsappToken drops the cached token for client so the next
-// GetSinchWhatsappAccessToken refetches (via singleflight).
+// GetSinchWhatsappAccessToken refetches (via singleflight). Bumps generation so
+// an in-flight refresh cannot store a stale token over the invalidate.
 func InvalidateSinchWhatsappToken(client string) {
 	key := waTokenCacheKey(client)
 	waTokenMu.Lock()
+	waTokenGen[key]++
 	delete(waTokenStore, key)
 	waTokenMu.Unlock()
 }
@@ -54,18 +69,7 @@ func GetSinchWhatsappAccessToken(client string) (string, error) {
 	}
 
 	v, err, _ := waTokenSF.Do(key, func() (interface{}, error) {
-		if token, ok := peekWAToken(key); ok {
-			return token, nil
-		}
-
-		tok, err := fetchSinchWhatsappToken(client)
-		if err != nil {
-			return nil, err
-		}
-
-		storeWAToken(key, tok)
-		scheduleWATokenRefresh(client, key, tok)
-		return tok.AccessToken, nil
+		return loadOrFetchWAToken(client, key)
 	})
 
 	if err != nil {
@@ -73,6 +77,21 @@ func GetSinchWhatsappAccessToken(client string) (string, error) {
 	}
 
 	return v.(string), nil
+}
+
+func loadOrFetchWAToken(client, key string) (string, error) {
+	if token, ok := peekWAToken(key); ok {
+		return token, nil
+	}
+
+	tok, err := fetchSinchWhatsappToken(client)
+	if err != nil {
+		return "", err
+	}
+
+	storeWAToken(key, tok)
+	scheduleWATokenRefresh(client, key, tok)
+	return tok.AccessToken, nil
 }
 
 func peekWAToken(key string) (string, bool) {
@@ -103,8 +122,28 @@ func storeWAToken(key string, tok *extapimodels.SinchTokenResponse) {
 		refreshToken: tok.RefreshToken,
 		expiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
 	}
-
 	waTokenMu.Unlock()
+}
+
+// storeWATokenIfGen stores tok only when the cache generation still matches the
+// snapshot taken before network I/O (invalidate bumps gen).
+func storeWATokenIfGen(key string, expectedGen uint64, tok *extapimodels.SinchTokenResponse) bool {
+	expiresIn := tok.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 60
+	}
+
+	waTokenMu.Lock()
+	defer waTokenMu.Unlock()
+	if waTokenGen[key] != expectedGen {
+		return false
+	}
+	waTokenStore[key] = &waTokenEntry{
+		accessToken:  tok.AccessToken,
+		refreshToken: tok.RefreshToken,
+		expiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
+	}
+	return true
 }
 
 func scheduleWATokenRefresh(client, key string, tok *extapimodels.SinchTokenResponse) {
@@ -116,19 +155,25 @@ func scheduleWATokenRefresh(client, key string, tok *extapimodels.SinchTokenResp
 	wait := time.Duration(expiresIn-5) * time.Second
 	go func() {
 		time.Sleep(wait)
-		_, _, _ = waTokenSF.Do(key+":refresh", func() (interface{}, error) {
+		// Same singleflight key as Get — coalesces with expired-token fetches.
+		_, _, _ = waTokenSF.Do(key, func() (interface{}, error) {
+			if token, ok := peekWAToken(key); ok {
+				return token, nil
+			}
+
 			waTokenMu.RLock()
 			entry := waTokenStore[key]
-			waTokenMu.RUnlock()
-
-			if entry == nil {
-				return nil, nil
+			gen := waTokenGen[key]
+			var refreshTok string
+			if entry != nil {
+				refreshTok = entry.refreshToken
 			}
+			waTokenMu.RUnlock()
 
 			var newTok *extapimodels.SinchTokenResponse
 			var err error
-			if strings.TrimSpace(entry.refreshToken) != "" {
-				newTok, err = refreshSinchWhatsappToken(entry.refreshToken)
+			if strings.TrimSpace(refreshTok) != "" {
+				newTok, err = refreshSinchWhatsappToken(refreshTok)
 			}
 
 			if err != nil || newTok == nil || newTok.AccessToken == "" {
@@ -139,7 +184,12 @@ func scheduleWATokenRefresh(client, key string, tok *extapimodels.SinchTokenResp
 				return nil, err
 			}
 
-			storeWAToken(key, newTok)
+			if !storeWATokenIfGen(key, gen, newTok) {
+				if token, ok := peekWAToken(key); ok {
+					return token, nil
+				}
+				return loadOrFetchWAToken(client, key)
+			}
 			scheduleWATokenRefresh(client, key, newTok)
 			return newTok.AccessToken, nil
 		})
@@ -156,6 +206,16 @@ func waTokenCacheKey(client string) string {
 }
 
 func fetchSinchWhatsappToken(client string) (*extapimodels.SinchTokenResponse, error) {
+	waTokenMu.RLock()
+	hook := waTokenFetchHook
+	waTokenMu.RUnlock()
+	if hook != nil {
+		return hook(client)
+	}
+	return fetchSinchWhatsappTokenLive(client)
+}
+
+func fetchSinchWhatsappTokenLive(client string) (*extapimodels.SinchTokenResponse, error) {
 	generateTokenURL := config.Configs.SinchWhatsappTokenApiUrl
 	if generateTokenURL == "" {
 		return nil, fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set")

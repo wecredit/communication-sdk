@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	whatsappPayload "github.com/wecredit/communication-sdk/internal/channels/whatsapp/whatsappPayload"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
 
 func GetTimesUtilityPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
@@ -15,20 +15,22 @@ func GetTimesUtilityPayload(timesApiModel extapimodels.WhatsappRequestBody) (map
 	fmt.Println("Process: ", timesApiModel.Process)
 
 	components := []map[string]interface{}{}
-	if positional := whatsappPayload.PositionalBodyParams(timesApiModel.TemplateVariableValues); len(positional) > 0 {
+	if bodyParams := whatsappPayload.BodyParams(timesApiModel); len(bodyParams) > 0 {
 		components = append(components, map[string]interface{}{
 			"type":       "body",
-			"parameters": positional,
+			"parameters": bodyParams,
 		})
 	}
 
-	// Handling For Dynamic Link
+	// Hermis Times utility: button text is DynamicMobile when <mobile> is present.
 	if strings.Contains(buttonURL, "<mobile>") {
-		if strings.Contains(timesApiModel.Process, "indusind_holi") {
-			buttonURL = fmt.Sprintf("WA%s", strings.Replace(timesApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1))
-		} else {
-			buttonURL = strings.Replace(timesApiModel.ButtonLink, "<mobile>", mobileSub, 1)
-		}
+		buttonURL = mobileSub
+		// Legacy SDK-only indusind_holi digit rotation + WA prefix (not in hermis). Kept for reference:
+		// if strings.Contains(timesApiModel.Process, "indusind_holi") {
+		// 	buttonURL = fmt.Sprintf("WA%s", strings.Replace(timesApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1))
+		// } else {
+		// 	buttonURL = strings.Replace(timesApiModel.ButtonLink, "<mobile>", mobileSub, 1)
+		// }
 
 		components = append(components, map[string]interface{}{
 			"type":     "button",

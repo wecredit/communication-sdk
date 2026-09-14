@@ -46,8 +46,10 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 	}
 	sinchApiModel.AccessToken = accessToken
 
-	responseBody = sendSinchWhatsappMessage(sinchApiModel)
-	if isSinchWhatsappUnauthorized(responseBody) {
+	// Hermis mints a token per send with no 401 retry. SDK caches tokens and
+	// refetches once on HTTP 401 only (explicit status, not message substring).
+	responseBody, unauthorized := sendSinchWhatsappMessage(sinchApiModel)
+	if unauthorized {
 		cache.InvalidateSinchWhatsappToken(sinchApiModel.Client)
 		accessToken, err = cache.GetSinchWhatsappAccessToken(sinchApiModel.Client)
 		if err != nil {
@@ -56,19 +58,19 @@ func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapim
 			return responseBody
 		}
 		sinchApiModel.AccessToken = accessToken
-		responseBody = sendSinchWhatsappMessage(sinchApiModel)
+		responseBody, _ = sendSinchWhatsappMessage(sinchApiModel)
 	}
 	return responseBody
 }
 
-func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
+func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (extapimodels.WhatsappResponse, bool) {
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 
 	// Message-send RPS only (token path is outside this bucket — OQ-5 / Tushar).
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, sinchApiModel.Client)); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
-		return responseBody
+		return responseBody, false
 	}
 
 	sendMessageURL := config.Configs.SinchWhatsappMessageApiUrl
@@ -91,28 +93,25 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) ex
 	if rawBody != "" {
 		responseBody.RawResponse = rawBody
 	}
-	
+
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
 		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, sinchApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
 		}
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
-		if statusCode == http.StatusUnauthorized {
-			responseBody.ResponseMessage = "unauthorized: " + responseBody.ResponseMessage
-		}
-		return responseBody
+		return responseBody, statusCode == http.StatusUnauthorized
 	}
 
 	if statusCode == http.StatusUnauthorized {
 		responseBody.ResponseMessage = "unauthorized"
-		return responseBody
+		return responseBody, true
 	}
 
 	if strings.TrimSpace(apiResponse.Success) == "" {
 		utils.Error(fmt.Errorf("success field is missing in Sinch WA API response"))
 		responseBody.ResponseMessage = "failed to send message due to missing success field"
-		return responseBody
+		return responseBody, false
 	}
 
 	if apiResponse.Success == "true" {
@@ -130,11 +129,7 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) ex
 	}
 
 	fmt.Println("SINCH FINAL WHATSAPP RESPONSE:", responseBody)
-	return responseBody
-}
-
-func isSinchWhatsappUnauthorized(resp extapimodels.WhatsappResponse) bool {
-	return strings.Contains(strings.ToLower(resp.ResponseMessage), "unauthorized")
+	return responseBody, false
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {

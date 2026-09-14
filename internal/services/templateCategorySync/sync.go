@@ -125,6 +125,9 @@ func syncTimesPanel(listURL, apiID, baseURLForLog string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if err := utils.ErrIfHTTPNotOK(apiResponse); err != nil {
+		return 0, fmt.Errorf("Times template list: %w", err)
+	}
 	status, _ := apiResponse["status"].(bool)
 	if !status {
 		return 0, fmt.Errorf("list returned status=false")
@@ -285,6 +288,9 @@ func syncPinnaclePanel(headers map[string]string, baseURL, appID string) (int, e
 		if err != nil {
 			return total, err
 		}
+		if err := utils.ErrIfHTTPNotOK(apiResponse); err != nil {
+			return total, fmt.Errorf("Pinnacle template list: %w", err)
+		}
 		gotPage = true
 		page, _ := apiResponse["data"].([]interface{})
 		for _, item := range page {
@@ -432,6 +438,8 @@ func ComputeCategoryUpdate(templateName, apiCategory, apiStatus string) ApplyCat
 }
 
 func applyCategoryUpdate(vendor, templateName, apiCategory, apiStatus string) (int, error) {
+	// Hermis updates by template_name only with no advisory/mutation lock against
+	// admin template APIs — same last-writer-wins columns here.
 	computed := ComputeCategoryUpdate(templateName, apiCategory, apiStatus)
 	updates := map[string]interface{}{
 		"ProviderTemplateCategory": computed.ProviderCategory,
