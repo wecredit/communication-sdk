@@ -1,131 +1,141 @@
 package sinchWhatsapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
+	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// sinchAPIResponse is the Sinch WA send contract (success is the string "true"/"false").
+type sinchAPIResponse struct {
+	Success     string `json:"success"`
+	ResponseID  string `json:"responseId"`
+	Description []struct {
+		ErrorCode        string `json:"errorCode"`
+		ErrorDescription string `json:"errorDescription"`
+	} `json:"description"`
+}
+
 func HitSinchWhatsappApi(sinchApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
-	// var response apiModels.WpApiResponseData
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 
-	headers := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
-	generateTokenURL := config.Configs.SinchWhatsappTokenApiUrl
-	if generateTokenURL == "" {
-		utils.Error(fmt.Errorf("SINCH_GENERATE_TOKEN_API_URL is not set"))
-		responseBody.ResponseMessage = "SINCH_GENERATE_TOKEN_API_URL is not set"
+	// AppId must come from TemplateDetails (PopulateWhatsappFields). Stale Client
+	// hardcodes (wecreditpd / creditseapd) removed — live WeCredit Sinch uses wecreditpd4.
+	if strings.TrimSpace(sinchApiModel.AppId) == "" {
+		responseBody.ResponseMessage = "sinch AppId missing from template details"
 		return responseBody
 	}
 
-	var tokenPayload map[string]string
-	if sinchApiModel.Client == variables.CreditSea { // For CreditSea, use the specific credentials
-		tokenPayload = map[string]string{
-			"grant_type": config.Configs.SinchWhatsappGrantType,
-			"client_id":  config.Configs.SinchWhatsappClientId,
-			"username":   config.Configs.CreditSeaSinchWhatsappUsername,
-			"password":   config.Configs.CreditSeaSinchWhatsappPassword,
-		}
-		sinchApiModel.AppId = "creditseapd"
-	} else {
-		tokenPayload = map[string]string{
-			"grant_type": config.Configs.SinchWhatsappGrantType,
-			"client_id":  config.Configs.SinchWhatsappClientId,
-			"username":   config.Configs.SinchWhatsappUserName,
-			"password":   config.Configs.SinchWhatsappPassword,
-		}
-		sinchApiModel.AppId = "wecreditpd"
-	}
-	tokenResponse, err := utils.ApiHit("POST", generateTokenURL, headers, "", "", tokenPayload, variables.ContentTypeFormEncoded)
+	accessToken, err := cache.GetSinchWhatsappAccessToken(sinchApiModel.Client)
 	if err != nil {
-		utils.Error(fmt.Errorf("error occured while hitting into Sinch Generate Token API: %v", err))
-	}
-
-	if accessToken, ok := tokenResponse["access_token"].(string); ok {
-		sinchApiModel.AccessToken = accessToken
-	} else {
-		responseBody.ResponseMessage = "failed to generate access token"
+		utils.Error(fmt.Errorf("sinch WA token: %v", err))
+		responseBody.ResponseMessage = err.Error()
 		return responseBody
+	}
+	sinchApiModel.AccessToken = accessToken
+
+	// Hermis mints a token per send with no 401 retry. SDK caches tokens and
+	// refetches once on HTTP 401 only (explicit status, not message substring).
+	responseBody, unauthorized := sendSinchWhatsappMessage(sinchApiModel)
+	if unauthorized {
+		cache.InvalidateSinchWhatsappToken(sinchApiModel.Client)
+		accessToken, err = cache.GetSinchWhatsappAccessToken(sinchApiModel.Client)
+		if err != nil {
+			utils.Error(fmt.Errorf("sinch WA token refetch after 401: %v", err))
+			responseBody.ResponseMessage = err.Error()
+			return responseBody
+		}
+		sinchApiModel.AccessToken = accessToken
+		responseBody, _ = sendSinchWhatsappMessage(sinchApiModel)
+	}
+	return responseBody
+}
+
+func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (extapimodels.WhatsappResponse, bool) {
+	var responseBody extapimodels.WhatsappResponse
+	responseBody.IsSent = false
+
+	// Message-send RPS only (token path is outside this bucket — OQ-5 / Tushar).
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, sinchApiModel.Client)); err != nil {
+		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody, false
 	}
 
 	sendMessageURL := config.Configs.SinchWhatsappMessageApiUrl
-
-	// Getting the API URL
-	apiUrl := sendMessageURL
-
-	// Setting the API header
 	apiHeader := map[string]string{
 		"Authorization": "Bearer " + sinchApiModel.AccessToken,
 		"Content-Type":  "application/json",
 	}
 
-	// Get api payload
 	apiPayload, err := getPayload(sinchApiModel)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
-	// fmt.Println("WHatsapp payload:", apiPayload)
-
 	jsonBytes, _ := json.Marshal(apiPayload)
+	responseBody.RawPayload = string(jsonBytes)
 	utils.Debug(fmt.Sprintf("Sinch Whatsapp payload for mobile: %s and templateName: %s is: %s", sinchApiModel.Mobile, sinchApiModel.TemplateName, string(jsonBytes)))
 
-	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
+	var apiResponse sinchAPIResponse
+	statusCode, rawBody, err := utils.ApiHitJSON("POST", sendMessageURL, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
+	if rawBody != "" {
+		responseBody.RawResponse = rawBody
+	}
+
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Sinch Wp API: %v", err))
 		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, sinchApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
 			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
 		}
 		responseBody.ResponseMessage = fmt.Sprintf("error occured while hitting into Sinch Wp API: %v", err)
-		return responseBody
+		return responseBody, statusCode == http.StatusUnauthorized
 	}
 
-	success, ok := apiResponse["success"].(string)
-	if !ok {
-		utils.Error(fmt.Errorf("success field is missing or not a string in API response"))
-		responseBody.IsSent = false
+	if statusCode == http.StatusUnauthorized {
+		responseBody.ResponseMessage = "unauthorized"
+		return responseBody, true
+	}
+
+	if strings.TrimSpace(apiResponse.Success) == "" {
+		utils.Error(fmt.Errorf("success field is missing in Sinch WA API response"))
 		responseBody.ResponseMessage = "failed to send message due to missing success field"
-		return responseBody
+		return responseBody, false
 	}
 
-	if success == "true" {
+	if apiResponse.Success == "true" {
 		responseBody.IsSent = true
 		responseBody.ResponseMessage = "Message submitted successfully"
-		responseBody.TransactionId = apiResponse["responseId"].(string)
+		responseBody.TransactionId = strings.TrimSpace(apiResponse.ResponseID)
 	} else {
 		responseBody.IsSent = false
-		description, ok := apiResponse["description"].([]interface{})
-		if ok && len(description) > 0 {
-			firstDesc, ok := description[0].(map[string]interface{})
-			if ok {
-				errorCode, _ := firstDesc["errorCode"].(string)
-				errorDesc, _ := firstDesc["errorDescription"].(string)
-				responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s", errorCode, errorDesc)
-			}
+		if len(apiResponse.Description) > 0 {
+			responseBody.ResponseMessage = fmt.Sprintf("Error Code: %s, Description: %s",
+				apiResponse.Description[0].ErrorCode, apiResponse.Description[0].ErrorDescription)
 		} else {
 			responseBody.ResponseMessage = "failed to send message"
 		}
 	}
 
 	fmt.Println("SINCH FINAL WHATSAPP RESPONSE:", responseBody)
-
-	return responseBody
+	return responseBody, false
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	if strings.Contains(sinchApiModel.TemplateName, "utility") {
-		// For Utility Payload
 		fmt.Println("Generating Utility Payload for Sinch WhatsApp API")
 		return sinchpayloads.GetSinchUtilityPayload(sinchApiModel), nil
-	} else {
-		return sinchpayloads.GetSinchMediaPayload(sinchApiModel), nil
 	}
+	return sinchpayloads.GetSinchMediaPayload(sinchApiModel), nil
 }

@@ -45,11 +45,20 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 	template.TemplateName = strings.TrimSpace(template.TemplateName)
 	template.TemplateVariables = strings.TrimSpace(template.TemplateVariables)
 	template.SmsFallbackVariables = strings.TrimSpace(template.SmsFallbackVariables)
+	template.AppId = strings.TrimSpace(template.AppId)
+	template.ProviderTemplateCategory = strings.TrimSpace(template.ProviderTemplateCategory)
+	template.LanguageCode = strings.TrimSpace(template.LanguageCode)
+	template.CampaignId = strings.TrimSpace(template.CampaignId)
+	template.CtaId = strings.TrimSpace(template.CtaId)
+	template.WabaNumber = strings.TrimSpace(template.WabaNumber)
 }
 
 // validateCreateDuplicate rejects a repeated create with identical business
 // fields. IsActive is deliberately excluded: callers should update the
 // existing row when only its active state needs to change.
+// AppId / WabaNumber / LanguageCode / CampaignId / CtaId match hermis template
+// identity (whatsapp_process_temp.app_id + waba/cta metadata). ProviderTemplateCategory
+// is owned by category sync and is not part of create uniqueness.
 func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) error {
 	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 		Where(
@@ -58,13 +67,15 @@ func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) er
 			AND DltTemplateId = ? AND TemplateEntityId = ? AND TemplateHeader = ?
 			AND TemplateText = ? AND Link = ? AND TemplateCategory = ?
 			AND TemplateVariables = ? AND SmsFallbackVariables = ?
-			AND Subject = ? AND FromEmail = ?`,
+			AND Subject = ? AND FromEmail = ?
+			AND AppId = ? AND LanguageCode = ? AND CampaignId = ? AND CtaId = ? AND WabaNumber = ?`,
 			template.Client, template.Channel, template.Process, template.Vendor,
 			template.TemplateName, template.ImageId, template.ImageUrl,
 			template.DltTemplateId, template.TemplateEntityId, template.TemplateHeader,
 			template.TemplateText, template.Link, template.TemplateCategory,
 			template.TemplateVariables, template.SmsFallbackVariables,
 			template.Subject, template.FromEmail,
+			template.AppId, template.LanguageCode, template.CampaignId, template.CtaId, template.WabaNumber,
 		)
 
 	if template.Stage == nil {
@@ -100,7 +111,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	switch template.Channel {
-	case "SMS", "RCS", "WHATSAPP", "EMAIL":
+	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH":
 	default:
 		return fmt.Errorf("unsupported channel %q", template.Channel)
 	}

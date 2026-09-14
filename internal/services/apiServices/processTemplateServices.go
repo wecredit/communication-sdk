@@ -300,6 +300,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
 					"IsActive", "TemplateText", "Link", "UpdatedOn", "UpdatedBy", "TemplateCategory",
 					"TemplateVariables", "SmsFallbackVariables", "Subject", "FromEmail",
+					"AppId", "ProviderTemplateCategory", "LanguageCode", "CampaignId", "CtaId", "WabaNumber",
 				).
 				Updates(&saved)
 			if result.Error != nil {

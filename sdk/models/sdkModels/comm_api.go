@@ -1,6 +1,10 @@
 package sdkModels
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type CommApiRequestBody struct {
 	DbClient            *gorm.DB `json:"-" gorm:"-"`
@@ -41,8 +45,16 @@ type CommApiRequestBody struct {
 	SourceRowId int64  `json:"sourceRowId,omitempty" gorm:"-"`
 
 	// CampaignDate is the Asia/Kolkata date portion of CommMarketingInput.ScheduledAt.
-	// It is immutable across SQS retries and stale source-row reclaims.
 	CampaignDate string `json:"campaignDate,omitempty" gorm:"-"`
+
+	// Hermis-parity marketing WhatsApp fields (optional; empty for lender paths).
+	Tag1          string `json:"tag1,omitempty" gorm:"-"`
+	Tag2          string `json:"tag2,omitempty" gorm:"-"`
+	DynamicMobile string `json:"dynamicMobile,omitempty" gorm:"-"`
+	// AppId overlays TemplateDetails.AppId when template AppId is empty (WA marketing).
+	AppId string `json:"appId,omitempty" gorm:"-"`
+	// ScheduledAt is the input campaign time (hermis Execution_time) for output parity.
+	ScheduledAt time.Time `json:"scheduledAt,omitempty" gorm:"-"`
 
 	// Monitoring metadata is omitted for ordinary production payloads so their wire shape is unchanged.
 	IsMonitorCopy    bool   `json:"isMonitorCopy,omitempty" gorm:"-"`

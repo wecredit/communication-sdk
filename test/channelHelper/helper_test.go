@@ -211,3 +211,29 @@ func TestFetchTemplateDataSameVendorStageFallback(t *testing.T) {
 		t.Fatalf("TemplateText = %v", data["TemplateText"])
 	}
 }
+
+func TestFetchTemplateDataByReferenceMatchesByTemplateName(t *testing.T) {
+	templates := map[string]map[string]interface{}{
+		"a": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "SINCH",
+			"Process": "camp_a", "AppId": "app-a",
+		},
+		"b": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa_other",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "SINCH",
+			"Process": "camp_a", "AppId": "app-b",
+		},
+	}
+	msg := sdkModels.CommApiRequestBody{
+		ProcessName: "camp_a", Client: "wecredit", Channel: "WHATSAPP", Vendor: "SINCH",
+		TemplateReference: "tpl_wa",
+	}
+	data, _, err := channelHelper.FetchTemplateDataByReference(msg, templates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data["AppId"] != "app-a" {
+		t.Fatalf("AppId = %v, want app-a", data["AppId"])
+	}
+}

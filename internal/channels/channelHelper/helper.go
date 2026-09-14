@@ -249,6 +249,21 @@ func PopulateWhatsappFields(req *extapimodels.WhatsappRequestBody, data map[stri
 	if val, ok := data["TemplateCategory"].(int64); ok {
 		req.TemplateCategory = fmt.Sprintf("%d", val)
 	}
+	if val, ok := data["AppId"].(string); ok {
+		req.AppId = val
+	}
+	if val, ok := data["LanguageCode"].(string); ok {
+		req.LanguageCode = val
+	}
+	if val, ok := data["CampaignId"].(string); ok {
+		req.CampaignId = val
+	}
+	if val, ok := data["CtaId"].(string); ok {
+		req.CtaId = val
+	}
+	if val, ok := data["WabaNumber"].(string); ok {
+		req.WabaNumber = val
+	}
 }
 
 func PopulateSmsFields(req *extapimodels.SmsRequestBody, data map[string]interface{}) {
