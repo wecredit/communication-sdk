@@ -41,6 +41,8 @@ type SmsRequestBody struct {
 	Source       string `json:"Source,omitempty"`
 	SourceRowId  int64  `json:"SourceRowId,omitempty"`
 	CampaignDate string `json:"CampaignDate,omitempty"`
+	// Base maps to Pinnacle SMS message.extrares for vendor reports.
+	Base string `json:"Base,omitempty"`
 }
 
 type SmsResponse struct {

@@ -46,6 +46,9 @@ type CommApiRequestBody struct {
 
 	// CampaignDate is the Asia/Kolkata date portion of CommMarketingInput.ScheduledAt.
 	CampaignDate string `json:"campaignDate,omitempty" gorm:"-"`
+	// Base is the CommMarketingInput.Base value for Pinnacle SMS reports (extrares).
+	// ZapCash/legacy leave this empty; empty values omit extrares on the wire.
+	Base string `json:"base,omitempty" gorm:"-"`
 
 	// Hermis-parity marketing WhatsApp fields (optional; empty for lender paths).
 	Tag1          string `json:"tag1,omitempty" gorm:"-"`
