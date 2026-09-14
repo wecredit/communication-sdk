@@ -395,12 +395,44 @@ func fetchPinnaclePanelTemplates(headers map[string]string, baseURL, appID strin
 		out = append(out, parseAPITemplateList(page)...)
 		paging, _ := apiResponse["paging"].(map[string]interface{})
 		next, _ := paging["next"].(string)
-		nextURL = strings.TrimSpace(next)
+		nextURL, err = SanitizePagingNext(baseURL, next)
+		if err != nil {
+			return out, err
+		}
 	}
 	if !gotPage {
 		return nil, fmt.Errorf("no response pages")
 	}
 	return out, nil
+}
+
+// SanitizePagingNext allows following vendor paging.next only when scheme+host match baseURL.
+// Empty next returns "". Rejects credential forwarding to an arbitrary host.
+func SanitizePagingNext(baseURL, next string) (string, error) {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return "", nil
+	}
+
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", fmt.Errorf("invalid paging base URL")
+	}
+
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid paging next URL")
+	}
+
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", fmt.Errorf("paging next rejected: unsupported scheme %q", u.Scheme)
+	}
+
+	if !strings.EqualFold(base.Scheme, u.Scheme) || !strings.EqualFold(base.Host, u.Host) {
+		return "", fmt.Errorf("paging next rejected: host %q does not match base %q", u.Host, base.Host)
+	}
+
+	return u.String(), nil
 }
 
 func allowSingleHostFallback() bool {

@@ -1,6 +1,7 @@
 package templateCategorySync
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,7 +14,8 @@ import (
 )
 
 // Batch failure policy: log + metric, one chunk retry, split-in-half retry, then per-name
-// applyCategoryUpdate (time.Now() for CategoryUpdatedOn). Cron self-heals on next tick.
+// applyCategoryUpdate (time.Now() for CategoryUpdatedOn). Split still applies both halves;
+// leaf failures are joined and returned so the cron is not marked fully successful.
 
 // flushCategoryUpdates applies batched UPDATEs for all pending names for one vendor.
 func flushCategoryUpdates(vendor string, pending map[string]TemplateCategoryRow, syncRunAt time.Time) (int, error) {
@@ -87,11 +89,11 @@ func applyChunkWithFailurePolicy(vendor string, names []string, computed ApplyCa
 		return applyCategoryUpdate(vendor, row.Name, row.Category, row.Status)
 	}
 
+	// Still apply both halves (partial progress); surface any leaf failures to the cron.
 	mid := len(names) / 2
-	n1, _ := applyChunkWithFailurePolicy(vendor, names[:mid], computed, syncRunAt, pending)
-	n2, _ := applyChunkWithFailurePolicy(vendor, names[mid:], computed, syncRunAt, pending)
-
-	return n1 + n2, nil
+	n1, err1 := applyChunkWithFailurePolicy(vendor, names[:mid], computed, syncRunAt, pending)
+	n2, err2 := applyChunkWithFailurePolicy(vendor, names[mid:], computed, syncRunAt, pending)
+	return n1 + n2, errors.Join(err1, err2)
 }
 
 func applyBatchCategoryUpdate(vendor string, names []string, computed ApplyCategoryUpdateResult, syncRunAt time.Time) (int, error) {
