@@ -301,7 +301,17 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 		case "SMS":
 			query = query.Where("DltTemplateId = ?", template.DltTemplateId)
 		case "WHATSAPP":
+			// Active uniqueness includes AppId so one TemplateName can have multiple
+			// WABA apps (equal-distribution / throughput). Empty AppId matches empty.
 			query = query.Where("TemplateName = ?", template.TemplateName)
+			
+			appID := strings.TrimSpace(template.AppId)
+			if appID == "" {
+				query = query.Where("(AppId IS NULL OR AppId = '')")
+			} else {
+				query = query.Where("AppId = ?", appID)
+			}
+			
 		case "RCS", "EMAIL":
 			query = query.Where("TemplateName = ?", template.TemplateName)
 		}
