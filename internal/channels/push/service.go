@@ -277,7 +277,22 @@ func (s *Service) sendToken(
 		return nil
 	}
 
-	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, nil, observer)
+	// Before a second FCM attempt, confirm our blank claim was not reclaimed or finalized.
+	guard := func(context.Context) (bool, error) {
+		exists, txn, errMsg, getErr := s.claims.Get(field)
+		if getErr != nil {
+			return false, getErr
+		}
+		if !exists {
+			return false, nil
+		}
+		if strings.TrimSpace(txn) != "" || strings.TrimSpace(errMsg) != "" {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, guard, observer)
 	if err != nil {
 		return "", false, nil, err
 	}
@@ -309,7 +324,12 @@ func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBod
 	}
 
 	if err := claims.Claim(field); err != nil {
-		return true, nil
+		// HSetNX race: another worker already claimed → skip send (same as SMS).
+		// Any other Redis error must surface so the message is not Ack'd.
+		if strings.Contains(err.Error(), "already exists") {
+			return true, nil
+		}
+		return false, err
 	}
 	return false, nil
 }

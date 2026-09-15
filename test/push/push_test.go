@@ -339,6 +339,56 @@ func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
 	}
 }
 
+func TestPushClaimRedisErrorDoesNotSkip(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	stage := 1.0
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
+		Id: 1, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
+		Vendor: "FCM", TemplateName: "offer-1", TemplateHeader: "Hi",
+		TemplateText: "Body", IsActive: true,
+	}})
+	if err != nil {
+		t.Fatalf("build template snapshot: %v", err)
+	}
+	if err := cache.InstallTemplateSnapshot(snapshot); err != nil {
+		t.Fatalf("install template snapshot: %v", err)
+	}
+
+	claims := &failingClaimStore{err: errors.New("redis connection refused")}
+	executor := &fakeExecutor{}
+	service, err := push.NewService(claims, executor)
+	if err != nil {
+		t.Fatalf("new PUSH service: %v", err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1,
+		DeviceTokens: []string{"token-a"},
+	})
+	if err == nil {
+		t.Fatal("expected claim redis error to surface")
+	}
+	if result.AckSQS || result.Skipped != 0 || len(executor.payloads) != 0 {
+		t.Fatalf("result = %+v payloads=%d, want no ack/skip and no FCM", result, len(executor.payloads))
+	}
+}
+
+// failingClaimStore returns a hard Redis error on Claim (not "already exists").
+type failingClaimStore struct {
+	err error
+}
+
+func (c *failingClaimStore) Get(string) (bool, string, string, error) {
+	return false, "", "", nil
+}
+func (c *failingClaimStore) Claim(string) error { return c.err }
+func (c *failingClaimStore) ReclaimBlank(string) (bool, error) {
+	return false, nil
+}
+func (c *failingClaimStore) SetTransactionID(string, string) error { return nil }
+func (c *failingClaimStore) SetErrorMessage(string, string) error  { return nil }
+
 func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
 	t.Helper()
 	var status int64
@@ -361,6 +411,27 @@ func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
 		t.Fatal("failed to seed ClientsData cache")
 	}
 	c.Wait()
+}
+
+func TestRetryGuardCancelsStaleSecondAttempt(t *testing.T) {
+	sender := &sequenceSender{responses: []fcm.SendResponse{
+		{HTTPStatus: http.StatusServiceUnavailable},
+		{HTTPStatus: http.StatusOK, MessageID: "should-not-send"},
+	}}
+	executor, err := fcm.NewRetryExecutor(sender)
+	if err != nil {
+		t.Fatalf("new retry executor: %v", err)
+	}
+	result, err := executor.ExecuteWithObserver(context.Background(), "zapcash", fcm.SendRequest{},
+		func(context.Context) (bool, error) { return false, nil },
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if sender.calls != 1 || result.Outcome != fcm.OutcomeCancelledStale || result.Code != "STALE_BEFORE_RETRY" {
+		t.Fatalf("calls=%d result=%+v, want one attempt then cancelled_stale", sender.calls, result)
+	}
 }
 
 func TestAttemptObserverFailurePreventsProviderCall(t *testing.T) {

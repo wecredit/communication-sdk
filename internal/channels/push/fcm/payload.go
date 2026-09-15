@@ -89,8 +89,8 @@ func BuildSendRequest(token, title, body string, request sdkModels.CommApiReques
 	}}, nil
 }
 
-// BuildDataOnlyRequest is kept as an alias for older call sites/tests during the
-// notification-parity trial. Prefer BuildSendRequest.
+// BuildDataOnlyRequest is a deprecated alias of BuildSendRequest (notification +
+// data + Android). Prefer BuildSendRequest for new call sites.
 func BuildDataOnlyRequest(token, title, body string, request sdkModels.CommApiRequestBody) (SendRequest, error) {
 	return BuildSendRequest(token, title, body, request)
 }
