@@ -149,12 +149,21 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 
 		if !claimed {
 			rollbackSendClaims()
-			dupErr := fmt.Errorf(
-				"campaign duplicate: channel %s process %s event_id %s already sent today",
-				strings.ToUpper(strings.TrimSpace(data.Channel)),
-				strings.ToLower(strings.TrimSpace(data.ProcessName)),
-				eventID,
-			)
+			client := strings.ToLower(strings.TrimSpace(data.Client))
+			channel := strings.ToUpper(strings.TrimSpace(data.Channel))
+			var dupErr error
+
+			if client == "wecredit" && channel == "WHATSAPP" {
+				dupErr = fmt.Errorf("whatsapp already sent today for mobile %s", strings.TrimSpace(data.Mobile))
+			} else {
+				dupErr = fmt.Errorf(
+					"campaign duplicate: channel %s process %s event_id %s already sent today",
+					channel,
+					strings.ToLower(strings.TrimSpace(data.ProcessName)),
+					eventID,
+				)
+			}
+
 			utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
 			return sdkModels.CommApiResponseBody{Success: false}, dupErr
 		}

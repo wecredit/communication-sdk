@@ -44,7 +44,7 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 		return errors.New("lenderName is required")
 	}
 	switch request.CommType {
-	case "SMS", "RCS", "WHATSAPP", "EMAIL":
+	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH":
 	default:
 		return fmt.Errorf("unsupported commType %q", request.CommType)
 	}

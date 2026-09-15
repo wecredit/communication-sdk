@@ -114,7 +114,17 @@ func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, c
 		}
 		return fmt.Sprintf("sms\x00%s\x00%d\x00%s", process, row.DltTemplateId, base), ""
 
-	case "RCS", "WHATSAPP", "EMAIL", "PUSH":
+	case "WHATSAPP":
+		name := strings.TrimSpace(row.TemplateName)
+		if name == "" {
+			return "", "reference template has no TemplateName"
+		}
+		// AppId is part of WA active identity so the same TemplateName can exist
+		// under multiple WABA apps (throughput). Empty AppId still participates.
+		appID := strings.ToLower(strings.TrimSpace(row.AppId))
+		return "named\x00" + process + "\x00" + strings.ToLower(name) + "\x00" + appID + "\x00" + base, ""
+
+	case "RCS", "EMAIL", "PUSH":
 		name := strings.TrimSpace(row.TemplateName)
 		if name == "" {
 			return "", "reference template has no TemplateName"
@@ -161,6 +171,14 @@ func templateCacheData(row apiModels.Templatedetails) map[string]interface{} {
 		"SmsFallbackVariables": row.SmsFallbackVariables,
 		"Subject":              row.Subject,
 		"FromEmail":            row.FromEmail,
+		"AppId":                row.AppId,
+		"ProviderTemplateCategory": row.ProviderTemplateCategory,
+		"LanguageCode":         row.LanguageCode,
+		"CampaignId":           row.CampaignId,
+		"CtaId":                row.CtaId,
+		"WabaNumber":           row.WabaNumber,
+		"Error":                row.Error,
+		"CategoryUpdatedOn":    row.CategoryUpdatedOn,
 	}
 }
 

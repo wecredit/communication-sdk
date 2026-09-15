@@ -6,18 +6,20 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/helper"
+	whatsappPayload "github.com/wecredit/communication-sdk/internal/channels/whatsapp/whatsappPayload"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
 
 func GetSinchMediaPayload(sinchApiModel extapimodels.WhatsappRequestBody) map[string]interface{} {
-	var buttonURL string
-
-	if strings.Contains(sinchApiModel.Process, "poonawalla") {
-		// Modify the mobile format
-		buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", sinchApiModel.Mobile[len(sinchApiModel.Mobile)-5:]+sinchApiModel.Mobile[:5], 1)
-	} else {
-		buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", sinchApiModel.Mobile, 1)
-	}
+	mobileSub := whatsappPayload.ButtonMobileSubstitute(sinchApiModel)
+	// Hermis: plain <mobile> → dynamic_mobile replace.
+	buttonURL := whatsappPayload.SubstituteButtonLinkMobile(sinchApiModel.ButtonLink, mobileSub)
+	// Legacy SDK-only poonawalla digit rotation (not in hermis). Kept for reference:
+	// if strings.Contains(sinchApiModel.Process, "poonawalla") {
+	// 	buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub[len(mobileSub)-5:]+mobileSub[:5], 1)
+	// } else {
+	// 	buttonURL = strings.Replace(sinchApiModel.ButtonLink, "<mobile>", mobileSub, 1)
+	// }
 
 	return map[string]interface{}{
 		"recipient_type": "individual",

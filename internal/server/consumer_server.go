@@ -46,6 +46,7 @@ func StartConsumer(port string) {
 
 	go services.ConsumerService(config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
+	go cron.StartWhatsappTemplateCategorySyncCron()
 	utils.Debug(fmt.Sprintf("Starting Consumer Server on port %s", port))
 
 	// Set up Gin router

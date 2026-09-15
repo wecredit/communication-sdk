@@ -152,6 +152,21 @@ func TestTemplateCreateRequestPreservesActiveFlag(t *testing.T) {
 	}
 }
 
+func TestTemplateUpdateRequestAppliesWhatsappProviderFields(t *testing.T) {
+	appID := "wecreditpd4"
+	lang := "en"
+	request := apiModels.TemplateUpdateRequest{
+		AppId:        &appID,
+		LanguageCode: &lang,
+	}
+	template := apiModels.Templatedetails{}
+	request.Apply(&template)
+
+	if template.AppId != "wecreditpd4" || template.LanguageCode != "en" {
+		t.Fatalf("Apply provider fields = %+v", template)
+	}
+}
+
 func TestTemplateUpdateRequestCanClearStage(t *testing.T) {
 	stage := 3.5
 	template := apiModels.Templatedetails{Stage: &stage}

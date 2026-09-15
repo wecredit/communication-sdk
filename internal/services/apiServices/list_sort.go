@@ -58,16 +58,18 @@ func normalizeSortDir(raw string, defaultDesc bool) (string, error) {
 
 func templateSortAllowlist() map[string]listSortColumn {
 	return map[string]listSortColumn{
-		"client":       {SQL: "Client"},
-		"process":      {SQL: "Process"},
-		"channel":      {SQL: "Channel"},
-		"vendor":       {SQL: "Vendor"},
-		"templatename": {SQL: "TemplateName"},
-		"stage":        {SQL: "Stage"},
-		"updatedon":    {SQL: "COALESCE(UpdatedOn, CreatedOn)", DefaultDesc: true},
-		"createdon":    {SQL: "CreatedOn", DefaultDesc: true},
-		"id":           {SQL: "Id", DefaultDesc: true},
-		"isactive":     {SQL: "IsActive"},
+		"client":                     {SQL: "Client"},
+		"process":                    {SQL: "Process"},
+		"channel":                    {SQL: "Channel"},
+		"vendor":                     {SQL: "Vendor"},
+		"templatename":               {SQL: "TemplateName"},
+		"stage":                      {SQL: "Stage"},
+		"appid":                      {SQL: "AppId"},
+		"providertemplatecategory":   {SQL: "ProviderTemplateCategory"},
+		"updatedon":                  {SQL: "COALESCE(UpdatedOn, CreatedOn)", DefaultDesc: true},
+		"createdon":                  {SQL: "CreatedOn", DefaultDesc: true},
+		"id":                         {SQL: "Id", DefaultDesc: true},
+		"isactive":                   {SQL: "IsActive"},
 	}
 }
 

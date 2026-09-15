@@ -1,6 +1,7 @@
 package pinnacleWhatsapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,47 +10,67 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+// pinnacleAPIResponse is the Pinnacle WA send / error body contract.
+type pinnacleAPIResponse struct {
+	Messages []struct {
+		ID string `json:"id"`
+	} `json:"messages"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Data    *struct {
+		Details string `json:"details"`
+	} `json:"data"`
+	Error *struct {
+		Message   string `json:"message"`
+		ErrorData *struct {
+			Details string `json:"details"`
+		} `json:"error_data"`
+	} `json:"error"`
+}
+
 func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) extapimodels.WhatsappResponse {
-	// var response apiModels.WpApiResponseData
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
 
-	var apiUrl, apiKey string
-
-	if pinnacleApiModel.Client == variables.ZapCash {
-		apiUrl = config.Configs.PinnacleZapcashWhatsappMessageApiUrl
-		apiKey = config.Configs.PinnacleZapcashWhatsappApiKey
-	}
-
+	apiUrl, apiKey := resolvePinnacleMessageEndpoint(pinnacleApiModel.Client, pinnacleApiModel.AppId)
 	if apiUrl == "" || apiKey == "" {
-		utils.Error(fmt.Errorf("%s or %s is not set", apiUrl, apiKey))
-		responseBody.ResponseMessage = fmt.Sprintf("%s or %s is not set", apiUrl, apiKey)
+		utils.Error(fmt.Errorf("pinnacle WA message URL or API key is not set"))
+		responseBody.ResponseMessage = "pinnacle WA message URL or API key is not set"
 		return responseBody
 	}
 
-	// Setting the API header
 	apiHeader := map[string]string{
 		"apikey":       apiKey,
 		"Content-Type": "application/json",
 	}
 
-	// Get api payload
-	apiPayload, err := getPayload(pinnacleApiModel)
+	apiPayload, err := GetPinnaclePayload(pinnacleApiModel)
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
+	}
+
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, pinnacleApiModel.Client)); err != nil {
+		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody
 	}
 
 	fmt.Println("Pinnacle Whatsapp payload:", apiPayload)
 
 	jsonBytes, _ := json.Marshal(apiPayload)
+	responseBody.RawPayload = string(jsonBytes)
 	utils.Debug(fmt.Sprintf("Pinnacle Whatsapp payload for mobile: %s and templateName: %s is: %s", pinnacleApiModel.Mobile, pinnacleApiModel.TemplateName, string(jsonBytes)))
 
-	apiResponse, err := utils.ApiHit("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON)
+	var apiResponse pinnacleAPIResponse
+	statusCode, rawBody, err := utils.ApiHitJSON("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
+	if rawBody != "" {
+		responseBody.RawResponse = rawBody
+	}
 	if err != nil {
 		utils.Error(fmt.Errorf("error occured while hitting into Pinnacle Wp API: %v", err))
 		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, pinnacleApiModel, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
@@ -59,12 +80,11 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		return responseBody
 	}
 
-	statusCode := apiResponse["ApistatusCode"].(int)
 	if statusCode == http.StatusOK {
 		responseBody.IsSent = true
 		responseBody.ResponseMessage = "Message submitted successfully"
-		if msgID, ok := pinnacleWhatsappMessageID(apiResponse); ok {
-			responseBody.TransactionId = msgID
+		if len(apiResponse.Messages) > 0 {
+			responseBody.TransactionId = strings.TrimSpace(apiResponse.Messages[0].ID)
 		}
 	} else {
 		responseBody.IsSent = false
@@ -72,50 +92,68 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 	}
 
 	fmt.Println("PINNACLE FINAL WHATSAPP RESPONSE:", responseBody)
-	responseBody.ResponseMessage = responseBody.ResponseMessage + " | " + apiPayload["biz_opaque_callback_data"].(map[string]interface{})["lead_id"].(string)
+	// lead_id is our CommId — we set it on the outbound payload.
+	if leadID := strings.TrimSpace(pinnacleApiModel.CommId); leadID != "" {
+		responseBody.ResponseMessage = responseBody.ResponseMessage + " | " + leadID
+	}
 	return responseBody
 }
 
-func pinnacleWhatsappMessageID(apiResponse map[string]interface{}) (string, bool) {
-	messages, ok := apiResponse["messages"].([]interface{})
-	if !ok || len(messages) == 0 {
-		return "", false
+// resolvePinnacleMessageEndpoint picks URL + API key.
+// WeCredit marketing: prefer {PINNACLE_WP_BASE_URL|list base}/{AppId}/messages (hermis parity).
+// Full PINNACLE_WP_MESSAGE_API_URL is the override when base+AppId cannot be built.
+// ZapCash keeps its dedicated full URL + key.
+func resolvePinnacleMessageEndpoint(client, appID string) (apiURL, apiKey string) {
+	if client == variables.ZapCash {
+		return strings.TrimSpace(config.Configs.PinnacleZapcashWhatsappMessageApiUrl),
+			strings.TrimSpace(config.Configs.PinnacleZapcashWhatsappApiKey)
 	}
-	first, ok := messages[0].(map[string]interface{})
-	if !ok {
-		return "", false
+
+	apiKey = strings.TrimSpace(config.Configs.PinnacleWhatsappApiKey)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(config.Configs.PinnacleZapcashWhatsappApiKey)
 	}
-	id, ok := first["id"].(string)
-	if !ok || strings.TrimSpace(id) == "" {
-		return "", false
+
+	appID = strings.TrimSpace(appID)
+	base := strings.TrimSpace(config.Configs.PinnacleWhatsappBaseUrl)
+	if base == "" {
+		base = strings.TrimSpace(config.Configs.PinnacleWhatsappTemplateListBaseUrl)
 	}
-	return id, true
+
+	if appID != "" && base != "" {
+		return strings.TrimRight(base, "/") + "/" + strings.Trim(appID, "/") + "/messages", apiKey
+	}
+
+	apiURL = strings.TrimSpace(config.Configs.PinnacleWhatsappMessageApiUrl)
+	if apiURL == "" {
+		apiURL = strings.TrimSpace(config.Configs.PinnacleZapcashWhatsappMessageApiUrl)
+	}
+
+	return apiURL, apiKey
 }
 
-// pinnacleWhatsappErrorBodyMessage parses 4xx/5xx JSON bodies: nested `error` (OAuth) or top-level failed payload.
-func pinnacleWhatsappErrorBodyMessage(apiResponse map[string]interface{}) string {
-	if errObj, ok := apiResponse["error"].(map[string]interface{}); ok {
-		return formatPinnacleMessageAndDetails(
-			errObj["message"].(string),
-			pinnacleErrorDataDetails(errObj),
-		)
-	}
-	if status, _ := apiResponse["status"].(string); status == "failed" {
+// ResolvePinnacleMessageURL is exported for unit tests.
+func ResolvePinnacleMessageURL(client, appID string) string {
+	u, _ := resolvePinnacleMessageEndpoint(client, appID)
+	return u
+}
+
+func pinnacleWhatsappErrorBodyMessage(apiResponse pinnacleAPIResponse) string {
+	if apiResponse.Error != nil {
 		details := ""
-		if data, ok := apiResponse["data"].(map[string]interface{}); ok {
-			details = data["details"].(string)
+		if apiResponse.Error.ErrorData != nil {
+			details = apiResponse.Error.ErrorData.Details
 		}
-		return formatPinnacleMessageAndDetails(apiResponse["message"].(string), details)
+		return formatPinnacleMessageAndDetails(apiResponse.Error.Message, details)
+	}
+	if apiResponse.Status == "failed" {
+		details := ""
+		if apiResponse.Data != nil {
+			details = apiResponse.Data.Details
+		}
+		return formatPinnacleMessageAndDetails(apiResponse.Message, details)
 	}
 	return "failed to send message"
-}
-
-func pinnacleErrorDataDetails(errObj map[string]interface{}) string {
-	ed, ok := errObj["error_data"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	return ed["details"].(string)
 }
 
 func formatPinnacleMessageAndDetails(message, details string) string {
@@ -133,13 +171,12 @@ func formatPinnacleMessageAndDetails(message, details string) string {
 	return fmt.Sprintf("%s, details: %s", message, details)
 }
 
-func getPayload(pinnacleApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(pinnacleApiModel.TemplateName, "utility") || strings.Contains(pinnacleApiModel.TemplateName, "marketing") {
-		// For Utility Payload
+// GetPinnaclePayload mirrors Hermis: "utility" in Process → utility payload; otherwise media
+// (marketing / image-header templates). TemplateName substring matching is intentionally not used.
+// Exported for unit tests under test/pinnacleWhatsapp.
+func GetPinnaclePayload(pinnacleApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
+	if strings.Contains(strings.ToLower(pinnacleApiModel.Process), "utility") {
 		return pinnaclepayloads.GetPinnacleUtilityPayload(pinnacleApiModel), nil
-	} else if strings.Contains(pinnacleApiModel.TemplateName, "media") {
-		return pinnaclepayloads.GetPinnacleMediaPayload(pinnacleApiModel), nil
-	} else {
-		return nil, fmt.Errorf("invalid template name: %s", pinnacleApiModel.TemplateName)
 	}
+	return pinnaclepayloads.GetPinnacleMediaPayload(pinnacleApiModel), nil
 }

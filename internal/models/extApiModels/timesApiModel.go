@@ -41,6 +41,8 @@ type SmsRequestBody struct {
 	Source       string `json:"Source,omitempty"`
 	SourceRowId  int64  `json:"SourceRowId,omitempty"`
 	CampaignDate string `json:"CampaignDate,omitempty"`
+	// Base maps to Pinnacle SMS message.extrares for vendor reports.
+	Base string `json:"Base,omitempty"`
 }
 
 type SmsResponse struct {
@@ -55,28 +57,34 @@ type SmsResponse struct {
 }
 
 type WhatsappRequestBody struct {
-	AppId              string
-	CommId             string
-	Mobile             string
-	Process            string
-	TemplateName       string
-	ImageUrl           string
-	ImageID            string
-	ButtonLink         string
-	TemplateVariables  string
-	TemplateCategory   string
-	AccessToken        string
-	Client             string
-	EmiAmount          string // Variables
-	CustomerName       string // Variables
-	LoanId             string // Variables
-	ApplicationNumber  string // Variables
-	DueDate            string // Variables
-	Description        string // Variables
-	TotalPayableAmount string // Variables
-	TodayPayableAmount string // Variables
-	SavingAmount       string // Variables
-	BounceCharge       string // Variables
+	AppId                  string
+	CommId                 string
+	Mobile                 string
+	Process                string
+	TemplateName           string
+	ImageUrl               string
+	ImageID                string
+	ButtonLink             string
+	TemplateVariables      string
+	TemplateVariableValues string
+	TemplateCategory       string
+	AccessToken            string
+	Client                 string
+	DynamicMobile          string
+	LanguageCode           string
+	CampaignId             string
+	CtaId                  string
+	WabaNumber             string
+	EmiAmount              string // Variables
+	CustomerName           string // Variables
+	LoanId                 string // Variables
+	ApplicationNumber      string // Variables
+	DueDate                string // Variables
+	Description            string // Variables
+	TotalPayableAmount     string // Variables
+	TodayPayableAmount     string // Variables
+	SavingAmount           string // Variables
+	BounceCharge           string // Variables
 }
 
 type WhatsappResponse struct {
@@ -88,6 +96,8 @@ type WhatsappResponse struct {
 	TransactionId   string `json:"transactionId" gorm:"TransactionId"`
 	ResponseMessage string `json:"responseMessage" gorm:"ResponseMessage"`
 	PaymentLink     string `json:"paymentLink" gorm:"PaymentLink"`
+	RawPayload      string `json:"rawPayload,omitempty" gorm:"RawPayload"`
+	RawResponse     string `json:"rawResponse,omitempty" gorm:"RawResponse"`
 }
 
 type RcsRequestBody struct {

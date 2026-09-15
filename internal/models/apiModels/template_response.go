@@ -43,20 +43,26 @@ type TemplateListParams struct {
 
 // TemplateListItem contains only fields needed to identify and manage a
 // template in list views. Payload content remains available from the detail API.
+// WhatsApp Meta category / sync status are included so the dashboard table can
+// show Marketing vs Utility without an N+1 get-template per row.
 type TemplateListItem struct {
-	Id            int       `gorm:"column:Id" json:"id"`
-	Client        string    `gorm:"column:Client" json:"client"`
-	Channel       string    `gorm:"column:Channel" json:"channel"`
-	Process       string    `gorm:"column:Process" json:"process"`
-	Stage         *string   `gorm:"column:Stage" json:"stage"`
-	Vendor        string    `gorm:"column:Vendor" json:"vendor"`
-	TemplateName  string    `gorm:"column:TemplateName" json:"templateName,omitempty"`
-	DltTemplateId int64     `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
-	IsActive      bool      `gorm:"column:IsActive" json:"isActive"`
-	CreatedOn     time.Time `gorm:"column:CreatedOn" json:"createdOn"`
-	UpdatedOn     time.Time `gorm:"column:UpdatedOn" json:"updatedOn"`
-	CreatedBy     string    `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
-	UpdatedBy     string    `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
+	Id                       int        `gorm:"column:Id" json:"id"`
+	Client                   string     `gorm:"column:Client" json:"client"`
+	Channel                  string     `gorm:"column:Channel" json:"channel"`
+	Process                  string     `gorm:"column:Process" json:"process"`
+	Stage                    *string    `gorm:"column:Stage" json:"stage"`
+	Vendor                   string     `gorm:"column:Vendor" json:"vendor"`
+	TemplateName             string     `gorm:"column:TemplateName" json:"templateName,omitempty"`
+	DltTemplateId            int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
+	AppId                    string     `gorm:"column:AppId" json:"appId,omitempty"`
+	ProviderTemplateCategory string     `gorm:"column:ProviderTemplateCategory" json:"providerTemplateCategory,omitempty"`
+	Error                    string     `gorm:"column:Error" json:"error,omitempty"`
+	CategoryUpdatedOn        *time.Time `gorm:"column:CategoryUpdatedOn" json:"categoryUpdatedOn,omitempty"`
+	IsActive                 bool       `gorm:"column:IsActive" json:"isActive"`
+	CreatedOn                time.Time  `gorm:"column:CreatedOn" json:"createdOn"`
+	UpdatedOn                time.Time  `gorm:"column:UpdatedOn" json:"updatedOn"`
+	CreatedBy                string     `gorm:"column:CreatedBy" json:"createdBy,omitempty"`
+	UpdatedBy                string     `gorm:"column:UpdatedBy" json:"updatedBy,omitempty"`
 }
 
 type TemplateListResult struct {
