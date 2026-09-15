@@ -9,6 +9,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/cron"
 	"github.com/wecredit/communication-sdk/health"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/handlers"
 	"github.com/wecredit/communication-sdk/internal/middleware"
@@ -39,6 +40,10 @@ func GetLocalIP() string {
 
 func StartConsumer(port string) {
 	monitoring.Init()
+	if err := push.Init(config.Configs); err != nil {
+		utils.Error(fmt.Errorf("failed to initialize PUSH service: %w", err))
+	}
+
 	go services.ConsumerService(config.Configs.AwsQueueUrl)
 	go cron.StartMidnightResetCron()
 	go cron.StartWhatsappTemplateCategorySyncCron()

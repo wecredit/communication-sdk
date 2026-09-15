@@ -20,6 +20,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
@@ -503,11 +504,16 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// 	utils.Error(fmt.Errorf("redis add failed: %v", err))
 	// }
 
-	utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	if strings.EqualFold(data.Channel, variables.PUSH) {
+		utils.Debug(fmt.Sprintf("PUSH payload received client=%s commId=%s eventId=%s deviceCount=%d",
+			data.Client, data.CommId, data.EventId, len(data.DeviceTokens)))
+	} else {
+		utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	}
 
-	data.Client = strings.ToLower(data.Client)
-	data.Channel = strings.ToUpper(data.Channel)
-	data.ProcessName = strings.ToUpper(data.ProcessName)
+	data.Client = strings.ToLower(strings.TrimSpace(data.Client))
+	data.Channel = strings.ToUpper(strings.TrimSpace(data.Channel))
+	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
 	data.AzureIdempotencyKey = fmt.Sprintf("%s_%s", strings.ToLower(data.ProcessName), strings.ToLower(data.Description))
 
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
@@ -537,6 +543,9 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	case variables.Email:
 		isMessageProcessed, deleted := handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 		return isMessageProcessed, deleted
+	case variables.PUSH:
+		isMessageProcessed, deleted := handlePush(ctx, data, sqsClient, queueURL, msg)
+		return isMessageProcessed, deleted
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
 		// Delete invalid messages to prevent unnecessary retries
@@ -546,6 +555,44 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		}
 		return true, deleted // message processed (rejected due to invalid channel)
 	}
+}
+
+func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	result, err := push.Send(ctx, data)
+	if err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
+			data.Client, data.CommId, data.EventId, err))
+	}
+
+	// Same pattern as SMS: channel returns audit maps; consumer InsertData.
+	if result.InputAudit != nil {
+		if insertErr := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); insertErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push input audit: %v",
+				data.Client, data.CommId, data.EventId, insertErr))
+		}
+	}
+	
+	for _, output := range result.OutputAudits {
+		if insertErr := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); insertErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push output audit: %v",
+				data.Client, data.CommId, data.EventId, insertErr))
+		}
+	}
+
+	if !result.AckSQS {
+		return result.Processed, false
+	}
+
+	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if deleteErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
+			data.Client, data.CommId, data.EventId, deleteErr))
+	}
+	return result.Processed, deleted
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
@@ -1187,6 +1234,10 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
+	} else if data.Channel == variables.PUSH {
+		// Channel-scoped empty-vendor default (Email→SINCH pattern). No IsVendorActive
+		// on this hardcode; ShouldHitVendor in push.Send is the kill switch.
+		data.Vendor = variables.FCM
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))

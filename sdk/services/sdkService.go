@@ -50,6 +50,12 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
 	}
 
+	// ValidateCommRequest trims a copy only — persist normalized identity fields.
+	data.Channel = strings.ToUpper(strings.TrimSpace(data.Channel))
+	data.Mobile = strings.TrimSpace(data.Mobile)
+	data.Email = strings.TrimSpace(data.Email)
+	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
+
 	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)
 	exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
 	if err != nil {
@@ -213,10 +219,14 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
-	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
-		rollbackSendClaims()
-		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+	// Non-PUSH channels write a generic input-audit row here when InputTableName is set.
+	// PUSH lean audit is written later in handlePush from push.Send (EventId/TemplateName/…).
+	if strings.TrimSpace(data.InputTableName) != "" && !strings.EqualFold(data.Channel, variables.PUSH) {
+		if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+			rollbackSendClaims()
+			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+		}
 	}
 
 	// Enqueue for async provider workers: SQS-direct (WeCredit SMS) or SNS (legacy).
