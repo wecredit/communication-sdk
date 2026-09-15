@@ -108,6 +108,7 @@ func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
 		Mobile:        "7014850582",
 		CommId:        "WC-WECREDIT-abc-123",
 		DltTemplateId: 1777178764367201169,
+		Base:          "Process-1",
 	}, "WECRLP", "Abhi explore karein https://branch.co/BRNCHI/BBqHUGs WeCredit", "1701170417883448407")
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +138,26 @@ func TestBuildPinnacleJSONPayloadConsoleShape(t *testing.T) {
 	uid, _ := msgs[0]["clientuid"].(string)
 	if uid == "" || strings.ContainsAny(uid, "-_") {
 		t.Fatalf("clientuid should be alphanumeric, got %q", uid)
+	}
+	if msgs[0]["extrares"] != "Process-1" {
+		t.Fatalf("extrares=%v want Process-1", msgs[0]["extrares"])
+	}
+}
+
+func TestBuildPinnacleJSONPayloadOmitsEmptyExtrares(t *testing.T) {
+	payload, err := pinnaclepayloads.BuildConsoleJSONPayload(extapimodels.SmsRequestBody{
+		Mobile: "9220146969",
+		Base:   "   ",
+	}, "WECRLP", "Abhi explore karein  wecredit.co.in WeCredit", "1701170417883448407")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, ok := payload["message"].([]map[string]interface{})
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("message=%T %#v", payload["message"], payload["message"])
+	}
+	if _, present := msgs[0]["extrares"]; present {
+		t.Fatalf("extrares should be omitted when Base is blank, got %v", msgs[0]["extrares"])
 	}
 }
 

@@ -107,4 +107,20 @@ func TestGenerateMarketingCampaignDedupKey(t *testing.T) {
 	if got := channelHelper.GenerateMarketingCampaignDedupKey(otherClient); got == channelHelper.GenerateMarketingCampaignDedupKey(base) {
 		t.Fatal("clients must not share a campaign dedup key")
 	}
+
+	wa := sdkModels.CommApiRequestBody{
+		Mobile:      "7014850582",
+		Client:      "wecredit",
+		ProcessName: "FatakPay",
+		Channel:     "WHATSAPP",
+		Stage:       1,
+	}
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(wa); got != "7014850582" {
+		t.Fatalf("WeCredit WA key = %q, want mobile only", got)
+	}
+	waOtherProcess := wa
+	waOtherProcess.ProcessName = "TrueBalance"
+	if channelHelper.GenerateMarketingCampaignDedupKey(waOtherProcess) != channelHelper.GenerateMarketingCampaignDedupKey(wa) {
+		t.Fatal("WeCredit WA must share one key across processes until FlushAll")
+	}
 }

@@ -30,6 +30,9 @@ const (
 
 var (
 	ErrDispatchTrackingAlreadyExists = errors.New("dispatch tracking row already exists")
+	// ErrDispatchSourceAlreadyTerminal is retained for callers that still check it.
+	// The plain-INSERT path no longer reads/locks the source row, so this is unused
+	// by InsertCommDispatchTracking itself.
 	ErrDispatchSourceAlreadyTerminal = errors.New("dispatch source row is already terminal")
 	trackingSensitiveNumber          = regexp.MustCompile(`\b[0-9]{10,15}\b`)
 )
@@ -50,8 +53,11 @@ type CommDispatchTrackingRow struct {
 }
 
 // InsertCommDispatchTracking writes one tracking row with a plain INSERT.
-// Temporary speed path (sms-query-fix): no UPDLOCK on CommMarketingInput and
-// no WHERE NOT EXISTS. SQS redelivery can create duplicate tracking rows.
+// Hermis has no CommDispatchTracking path (WA-only plain output INSERTs). This
+// SMS speed path intentionally skips UPDLOCK / WHERE NOT EXISTS (those caused
+// 800–1300ms SLOW SQL under concurrency). Idempotency relies on a unique key
+// (2627/2601 → ErrDispatchTrackingAlreadyExists) when present; without it, SQS
+// redelivery can insert duplicate tracking rows.
 func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row CommDispatchTrackingRow) error {
 	if db == nil {
 		return fmt.Errorf("marketing database is not initialized")

@@ -140,6 +140,36 @@ func TestFailedBuildRetainsLastKnownGoodSnapshot(t *testing.T) {
 	}
 }
 
+func TestSnapshotAllowsSameWhatsappTemplateNameDifferentAppId(t *testing.T) {
+	a := apiModels.Templatedetails{
+		Id: 30, Process: "BRANCH", Client: "wecredit", Channel: "WHATSAPP",
+		Vendor: "PINNACLE", TemplateName: "branch_utility_01", AppId: "app-a", IsActive: true,
+	}
+	b := a
+	b.Id = 31
+	b.AppId = "app-b"
+
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{a, b})
+	if err != nil {
+		t.Fatalf("multi-AppId same TemplateName should be allowed: %v", err)
+	}
+	if len(snapshot.Templates) != 2 {
+		t.Fatalf("snapshot contains %d templates, want 2", len(snapshot.Templates))
+	}
+}
+
+func TestSnapshotRejectsSameWhatsappTemplateNameSameAppId(t *testing.T) {
+	a := apiModels.Templatedetails{
+		Id: 32, Process: "BRANCH", Client: "wecredit", Channel: "WHATSAPP",
+		Vendor: "PINNACLE", TemplateName: "branch_utility_01", AppId: "app-a", IsActive: true,
+	}
+	b := a
+	b.Id = 33
+	if _, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{a, b}); err == nil {
+		t.Fatal("same TemplateName+AppId duplicate was accepted")
+	}
+}
+
 func stageTemplate(id int, stage float64, channel string) apiModels.Templatedetails {
 	return apiModels.Templatedetails{
 		Id: id, Process: "COLLECTION", Stage: &stage, Client: "wecredit",

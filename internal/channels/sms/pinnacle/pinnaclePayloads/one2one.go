@@ -59,6 +59,10 @@ func BuildConsoleJSONPayload(data extapimodels.SmsRequestBody, sender, message, 
 	if uid := sanitizeClientUID(data.CommId); uid != "" {
 		msgItem["clientuid"] = uid
 	}
+	// extrares is a Pinnacle report tag; omit when Base is empty so ZapCash/legacy stays unchanged.
+	if base := strings.TrimSpace(data.Base); base != "" {
+		msgItem["extrares"] = base
+	}
 
 	payload := map[string]interface{}{
 		"sender":      strings.TrimSpace(sender),
