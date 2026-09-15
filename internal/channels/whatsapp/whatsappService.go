@@ -78,14 +78,8 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 		return SendWhatsappResult{Processed: processed, DBData: dbData}, handleErr
 	}
 
-	msg.Vendor = matchedVendor
-
 	channelHelper.PopulateWhatsappFields(&requestBody, data)
-
-	// AppId precedence: TemplateDetails.AppId if set, else request AppId from input row.
-	if strings.TrimSpace(requestBody.AppId) == "" {
-		requestBody.AppId = strings.TrimSpace(msg.AppId)
-	}
+	ApplyWhatsappVendorAppIdPrecedence(&msg, &requestBody, matchedVendor)
 
 	// Handling For Payment Link
 	// Check if current stage should use payment link instead of button url
@@ -177,4 +171,31 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
 	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	// }
+}
+
+// ApplyWhatsappVendorAppIdPrecedence applies Vendor/AppId rules after TemplateDetails populate.
+//
+// When TrustPayloadWhatsappIdentity is set (nurture blank-TemplateName Redis RR), keep the
+// payload Vendor+AppId pair atomically — do not let a later TemplateDetails read split them.
+// Otherwise golden path: Vendor = matchedVendor; AppId = TemplateDetails then payload fallback.
+func ApplyWhatsappVendorAppIdPrecedence(
+	msg *sdkModels.CommApiRequestBody,
+	requestBody *extapimodels.WhatsappRequestBody,
+	matchedVendor string,
+) {
+	if msg == nil || requestBody == nil {
+		return
+	}
+
+	if msg.TrustPayloadWhatsappIdentity {
+		if appID := strings.TrimSpace(msg.AppId); appID != "" {
+			requestBody.AppId = appID
+		}
+		return
+	}
+
+	msg.Vendor = matchedVendor
+	if strings.TrimSpace(requestBody.AppId) == "" {
+		requestBody.AppId = strings.TrimSpace(msg.AppId)
+	}
 }

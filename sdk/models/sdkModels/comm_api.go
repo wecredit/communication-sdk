@@ -56,6 +56,10 @@ type CommApiRequestBody struct {
 	DynamicMobile string `json:"dynamicMobile,omitempty" gorm:"-"`
 	// AppId overlays TemplateDetails.AppId when template AppId is empty (WA marketing).
 	AppId string `json:"appId,omitempty" gorm:"-"`
+	// TrustPayloadWhatsappIdentity is set by nurture only for blank-TemplateName Redis
+	// round-robin. When true, SDK keeps payload Vendor+AppId as an atomic pair and does
+	// not let a later TemplateDetails lookup split them. Wire-only; not a DB column.
+	TrustPayloadWhatsappIdentity bool `json:"trustPayloadWhatsappIdentity,omitempty" gorm:"-"`
 	// ScheduledAt is the input campaign time (hermis Execution_time) for output parity.
 	ScheduledAt time.Time `json:"scheduledAt,omitempty" gorm:"-"`
 

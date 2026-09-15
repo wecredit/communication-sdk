@@ -47,6 +47,8 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		return nil, vendor, fmt.Errorf("process name is required for template reference lookup")
 	}
 
+	wantAppID := strings.TrimSpace(msg.AppId)
+
 	var matches []map[string]interface{}
 	for _, val := range templateDetails {
 		if val["IsActive"] != variables.Active {
@@ -78,6 +80,15 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		if !strings.EqualFold(strings.TrimSpace(rowProcess), process) {
 			continue
 		}
+		
+		// WA: when payload AppId is set, disambiguate multi-AppId same TemplateName.
+		if channel == "WHATSAPP" && wantAppID != "" {
+			rowAppID, _ := val["AppId"].(string)
+			if !strings.EqualFold(strings.TrimSpace(rowAppID), wantAppID) {
+				continue
+			}
+		}
+
 		matches = append(matches, val)
 	}
 
@@ -94,6 +105,7 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		}
 		return matches[0], resolvedVendor, nil
 	default:
+		// WA without AppId and multiple AppId rows: ambiguous — caller should stamp AppId.
 		return nil, vendor, fmt.Errorf("multiple active templates found for reference: %s, Process: %s, Client: %s, Channel: %s, Vendor: %s",
 			templateRef, process, client, channel, vendor)
 	}
