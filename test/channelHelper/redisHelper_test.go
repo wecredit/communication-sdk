@@ -115,8 +115,8 @@ func TestGenerateMarketingCampaignDedupKey(t *testing.T) {
 		Channel:     "WHATSAPP",
 		Stage:       1,
 	}
-	if got := channelHelper.GenerateMarketingCampaignDedupKey(wa); got != "7014850582" {
-		t.Fatalf("WeCredit WA key = %q, want mobile only", got)
+	if got := channelHelper.GenerateMarketingCampaignDedupKey(wa); got != "wecredit_whatsapp_7014850582" {
+		t.Fatalf("WeCredit WA key = %q, want wecredit_whatsapp_7014850582", got)
 	}
 	waOtherProcess := wa
 	waOtherProcess.ProcessName = "TrueBalance"

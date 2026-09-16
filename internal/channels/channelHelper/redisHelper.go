@@ -18,15 +18,16 @@ func IsMarketingCampaignRequest(data sdkModels.CommApiRequestBody) bool {
 // GenerateMarketingCampaignDedupKey builds the standalone Redis string key for
 // same-day marketing dedup (cleared by daily FlushAll at 1 AM IST).
 //
-// WeCredit WhatsApp uses mobile only — one WA send per number until flush.
-// Other channels keep mobile_client_process_channel (+ stage when non-zero).
+// WeCredit WhatsApp uses client_channel_mobile — one WA send per number until
+// flush, no process dimension (unlike SMS). Other channels keep
+// mobile_client_process_channel (+ stage when non-zero).
 func GenerateMarketingCampaignDedupKey(data sdkModels.CommApiRequestBody) string {
 	mobile := strings.TrimSpace(data.Mobile)
 	client := strings.ToLower(strings.TrimSpace(data.Client))
 	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
 
 	if client == "wecredit" && channel == "WHATSAPP" {
-		return mobile
+		return fmt.Sprintf("%s_%s_%s", client, strings.ToLower(channel), mobile)
 	}
 
 	campaign := strings.ToLower(strings.TrimSpace(data.ProcessName))

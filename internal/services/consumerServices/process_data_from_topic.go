@@ -747,7 +747,7 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		}, "failed to delete WhatsApp rejected for inactive vendor")
 	}
 
-	// WeCredit WA same-day cap is the campaign dedup key (mobile only); cleared by 1 AM FlushAll.
+	// WeCredit WA same-day cap is client_channel_mobile (no process); cleared by 1 AM FlushAll.
 	isMessageProcessed, outputData, sendErr := deps.Send(data)
 	if sendErr != nil && !isMessageProcessed {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] retryable WhatsApp processing error: %v", data.Client, data.CommId, sendErr))
