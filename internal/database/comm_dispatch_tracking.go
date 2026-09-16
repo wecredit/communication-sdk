@@ -108,6 +108,32 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 	return nil
 }
 
+// CommWhatsappMarketingOutputExists reports whether any output row exists for a marketing input id.
+// Only used on Redis skip-send redelivery (not the happy-path insert) so SQS can ACK without a second write.
+func CommWhatsappMarketingOutputExists(db *gorm.DB, tableName string, sourceRowId int64) (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("marketing database is not initialized")
+	}
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return false, fmt.Errorf("whatsapp marketing output table name is required")
+	}
+	if sourceRowId == 0 {
+		return false, nil
+	}
+
+	var exists int
+	query := fmt.Sprintf(
+		`SELECT TOP (1) 1 FROM %s WITH (NOLOCK) WHERE SourceRowId = ?`,
+		tableName,
+	)
+	
+	if err := db.Raw(query, sourceRowId).Scan(&exists).Error; err != nil {
+		return false, fmt.Errorf("check whatsapp marketing output sourceRowId=%d: %w", sourceRowId, err)
+	}
+	return exists == 1, nil
+}
+
 func clampTracking(value string, max int) string {
 	value = strings.TrimSpace(value)
 	if max <= 0 {

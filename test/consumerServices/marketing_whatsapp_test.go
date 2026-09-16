@@ -158,6 +158,18 @@ func TestMarketingWhatsappTerminalOutcomesAcknowledgeAfterOutput(t *testing.T) {
 			wantProcessed: true,
 			wantDeleted:   true,
 		},
+		{
+			name: "terminal Redis duplicate output already recorded",
+			configure: func(deps *services.MarketingWhatsappDependencies) {
+				deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
+					return true, false, "txn-existing", "", nil
+				}
+				deps.OutputRecorded = func(int64) (bool, error) { return true, nil }
+			},
+			wantOutput:    0,
+			wantProcessed: true,
+			wantDeleted:   true,
+		},
 	}
 
 	for _, test := range tests {
