@@ -77,6 +77,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 		Source:                 msg.Source,
 		SourceRowId:            msg.SourceRowId,
 		CampaignDate:           msg.CampaignDate,
+		Base:                   msg.Base,
 	}
 	channelHelper.PopulateSmsFields(&req, templateData)
 
@@ -174,6 +175,7 @@ func smsRequestFromMessage(msg sdkModels.CommApiRequestBody) extapimodels.SmsReq
 		Source:                 msg.Source,
 		SourceRowId:            msg.SourceRowId,
 		CampaignDate:           msg.CampaignDate,
+		Base:                   msg.Base,
 	}
 }
 

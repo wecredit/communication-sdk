@@ -37,3 +37,34 @@ func Count(name, vendor, client string, value int) {
 	}
 	utils.Info(string(raw))
 }
+
+// CountByReason emits a low-cardinality operational counter for a queue lane
+// and retry/failure reason. Message identifiers belong in the accompanying
+// structured log, never in metric dimensions.
+func CountByReason(name, lane, reason string, value int) {
+	if value == 0 {
+		return
+	}
+	payload := map[string]interface{}{
+		"_aws": map[string]interface{}{
+			"Timestamp": time.Now().UnixMilli(),
+			"CloudWatchMetrics": []map[string]interface{}{
+				{
+					"Namespace":  namespace,
+					"Dimensions": [][]string{{"Lane", "Reason"}},
+					"Metrics": []map[string]string{
+						{"Name": name, "Unit": "Count"},
+					},
+				},
+			},
+		},
+		"Lane":   lane,
+		"Reason": reason,
+		name:     value,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	utils.Info(string(raw))
+}
