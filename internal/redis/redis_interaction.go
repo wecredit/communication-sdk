@@ -223,6 +223,7 @@ func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMes
 }
 
 // ClaimMarketingCampaignDedupKey atomically claims a campaign-level dedup slot (SET NX, no TTL). Key persists until daily FlushAll.
+// WeCredit WA keys look like wecredit_whatsapp_{mobile}; other channels use mobile_client_process_channel.
 // Returns true when the key was created, false when it already exists (duplicate).
 func ClaimMarketingCampaignDedupKey(rdb *redis.Client, key, value string) (bool, error) {
 	if rdb == nil {

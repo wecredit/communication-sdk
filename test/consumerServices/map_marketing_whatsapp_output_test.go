@@ -56,3 +56,39 @@ func TestMapMarketingWhatsappOutputHermesParityCols(t *testing.T) {
 		t.Fatalf("txn = %v / %v", out["TransactionId"], out["MessageId"])
 	}
 }
+
+func TestMapMarketingWhatsappMysqlOutputLenderShaped(t *testing.T) {
+	data := sdkModels.CommApiRequestBody{
+		CommId:            "WC-TEST",
+		Mobile:            "9876543210",
+		Vendor:            "SINCH",
+		TemplateReference: "tpl_wa",
+		AppId:             "row-app",
+	}
+	out := services.MapMarketingWhatsappMysqlOutput(data, map[string]interface{}{
+		"TransactionId":   "txn-1",
+		"IsSent":          true,
+		"ResponseMessage": "ok",
+		"AppId":           "template-app",
+		"MobileNumber":    "9999999999",
+	})
+
+	if out["CommId"] != "WC-TEST" {
+		t.Fatalf("CommId = %v", out["CommId"])
+	}
+	if out["MobileNumber"] != "9999999999" {
+		t.Fatalf("MobileNumber = %v, want provider/mobile override", out["MobileNumber"])
+	}
+	if out["AppId"] != "template-app" {
+		t.Fatalf("AppId = %v", out["AppId"])
+	}
+	if out["IsSent"] != true {
+		t.Fatalf("IsSent = %v", out["IsSent"])
+	}
+	if _, ok := out["SourceRowId"]; ok {
+		t.Fatal("MySQL WhatsappOutput must not include Marketing SourceRowId")
+	}
+	if _, ok := out["EventId"]; ok {
+		t.Fatal("MySQL WhatsappOutput must not include Marketing EventId")
+	}
+}
