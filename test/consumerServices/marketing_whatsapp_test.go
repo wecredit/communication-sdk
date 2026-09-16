@@ -15,6 +15,7 @@ type whatsappTestState struct {
 	assignCalls  int
 	sendCalls    int
 	updateCalls  int
+	inputCalls   int
 	outputCalls  int
 	deleteCalls  int
 	releaseCalls int
@@ -53,6 +54,10 @@ func marketingWhatsappTestDependencies(state *whatsappTestState) services.Market
 		},
 		UpdateError: func(sdkModels.CommApiRequestBody, string) error {
 			state.updateCalls++
+			return nil
+		},
+		WriteInputAudit: func(sdkModels.CommApiRequestBody, map[string]interface{}) error {
+			state.inputCalls++
 			return nil
 		},
 		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
@@ -174,6 +179,13 @@ func TestMarketingWhatsappTerminalOutcomesAcknowledgeAfterOutput(t *testing.T) {
 			}
 			if state.sendCalls != test.wantSend {
 				t.Fatalf("send calls = %d, want %d", state.sendCalls, test.wantSend)
+			}
+			wantInput := 0
+			if test.wantSend > 0 {
+				wantInput = 1 // input audit only on the vendor-send path (after Assign)
+			}
+			if state.inputCalls != wantInput {
+				t.Fatalf("input audit calls = %d, want %d", state.inputCalls, wantInput)
 			}
 			if state.deleteCalls != 1 {
 				t.Fatalf("delete calls = %d, want 1", state.deleteCalls)

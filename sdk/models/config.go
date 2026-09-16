@@ -32,8 +32,9 @@ type Config struct {
 	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
 	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
 	CommMarketingInputTable   string `envconfig:"COMM_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommMarketingInput"`
-	// WeCredit WhatsApp marketing tables (Marketing SQL Server). Lender WhatsApp
-	// continues to use MySQL WhatsappOutputTable below.
+	// WeCredit WhatsApp marketing tables (Marketing SQL Server). Marketing WA also
+	// dual-writes MySQL SdkWhatsappInputTable + WhatsappOutputTable (SMS parity).
+	// Lender WhatsApp continues to use MySQL WhatsappOutputTable only.
 	CommWhatsappMarketingInputTable  string `envconfig:"COMM_WHATSAPP_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingInput"`
 	CommWhatsappMarketingOutputTable string `envconfig:"COMM_WHATSAPP_MARKETING_OUTPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingOutput"`
 

@@ -640,12 +640,15 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 }
 
 // MarketingWhatsappDependencies defines the dependencies for marketing WhatsApp dispatch.
-// Terminal outcomes write CommWhatsappMarketingOutput only (not CommDispatchTracking).
+// Terminal outcomes write MySQL WhatsappOutputTable + Marketing CommWhatsappMarketingOutput
+// (SMS parity: SmsOutputTable + CommDispatchTracking). Not CommDispatchTracking.
 type MarketingWhatsappDependencies struct {
 	Claim       func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error)
 	Assign      func(*sdkModels.CommApiRequestBody) bool
 	Send        func(sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error)
 	UpdateError func(sdkModels.CommApiRequestBody, string) error
+	// WriteInputAudit persists SdkWhatsappInputTable (best-effort; SMS SdkSmsInput parity).
+	WriteInputAudit func(sdkModels.CommApiRequestBody, map[string]interface{}) error
 	// WriteOutput persists using the current request payload (post-Assign / ResolveCommID).
 	WriteOutput func(sdkModels.CommApiRequestBody, map[string]interface{}) error
 	Delete      func(sdkModels.CommApiRequestBody) (bool, error)
@@ -663,11 +666,41 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 			return result.Processed, result.DBData, err
 		},
 		UpdateError: channelHelper.UpdateRedisErrorMessage,
+		WriteInputAudit: func(payload sdkModels.CommApiRequestBody, audit map[string]interface{}) error {
+			// SMS marketing inserts SdkSmsInputTable before send; same for WA.
+			if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, audit); err != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting whatsapp input audit: %v", payload.Client, payload.CommId, err))
+			}
+			return nil // best-effort; never block the send (SMS parity)
+		},
 		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
-			// Marketing WA responses land on Marketing SQL Server
-			// (CommWhatsappMarketingOutput). Lender WhatsApp still uses MySQL
-			// WhatsappOutputTable in handleWhatsapp below.
-			return database.InsertData(config.Configs.CommWhatsappMarketingOutputTable, database.DBMarketing, MapMarketingWhatsappOutput(payload, output))
+			// Dual sink (SMS parity): MySQL WhatsappOutputTable + Marketing Output.
+			// Both must succeed before SQS ACK. Lender-only WA still uses MySQL alone
+			// in handleWhatsapp.
+			mysqlErr, marketingErr := RunParallelSMSPostSendWrites(
+				func() error {
+					return database.InsertData(
+						config.Configs.WhatsappOutputTable,
+						database.DBtechWrite,
+						MapMarketingWhatsappMysqlOutput(payload, output),
+					)
+				},
+				func() error {
+					return database.InsertData(
+						config.Configs.CommWhatsappMarketingOutputTable,
+						database.DBMarketing,
+						MapMarketingWhatsappOutput(payload, output),
+					)
+				},
+			)
+			if mysqlErr != nil || marketingErr != nil {
+				logWhatsappPostSendPersistenceFailure(payload, mysqlErr, marketingErr)
+				if mysqlErr != nil {
+					return mysqlErr
+				}
+				return marketingErr
+			}
+			return nil
 		},
 		Delete: func(payload sdkModels.CommApiRequestBody) (bool, error) {
 			return deleteMessage(ctx, sqsClient, queueURL, msg, payload)
@@ -679,10 +712,9 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 	return HandleMarketingWhatsappWithDependencies(data, dbMappedData, msg, redriveMaxReceiveCount, deps)
 }
 
-// writeMarketingWhatsappTerminalOutput persists a terminal WA outcome to Output, then ACKs SQS.
+// writeMarketingWhatsappTerminalOutput persists a terminal WA outcome to both audit sinks, then ACKs SQS.
 func writeMarketingWhatsappTerminalOutput(data sdkModels.CommApiRequestBody, deps MarketingWhatsappDependencies, output map[string]interface{}, deleteFailMsg string) (bool, bool) {
 	if err := deps.WriteOutput(data, output); err != nil {
-		logWhatsappPostSendPersistenceFailure(data, err)
 		return false, false
 	}
 
@@ -747,6 +779,15 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		}, "failed to delete WhatsApp rejected for inactive vendor")
 	}
 
+	// SMS marketing inserts SdkSmsInput before send; WA inserts SdkWhatsappInput the same way.
+	if deps.WriteInputAudit != nil {
+		if dbMappedData == nil {
+			dbMappedData = map[string]interface{}{}
+		}
+		dbMappedData["CommId"] = data.CommId
+		_ = deps.WriteInputAudit(data, dbMappedData)
+	}
+
 	// WeCredit WA same-day cap is client_channel_mobile (no process); cleared by 1 AM FlushAll.
 	isMessageProcessed, outputData, sendErr := deps.Send(data)
 	if sendErr != nil && !isMessageProcessed {
@@ -784,9 +825,9 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		}
 	}
 
-	// WA audit sink is CommWhatsappMarketingOutput only (SMS uses CommDispatchTracking).
+	// Dual audit sinks via WriteOutput (MySQL WhatsappOutput + Marketing Output).
+	// Production WriteOutput logs sink failures itself (SMS dual-write parity).
 	if err := deps.WriteOutput(data, outputData); err != nil {
-		logWhatsappPostSendPersistenceFailure(data, err)
 		return false, false
 	}
 
@@ -1074,15 +1115,19 @@ func logSMSPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputE
 	))
 }
 
-func logWhatsappPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputErr error) {
-	outputStatus := "succeeded"
-	if outputErr != nil {
-		outputStatus = outputErr.Error()
+func logWhatsappPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, mysqlErr, marketingErr error) {
+	mysqlStatus := "succeeded"
+	if mysqlErr != nil {
+		mysqlStatus = mysqlErr.Error()
+	}
+	marketingStatus := "succeeded"
+	if marketingErr != nil {
+		marketingStatus = marketingErr.Error()
 	}
 
 	utils.Error(fmt.Errorf(
-		"[Client:%s CommId:%s EventId:%s] WhatsApp output persistence failure: whatsapp_output=%s",
-		data.Client, data.CommId, data.EventId, outputStatus,
+		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: whatsapp_output=%s comm_whatsapp_marketing_output=%s",
+		data.Client, data.CommId, data.EventId, mysqlStatus, marketingStatus,
 	))
 }
 
@@ -1300,7 +1345,7 @@ func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
 	if client == "wecredit" && channel == "WHATSAPP" {
 		return fmt.Sprintf("whatsapp already sent today for mobile %s", strings.TrimSpace(data.Mobile))
 	}
-	
+
 	return fmt.Sprintf("campaign duplicate: channel %s process %s event_id %s already sent today",
 		channel,
 		strings.ToLower(strings.TrimSpace(data.ProcessName)),
@@ -1438,6 +1483,87 @@ func MapMarketingWhatsappOutput(data sdkModels.CommApiRequestBody, output map[st
 				row["Mobile"] = v
 			}
 		}
+	}
+
+	return row
+}
+
+// MapMarketingWhatsappMysqlOutput projects terminal WA outcomes onto MySQL WhatsappOutputTable
+// columns (lender-shaped audit). Used alongside CommWhatsappMarketingOutput — SMS parity
+// with SmsOutputTable + tracking.
+func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output map[string]interface{}) map[string]interface{} {
+	row := map[string]interface{}{
+		"CommId":       data.CommId,
+		"Vendor":       data.Vendor,
+		"MobileNumber": data.Mobile,
+		"IsSent":       false,
+	}
+
+	if name := strings.TrimSpace(data.TemplateReference); name != "" {
+		row["TemplateName"] = name
+	}
+	if appID := strings.TrimSpace(data.AppId); appID != "" {
+		row["AppId"] = appID
+	}
+
+	if output == nil {
+		return row
+	}
+
+	if v, ok := output["CommId"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["CommId"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["Vendor"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["Vendor"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["MobileNumber"]; ok {
+		row["MobileNumber"] = v
+	} else if v, ok := output["Mobile"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["MobileNumber"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["TransactionId"]; ok {
+		row["TransactionId"] = v
+	}
+
+	if v, ok := output["ResponseMessage"]; ok {
+		row["ResponseMessage"] = v
+	}
+
+	if v, ok := output["TemplateName"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["TemplateName"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["AppId"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["AppId"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["PaymentLink"]; ok {
+		row["PaymentLink"] = v
+	}
+
+	if v, ok := output["RawPayload"]; ok {
+		row["RawPayload"] = v
+	}
+
+	if v, ok := output["RawResponse"]; ok {
+		row["RawResponse"] = v
+	}
+
+	if _, ok := output["IsSent"]; ok {
+		row["IsSent"] = mapBool(output, "IsSent") || output["IsSent"] == 1 || output["IsSent"] == true || output["IsSent"] == "1"
 	}
 
 	return row
