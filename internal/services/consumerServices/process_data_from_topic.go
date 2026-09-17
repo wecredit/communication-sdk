@@ -698,6 +698,8 @@ type MarketingWhatsappDependencies struct {
 	WriteInputAudit func(sdkModels.CommApiRequestBody, map[string]interface{}) error
 	// WriteOutput persists using the current request payload (post-Assign / ResolveCommID).
 	WriteOutput func(sdkModels.CommApiRequestBody, map[string]interface{}) error
+	// OutputRecorded checks Marketing output for SourceRowId (Redis skip-send redelivery idempotency).
+	OutputRecorded func(int64) (bool, error)
 	Delete      func(sdkModels.CommApiRequestBody) (bool, error)
 	Release     func(sdkModels.CommApiRequestBody)
 	Blank       func(sdkModels.CommApiRequestBody, *sqs.Message, int)
@@ -749,6 +751,13 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 			}
 			return nil
 		},
+		OutputRecorded: func(sourceRowId int64) (bool, error) {
+			return database.CommWhatsappMarketingOutputExists(
+				database.DBMarketing,
+				config.Configs.CommWhatsappMarketingOutputTable,
+				sourceRowId,
+			)
+		},
 		Delete: func(payload sdkModels.CommApiRequestBody) (bool, error) {
 			return deleteMessage(ctx, sqsClient, queueURL, msg, payload)
 		},
@@ -785,6 +794,23 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		if strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == "" {
 			deps.Blank(data, msg, redriveMaxReceiveCount)
 			return false, false
+		}
+
+		// Redelivery after a successful terminal write: repair SQS only (SMS tracking idempotency parity).
+		if data.SourceRowId != 0 && deps.OutputRecorded != nil {
+			alreadyRecorded, existsErr := deps.OutputRecorded(data.SourceRowId)
+			if existsErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] marketing WhatsApp output existence check failed: %v", data.Client, data.SourceRowId, existsErr))
+				return false, false
+			}
+			
+			if alreadyRecorded {
+				deleted, delErr := deps.Delete(data)
+				if !deleted {
+					utils.Error(fmt.Errorf("failed to delete redelivered marketing WhatsApp after output already recorded: %v", delErr))
+				}
+				return true, deleted
+			}
 		}
 
 		output := map[string]interface{}{}
