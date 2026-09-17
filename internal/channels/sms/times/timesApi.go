@@ -33,7 +33,7 @@ func HitTimesSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return timesSmsResponse
 	}
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.TIMES, data.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.TIMES, data.Client, "sms")); err != nil {
 		timesSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		timesSmsResponse.Outcome = outcome.FailedRetryable
 		return timesSmsResponse

@@ -169,16 +169,19 @@ type Config struct {
 	CreditSeaSinchSmsApiUserName  string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
 	CreditSeaSinchSmsApiPassword  string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
 	CreditSeaSinchSmsApiSender    string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
-	ConsumerDefaultClientWorkers  string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
-	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
-	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
+	ConsumerDefaultClientWorkers   string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
+	ConsumerClientWorkerOverrides  string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
+	ConsumerChannelWorkerOverrides string `envconfig:"CONSUMER_CHANNEL_WORKER_OVERRIDES"`
+	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
 
 	// Per-provider SMS and WhatsApp outbound rate limits (in-process token bucket
 	// per ECS task — N tasks ≈ N × configured RPS). Overrides format:
-	// vendor:client:rps or vendor:rps (comma-separated). Shared registry for SMS
-	// and WhatsApp WaitFor call sites.
-	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
+	// vendor:client:channel:rps | vendor:client:rps | vendor:rps (comma-separated).
+	ProviderRPSDefault string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
+	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
+	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`

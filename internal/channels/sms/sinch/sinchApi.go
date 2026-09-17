@@ -33,7 +33,7 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return sinchSmsResponse
 	}
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, data.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.SINCH, data.Client, "sms")); err != nil {
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		sinchSmsResponse.Outcome = outcome.FailedRetryable
 		return sinchSmsResponse

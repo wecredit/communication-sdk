@@ -50,7 +50,7 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 
 	logPinnacleJSONRequest(data, apiURL, apiPayload)
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.PINNACLE, data.Client, "sms")); err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		pinnacleSmsResponse.Outcome = outcome.FailedRetryable
 		return pinnacleSmsResponse
