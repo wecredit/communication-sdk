@@ -185,6 +185,9 @@ func UpdateTransactionId(RDB *redis.Client, commIdempotentKey, redisKey, transac
 // UpdateErrorMessage updates the errorMessage for an existing mobile_channel key
 func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMessage string) error {
 	ctx := context.Background()
+	if RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
 
 	// Get existing data
 	val, err := RDB.HGet(ctx, commIdempotentKey, redisKey).Result()

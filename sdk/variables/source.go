@@ -4,6 +4,7 @@ const (
 	SINCH    string = "SINCH"
 	TIMES    string = "TIMES"
 	PINNACLE string = "PINNACLE"
+	FCM      string = "FCM"
 )
 
 const (
