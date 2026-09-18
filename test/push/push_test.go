@@ -44,8 +44,10 @@ func TestFCMPayloadIncludesNotificationAndData(t *testing.T) {
 		NotificationEvent: "offer_view",
 		DeepLink:          "zapcash://offers/1",
 		NavigationData: map[string]string{
-			"screen": "offer",
-			"title":  "must-not-override",
+			"screen":             "offer",
+			"title":              "must-not-override",
+			"from":               "reserved",
+			"google.c.sender.id": "reserved",
 		},
 	})
 	if err != nil {
@@ -59,6 +61,12 @@ func TestFCMPayloadIncludesNotificationAndData(t *testing.T) {
 	}
 	if request.Message.Android == nil || request.Message.Android.Priority != "HIGH" {
 		t.Fatalf("android = %+v, want priority HIGH", request.Message.Android)
+	}
+	if _, ok := request.Message.Data["from"]; ok {
+		t.Fatal("reserved FCM data key from must be removed")
+	}
+	if _, ok := request.Message.Data["google.c.sender.id"]; ok {
+		t.Fatal("reserved FCM data key google.* must be removed")
 	}
 
 	raw, err := json.Marshal(request)
@@ -311,6 +319,9 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	if replay.Skipped != 2 || len(executor2.payloads) != 0 {
 		t.Fatalf("replay = %+v payloads=%d, want skip both without FCM", replay, len(executor2.payloads))
 	}
+	if len(replay.OutputAudits) != 2 {
+		t.Fatalf("replay output audits = %d, want terminal replay for both tokens", len(replay.OutputAudits))
+	}
 }
 
 func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
@@ -336,6 +347,57 @@ func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
 	}
 	if len(executor.payloads) != 0 {
 		t.Fatalf("FCM was called despite ShouldHitVendor off: %d payloads", len(executor.payloads))
+	}
+}
+
+func TestPushShouldHitVendorOffDoesNotAckWhenClaimFails(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, false)
+
+	service, err := push.NewService(&failingClaimStore{err: errors.New("redis unavailable")}, &fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"token-a"},
+	})
+	if err == nil || result.AckSQS || result.Processed {
+		t.Fatalf("result=%+v err=%v, want retryable Redis claim failure", result, err)
+	}
+}
+
+func TestPushServiceReplacesKnownTemplateVariables(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	stage := 2.0
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
+		Id: 2, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
+		Vendor: "FCM", TemplateName: "offer-2", TemplateHeader: "Hi {{CustomerName}}",
+		TemplateText: "Loan {{LoanId}} for {{EmiAmount}}: {{PaymentLink}}", IsActive: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.InstallTemplateSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &fakeExecutor{}
+	service, err := push.NewService(newFakeClaims(), executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-2", EventId: "event-2", Client: "zapcash", Channel: "PUSH", ProcessName: "OFFER", Stage: 2,
+		CustomerName: "Ronit", LoanId: "loan-1", EmiAmount: "25000", PaymentLink: "https://pay.example", DeviceTokens: []string{"token-a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := executor.payloads[0]
+	if payload.Message.Notification.Title != "Hi Ronit" || payload.Message.Notification.Body != "Loan loan-1 for 25000: https://pay.example" {
+		t.Fatalf("template variables not replaced: %+v", payload.Message.Notification)
 	}
 }
 

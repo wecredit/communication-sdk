@@ -17,6 +17,12 @@ const (
 	dataKeyApplicationNumber = "applicationNumber"
 )
 
+func isReservedDataKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return key == "from" || key == "message_type" || key == "collapse_key" ||
+		strings.HasPrefix(key, "google.") || strings.HasPrefix(key, "gcm.")
+}
+
 // SendRequest is the FCM HTTP v1 send request.
 // Includes notification (system-tray display, Firebase Console parity) plus
 // data (deep link / event fields for the app).
@@ -65,7 +71,7 @@ func BuildSendRequest(token, title, body string, request sdkModels.CommApiReques
 	data := make(map[string]string, len(request.NavigationData)+7)
 	for key, value := range request.NavigationData {
 		key = strings.TrimSpace(key)
-		if key != "" {
+		if key != "" && !isReservedDataKey(key) {
 			data[key] = value
 		}
 	}

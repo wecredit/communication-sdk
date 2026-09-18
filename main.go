@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
@@ -17,12 +18,13 @@ func main() {
 		utils.Error(fmt.Errorf("failed to load configs: %v", err))
 	}
 
-	// ZapCash PUSH UAT placeholders — replace before running.
+	// ZapCash PUSH harness — do not run the nurture feed poller against prod for UAT.
+	// Replace deviceToken with a live FCM registration for project zapcash-901a1.
 	username := os.Getenv("ZAPCASH_USERNAME")
 	password := os.Getenv("ZAPCASH_PASSWORD")
 	channel := "PUSH"
 	baseURL := "http://localhost:8080"
-	deviceToken := "f3ZSUamCQPS64eCXlu2-VL:APA91bErwa3sXWts0QW94yFL-VYioHlT5ZEblyoGZ0X24AfLyPl8KfmN7SkLUtISnFu6CTEbbE4kggv2YfNzkUCdr7F9DTVL2Qb_UJk3wSWhPLhh1qIsZSM"
+	deviceToken := "REPLACE_WITH_LIVE_FCM_DEVICE_TOKEN"
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseURL)
 	if err != nil {
@@ -31,43 +33,34 @@ func main() {
 	}
 	fmt.Println("\nClient Created:", client)
 
-	// ZapCash PUSH stages (DAY → .01 / .02 / .03). Uncomment groups as needed.
+	// Stages match the full ZapCash PUSH UAT seed in TemplateDetails.
+	// Stages 8 and 10 and stages 13–15 are intentionally not configured.
 	stages := []float64{
-		// OTP done but BD not done
 		1.01, 1.02, 1.03,
-		// experian to banking
-		// 2.01, 2.02, 2.03,
-		// Offer View
-		// 3.01, 3.02, 3.03,
-		// Offer Accepted to E sign
-		// 4.01, 4.02, 4.03,
-		// payment credited (Instant)
-		// 5.01,
-		// Document requested / rejected (Instant)
-		// 6.01, 7.01,
-		// reloan
-		// 9.01, 9.02, 9.03,
-		// foreclose
-		// 10.01, 10.02, 10.03,
-		// DueDate (D0)
-		// 11.01,
-		// Overdue dpd 1 to 5
-		// 12.01, 12.02, 12.03,
-		// Overdue 6 to 15
-		// 13.01, 13.02, 13.03,
-		// Overdue 15 to 30 / 30+
-		// 14.01, 15.01,
+		2.01, 2.02, 2.03,
+		3.01, 3.02, 3.03,
+		4.01, 4.02, 4.03,
+		5.01, 5.02, 5.03,
+		6.01, 6.02, 6.03,
+		7.01, 7.02, 7.03,
+		9.01, 9.02, 9.03,
+		11.01, 11.02, 11.03,
+		12.01, 12.02, 12.03, 12.04, 12.05, 12.06, 12.07, 12.08,
+		12.09, 12.10, 12.11, 12.12, 12.13, 12.14, 12.15, 12.16,
+		12.17, 12.18, 12.19, 12.20, 12.21, 12.22, 12.23, 12.24,
+		12.25, 12.26, 12.27, 12.28, 12.29, 12.30, 12.31,
 	}
 
+	runID := time.Now().UTC().Format("20060102T150405.000000000")
 	for _, stage := range stages {
-		eventID := fmt.Sprintf("test-push-v1%.2f", stage)
+		eventID := fmt.Sprintf("test-push-v1-%s-%.2f", runID, stage)
 		request := &sdkModels.CommApiRequestBody{
 			DbClient:           database.DBtechWrite,
 			InputTableName:     "", // PUSH audit is written by consumer handlePush, not SDK Send
 			Mobile:             "8888888888",
 			Channel:            "PUSH",
 			Client:             "zapcash",
-			ProcessName:        "zapcash",
+			ProcessName:        "ZAPCASH",
 			Vendor:             "FCM",
 			Stage:              stage,
 			IsPriority:         true,

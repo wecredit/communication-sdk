@@ -42,6 +42,10 @@ func StartConsumer(port string) {
 	monitoring.Init()
 	if err := push.Init(config.Configs); err != nil {
 		utils.Error(fmt.Errorf("failed to initialize PUSH service: %w", err))
+	} else {
+		// Positive deploy signal: config JSON + Redis claims ready.
+		// Firebase SA file is opened only on first FCM send (credentialsFile path).
+		utils.Info("PUSH service initialized")
 	}
 
 	go services.ConsumerService(config.Configs.AwsQueueUrl)

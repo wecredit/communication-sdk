@@ -13,7 +13,6 @@ import (
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
-	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 const (
@@ -76,7 +75,10 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 			"shouldHitVendor is off for client=%s channel=%s eventId=%s",
 			request.Client, request.Channel, request.EventId,
 		)
-		skipped := markShouldHitVendorOff(s.claims, request, tokens, skipMsg)
+		skipped, err := markShouldHitVendorOff(s.claims, request, tokens, skipMsg)
+		if err != nil {
+			return Result{Processed: false, AckSQS: false}, err
+		}
 		return Result{Processed: true, AckSQS: true, Skipped: skipped}, nil
 	}
 
@@ -90,10 +92,10 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	}
 
 	type tokenResult struct {
-		outcome  string
-		skipped  bool
-		err      error
-		output   map[string]interface{}
+		outcome string
+		skipped bool
+		err     error
+		output  map[string]interface{}
 	}
 	results := make(chan tokenResult, len(tokens))
 	var workers sync.WaitGroup
@@ -134,12 +136,12 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 			failures = append(failures, tokenResult.err)
 			continue
 		}
+		if tokenResult.output != nil {
+			result.OutputAudits = append(result.OutputAudits, tokenResult.output)
+		}
 		if tokenResult.skipped {
 			result.Skipped++
 			continue
-		}
-		if tokenResult.output != nil {
-			result.OutputAudits = append(result.OutputAudits, tokenResult.output)
 		}
 		switch tokenResult.outcome {
 		case outcomeSubmitted:
@@ -194,39 +196,37 @@ func buildOutputAudit(
 	}
 }
 
-func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) int {
+func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) (int, error) {
 	if len(tokens) == 0 {
 		if err := channelHelper.UpdateRedisErrorMessage(request, skipMsg); err != nil {
-			utils.Error(fmt.Errorf("failed to handle shouldHitVendor off for PUSH: %v", err))
+			return 0, fmt.Errorf("record ShouldHitVendor-off PUSH skip: %w", err)
 		}
-		return 1
+		return 1, nil
 	}
 	skipped := 0
 	for _, token := range tokens {
 		fp, err := FingerprintToken(token)
 		if err != nil {
-			utils.Error(fmt.Errorf("PUSH fingerprint failed during ShouldHitVendor-off: %v", err))
-			continue
+			return 0, fmt.Errorf("fingerprint ShouldHitVendor-off PUSH token: %w", err)
 		}
 		field := TokenRedisField(request, fp)
 		skip, claimErr := claimTokenField(claims, request, field)
 		if claimErr != nil {
-			utils.Error(fmt.Errorf("PUSH ShouldHitVendor-off claim failed: %v", claimErr))
-			continue
+			return 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
 		}
 		if skip {
 			skipped++
 			continue
 		}
 		if err := claims.SetErrorMessage(field, skipMsg); err != nil {
-			utils.Error(fmt.Errorf("PUSH ShouldHitVendor-off redis update failed: %v", err))
+			return 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
 		}
 		skipped++
 	}
 	if skipped == 0 {
-		return 1
+		return 1, nil
 	}
-	return skipped
+	return skipped, nil
 }
 
 func (s *Service) sendTokenSafely(
@@ -254,7 +254,13 @@ func (s *Service) sendToken(
 	if err != nil {
 		return "", false, nil, err
 	}
+
 	field := TokenRedisField(request, fingerprint)
+	if replay, terminal, replayErr := terminalReplayOutput(s.claims, request, field, fingerprint); replayErr != nil {
+		return "", false, nil, replayErr
+	} else if terminal {
+		return "", true, replay, nil
+	}
 
 	skip, err := claimTokenField(s.claims, request, field)
 	if err != nil {
@@ -299,6 +305,42 @@ func (s *Service) sendToken(
 	return s.finalizeToken(request, field, fingerprint, execution)
 }
 
+// terminalReplayOutput rebuilds the audit row from a terminal Redis claim on
+// SQS redelivery. This mirrors the SMS terminal-replay path: FCM is never sent
+// again, but an earlier failed audit write gets another chance before ACK.
+func terminalReplayOutput(
+	claims tokenClaimStore,
+	request sdkModels.CommApiRequestBody,
+	field, fingerprint string,
+) (map[string]interface{}, bool, error) {
+	exists, transactionID, errorMessage, err := claims.Get(field)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !exists {
+		return nil, false, nil
+	}
+
+	if transactionID = strings.TrimSpace(transactionID); transactionID != "" {
+		return buildOutputAudit(request, fingerprint, outcomeSubmitted, fcm.ExecutionResult{
+			Outcome:      fcm.OutcomeSubmitted,
+			MessageID:    transactionID,
+			AttemptCount: 0,
+		}), true, nil
+	}
+
+	if errorMessage = strings.TrimSpace(errorMessage); errorMessage != "" {
+		return buildOutputAudit(request, fingerprint, outcomeFailedFinal, fcm.ExecutionResult{
+			Outcome:      fcm.OutcomeFailedFinal,
+			Code:         errorMessage,
+			AttemptCount: 0,
+		}), true, nil
+	}
+
+	return nil, false, nil
+}
+
 func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBody, field string) (skip bool, err error) {
 	exists, txn, errMsg, err := claims.Get(field)
 	if err != nil {
@@ -314,7 +356,7 @@ func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBod
 			if reclaimErr != nil {
 				return false, reclaimErr
 			}
-			
+
 			if !reclaimed {
 				return true, nil
 			}
@@ -373,7 +415,7 @@ func resolveContent(request sdkModels.CommApiRequestBody) (title, body, template
 	if !found {
 		return "", "", "", "", errors.New("PUSH template data not found in cache")
 	}
-	
+
 	template, vendor, err := channelHelper.ResolveTemplateData(request, templateDetails)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("resolve PUSH template: %w", err)
@@ -396,11 +438,27 @@ func resolveContent(request sdkModels.CommApiRequestBody) (title, body, template
 }
 
 func applyKnownVariables(value string, request sdkModels.CommApiRequestBody) string {
-	firstName := strings.TrimSpace(request.CustomerName)
-	return strings.NewReplacer(
-		"{{firstName}}", firstName,
-		"{{ firstName }}", firstName,
-	).Replace(value)
+	variables := map[string]string{
+		"firstName":          request.CustomerName,
+		"CustomerName":       request.CustomerName,
+		"LoanId":             request.LoanId,
+		"ApplicationNumber":  request.ApplicationNumber,
+		"DueDate":            request.DueDate,
+		"EmiAmount":          request.EmiAmount,
+		"PaymentLink":        request.PaymentLink,
+		"TotalPayableAmount": request.TotalPayableAmount,
+		"TodayPayableAmount": request.TodayPayableAmount,
+		"SavingAmount":       request.SavingAmount,
+		"BounceCharge":       request.BounceCharge,
+	}
+
+	replacements := make([]string, 0, len(variables)*2)
+	for key, rawValue := range variables {
+		value := strings.TrimSpace(rawValue)
+		replacements = append(replacements, "{{"+key+"}}", value, "{{ "+key+" }}", value)
+	}
+
+	return strings.NewReplacer(replacements...).Replace(value)
 }
 
 // PushIdentity is attempt metadata for eligibility/audit fields (not a SQL ledger).

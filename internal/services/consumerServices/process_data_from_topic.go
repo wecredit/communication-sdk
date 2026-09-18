@@ -568,19 +568,12 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, err))
 	}
 
-	// Same pattern as SMS: channel returns audit maps; consumer InsertData.
-	if result.InputAudit != nil {
-		if insertErr := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); insertErr != nil {
-			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push input audit: %v",
-				data.Client, data.CommId, data.EventId, insertErr))
-		}
-	}
-	
-	for _, output := range result.OutputAudits {
-		if insertErr := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); insertErr != nil {
-			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] error inserting push output audit: %v",
-				data.Client, data.CommId, data.EventId, insertErr))
-		}
+	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
+	// terminal output audits from Redis claims without calling FCM again.
+	if auditErr := writePushAudits(result); auditErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
+			data.Client, data.CommId, data.EventId, auditErr))
+		return false, false
 	}
 
 	if !result.AckSQS {
@@ -593,6 +586,24 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, deleteErr))
 	}
 	return result.Processed, deleted
+}
+
+func writePushAudits(result push.Result) error {
+	if result.InputAudit != nil {
+		if err := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); err != nil && !isDuplicateKeyError(err) {
+			return fmt.Errorf("insert input audit: %w", err)
+		}
+	}
+	for _, output := range result.OutputAudits {
+		if err := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); err != nil && !isDuplicateKeyError(err) {
+			return fmt.Errorf("insert output audit: %w", err)
+		}
+	}
+	return nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate entry")
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
@@ -700,9 +711,9 @@ type MarketingWhatsappDependencies struct {
 	WriteOutput func(sdkModels.CommApiRequestBody, map[string]interface{}) error
 	// OutputRecorded checks Marketing output for SourceRowId (Redis skip-send redelivery idempotency).
 	OutputRecorded func(int64) (bool, error)
-	Delete      func(sdkModels.CommApiRequestBody) (bool, error)
-	Release     func(sdkModels.CommApiRequestBody)
-	Blank       func(sdkModels.CommApiRequestBody, *sqs.Message, int)
+	Delete         func(sdkModels.CommApiRequestBody) (bool, error)
+	Release        func(sdkModels.CommApiRequestBody)
+	Blank          func(sdkModels.CommApiRequestBody, *sqs.Message, int)
 }
 
 // handleMarketingWhatsapp handles marketing WhatsApp dispatch.
@@ -803,7 +814,7 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 				utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] marketing WhatsApp output existence check failed: %v", data.Client, data.SourceRowId, existsErr))
 				return false, false
 			}
-			
+
 			if alreadyRecorded {
 				deleted, delErr := deps.Delete(data)
 				if !deleted {
