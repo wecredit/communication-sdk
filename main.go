@@ -24,7 +24,7 @@ func main() {
 	password := os.Getenv("ZAPCASH_PASSWORD")
 	channel := "PUSH"
 	baseURL := "http://localhost:8080"
-	deviceToken := "REPLACE_WITH_LIVE_FCM_DEVICE_TOKEN"
+	deviceToken := "dc9eFAE3TIWtL72rh78Dj8:APA91bG-2cSeGjShigp4i1SorFaWAduMgeFDBL2k5oiLnXYndt4LfZUGoz04x4gwCkNUVoHUDACMmSR-e0pE4EhLYOR4DaSplxzJb4lM6RFzpQrazBb0Ek4"
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseURL)
 	if err != nil {
@@ -36,19 +36,44 @@ func main() {
 	// Stages match the full ZapCash PUSH UAT seed in TemplateDetails.
 	// Stages 8 and 10 and stages 13–15 are intentionally not configured.
 	stages := []float64{
-		1.01, 1.02, 1.03,
-		2.01, 2.02, 2.03,
-		3.01, 3.02, 3.03,
-		4.01, 4.02, 4.03,
-		5.01, 5.02, 5.03,
-		6.01, 6.02, 6.03,
-		7.01, 7.02, 7.03,
-		9.01, 9.02, 9.03,
-		11.01, 11.02, 11.03,
-		12.01, 12.02, 12.03, 12.04, 12.05, 12.06, 12.07, 12.08,
-		12.09, 12.10, 12.11, 12.12, 12.13, 12.14, 12.15, 12.16,
-		12.17, 12.18, 12.19, 12.20, 12.21, 12.22, 12.23, 12.24,
-		12.25, 12.26, 12.27, 12.28, 12.29, 12.30, 12.31,
+		// 1.01, 
+		// 1.02, 
+		// 1.03,
+		// 2.01, 
+		// 2.02, 
+		// 2.03,
+		// 3.01, 
+		// 3.02,
+		// 3.03,
+		// 4.01, 
+		// 4.02, 
+		// 4.03,
+		// 5.01, 
+		// 5.02, 
+		// 5.03,
+		// 6.01, 
+		// 6.02, 
+		// 6.03,
+		// 7.01, 
+		// 7.02, 
+		// 7.03,
+		// 9.01, 
+		// 9.02, 
+		// 9.03,
+		// 11.01, 
+		// 11.02, 
+		// 11.03,
+		// 12.01, 
+		// 12.02, 
+		// 12.03, 
+		// 12.04, 
+		// 12.05,
+		//  12.06,
+		//   12.07, 12.08, 12.09, 
+		// 12.10, 12.11, 12.12, 12.13, 12.14, 12.15, 12.16,
+		// 12.17, 12.18, 12.19, 12.20, 12.21, 12.22, 12.23, 12.24,
+		// 12.25, 12.26, 12.27, 12.28, 12.29, 12.30,
+		//  12.31,
 	}
 
 	runID := time.Now().UTC().Format("20060102T150405.000000000")
@@ -56,8 +81,8 @@ func main() {
 		eventID := fmt.Sprintf("test-push-v1-%s-%.2f", runID, stage)
 		request := &sdkModels.CommApiRequestBody{
 			DbClient:           database.DBtechWrite,
-			InputTableName:     "", // PUSH audit is written by consumer handlePush, not SDK Send
-			Mobile:             "8888888888",
+			InputTableName:     "PushInputAuditTable", // PUSH audit is written by consumer handlePush, not SDK Send
+			Mobile:             "6666666666",
 			Channel:            "PUSH",
 			Client:             "zapcash",
 			ProcessName:        "ZAPCASH",
@@ -69,7 +94,7 @@ func main() {
 			CustomerName:       "Ronit",
 			ApplicationNumber:  "2696944656976",
 			LoanId:             "1234616232324",
-			DueDate:            "2026-04-20",
+			DueDate:            "2026-04-02",
 			Description:        fmt.Sprintf("PUSH TEST for stage %.2f", stage),
 			DeviceTokens:       []string{deviceToken},
 			EmiAmount:          "25000",
