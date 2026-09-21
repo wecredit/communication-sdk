@@ -81,16 +81,32 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 	}
 	channelHelper.PopulateSmsFields(&req, templateData)
 
-	if strings.Contains(req.TemplateText, "{#var#}") {
-		resolvedText, applyErr := templatevars.ApplyTemplateVariables(req)
-		if applyErr != nil {
-			utils.Error(fmt.Errorf("SMS template variable substitution failed for CommId %s: %v", msg.CommId, applyErr))
-			response := extapimodels.SmsResponse{
-				Outcome:         outcome.FailedFinal,
-				ResponseMessage: fmt.Sprintf("template variable substitution failed: %v", applyErr),
-			}
-			return buildSmsResult(msg, req, response)
+	format, _, _, formatErr := templatevars.ClassifyTemplateFormat(req.TemplateText)
+	if formatErr != nil {
+		utils.Error(fmt.Errorf("SMS template format classification failed for CommId %s: %v", msg.CommId, formatErr))
+		response := extapimodels.SmsResponse{Outcome: outcome.FailedFinal, ResponseMessage: fmt.Sprintf("template format validation failed: %v", formatErr)}
+		return buildSmsResult(msg, req, response)
+	}
+
+	var resolvedText string
+	var applyErr error
+	if strings.EqualFold(strings.TrimSpace(req.Client), "wecredit") && format == templatevars.TemplateFormatNamed {
+		resolvedText, applyErr = templatevars.ApplyNamedTemplateVariables(req)
+	} else if format == templatevars.TemplateFormatLegacy {
+		resolvedText, applyErr = templatevars.ApplyTemplateVariables(req)
+	}
+
+	if applyErr != nil {
+		utils.Error(fmt.Errorf("SMS template variable substitution failed for CommId %s: %v", msg.CommId, applyErr))
+		response := extapimodels.SmsResponse{
+			Outcome:         outcome.FailedFinal,
+			ResponseMessage: fmt.Sprintf("template variable substitution failed: %v", applyErr),
 		}
+		
+		return buildSmsResult(msg, req, response)
+	}
+
+	if format == templatevars.TemplateFormatNamed || format == templatevars.TemplateFormatLegacy {
 		req.TemplateText = resolvedText
 	}
 

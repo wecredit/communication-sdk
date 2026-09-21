@@ -1,6 +1,7 @@
 package templatevars
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -10,6 +11,146 @@ import (
 )
 
 var varPlaceholder = regexp.MustCompile(`\{#var#\}`)
+var bracePlaceholder = regexp.MustCompile(`\{#[^{}]*#\}`)
+var namedPlaceholder = regexp.MustCompile(`(?i)#\s*([A-Za-z0-9_]+)\s*#`)
+
+var ErrMixedTemplateFormat = errors.New("template cannot mix legacy and named placeholders")
+
+type TemplateFormat string
+
+const (
+	TemplateFormatNone   TemplateFormat = ""
+	TemplateFormatLegacy TemplateFormat = "legacy"
+	TemplateFormatNamed  TemplateFormat = "named"
+)
+
+type NamedPlaceholder struct {
+	Original string
+	Name     string
+}
+
+var namedVariableFields = map[string]string{
+	"LINK":              "PaymentLink",
+	"NAME":              "CustomerName",
+	"AMOUNT":            "EmiAmount",
+	"DUEDATE":           "DueDate",
+	"LOANID":            "LoanId",
+	"APPLICATIONNUMBER": "ApplicationNumber",
+}
+
+func NormalizeNamedVariable(name string) string {
+	return strings.ToUpper(strings.TrimSpace(name))
+}
+
+func IsSupportedNamedVariable(name string) bool {
+	_, ok := namedVariableFields[NormalizeNamedVariable(name)]
+	return ok
+}
+
+func ClassifyTemplateFormat(text string) (TemplateFormat, []string, []NamedPlaceholder, error) {
+	legacyMatches := varPlaceholder.FindAllStringIndex(text, -1)
+	masked := []byte(text)
+	for _, match := range bracePlaceholder.FindAllStringIndex(text, -1) {
+		for i := match[0]; i < match[1]; i++ {
+			masked[i] = ' '
+		}
+	}
+
+	namedMatches := namedPlaceholder.FindAllStringSubmatchIndex(string(masked), -1)
+	named := make([]NamedPlaceholder, 0, len(namedMatches))
+	for _, match := range namedMatches {
+		original := text[match[0]:match[1]]
+		captured := text[match[2]:match[3]]
+		named = append(named, NamedPlaceholder{Original: original, Name: NormalizeNamedVariable(captured)})
+	}
+
+	switch {
+	case len(legacyMatches) > 0 && len(named) > 0:
+		return TemplateFormatNone, nil, nil, ErrMixedTemplateFormat
+	case len(legacyMatches) > 0:
+		matches := make([]string, len(legacyMatches))
+		for i, match := range legacyMatches {
+			matches[i] = text[match[0]:match[1]]
+		}
+		return TemplateFormatLegacy, matches, nil, nil
+	case len(named) > 0:
+		return TemplateFormatNamed, nil, named, nil
+	default:
+		return TemplateFormatNone, nil, nil, nil
+	}
+}
+
+func ApplyNamedTemplateVariables(data extapimodels.SmsRequestBody) (string, error) {
+	format, _, placeholders, err := ClassifyTemplateFormat(data.TemplateText)
+	if err != nil {
+		return "", err
+	}
+
+	if format != TemplateFormatNamed {
+		return data.TemplateText, nil
+	}
+	for _, placeholder := range placeholders {
+		if !IsSupportedNamedVariable(placeholder.Name) {
+			return "", fmt.Errorf("unsupported named template variable %q; if this was not intended as a variable, remove the surrounding \"#\"", placeholder.Name)
+		}
+	}
+	values := splitCSV(data.TemplateVariableValues)
+	if len(values) == 0 {
+		return "", fmt.Errorf("named template requires TemplateVariableValues for %d placeholders", len(placeholders))
+	}
+	if len(values) != len(placeholders) {
+		return "", fmt.Errorf("named template has %d placeholders but TemplateVariableValues contains %d values", len(placeholders), len(values))
+	}
+
+	var replacementErr error
+	placeholderIndex := 0
+	text := namedPlaceholder.ReplaceAllStringFunc(data.TemplateText, func(match string) string {
+		if replacementErr != nil {
+			return ""
+		}
+		if placeholderIndex >= len(placeholders) {
+			replacementErr = fmt.Errorf("named template placeholder/value sequence is inconsistent")
+			return ""
+		}
+		placeholder := placeholders[placeholderIndex]
+		value := values[placeholderIndex]
+		placeholderIndex++
+		if strings.TrimSpace(value) == "" {
+			replacementErr = fmt.Errorf("missing value for named template variable %q", placeholder.Name)
+			return ""
+		}
+		return value
+	})
+
+	if replacementErr != nil {
+		return "", replacementErr
+	}
+
+	return text, nil
+}
+
+func resolveNamedVariable(name string, data extapimodels.SmsRequestBody) (string, bool, error) {
+	name = NormalizeNamedVariable(name)
+	if !IsSupportedNamedVariable(name) {
+		return "", false, fmt.Errorf("unsupported named template variable %q; if this was not intended as a variable, remove the surrounding \"#\"", name)
+	}
+	values := map[string]string{
+		"LINK": data.PaymentLink, "NAME": data.CustomerName, "AMOUNT": data.EmiAmount,
+		"LOANID": data.LoanId, "APPLICATIONNUMBER": data.ApplicationNumber,
+	}
+
+	if name == "DUEDATE" {
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05 -0700 MST", "2006-01-02 15:04:05", "2006-01-02"} {
+			if t, err := time.Parse(layout, data.DueDate); err == nil {
+				return t.Format("2006-01-02"), true, nil
+			}
+		}
+
+		return "", false, fmt.Errorf("invalid DueDate format: %s", data.DueDate)
+	}
+
+	return values[name], true, nil
+}
 
 // ApplyTemplateVariables replaces ordered {#var#} placeholders using TemplateVariables
 // names and values from the SMS request (named payload fields and/or TemplateVariableValues CSV).

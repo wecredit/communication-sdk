@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/sms/templatevars"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	"gorm.io/gorm"
@@ -130,7 +132,11 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 		}
 	}
 
-	if template.Channel == "SMS" || template.Channel == "RCS" {
+	if template.Channel == "SMS" && strings.EqualFold(template.Client, "wecredit") {
+		if err := validateWeCreditSMSTemplate(template); err != nil {
+			return err
+		}
+	} else if template.Channel == "SMS" || template.Channel == "RCS" {
 		if err := validateTemplateVariablePlaceholders(template.TemplateText, template.TemplateVariables); err != nil {
 			return err
 		}
@@ -173,6 +179,33 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 		}
 	}
 
+	return nil
+}
+
+func validateWeCreditSMSTemplate(template apiModels.Templatedetails) error {
+	format, _, placeholders, err := templatevars.ClassifyTemplateFormat(template.TemplateText)
+	if err != nil {
+		return err
+	}
+
+	if format != templatevars.TemplateFormatNamed {
+		return validateTemplateVariablePlaceholders(template.TemplateText, template.TemplateVariables)
+	}
+	
+	if strings.TrimSpace(template.TemplateVariables) != "" {
+		log.Printf("named SMS template ignores legacy TemplateVariables metadata: client=%s process=%s dltTemplateId=%d", template.Client, template.Process, template.DltTemplateId)
+	}
+	
+	for _, placeholder := range placeholders {
+		if placeholder.Original != "#"+placeholder.Name+"#" {
+			log.Printf("named SMS template variable is not canonical uppercase: original=%q canonical=%q client=%s process=%s dltTemplateId=%d", placeholder.Original, placeholder.Name, template.Client, template.Process, template.DltTemplateId)
+		}
+	
+		if !templatevars.IsSupportedNamedVariable(placeholder.Name) {
+			return fmt.Errorf("unsupported named SMS template variable %q; if this was not intended as a variable, remove the surrounding \"#\"", placeholder.Name)
+		}
+	}
+	
 	return nil
 }
 
@@ -304,14 +337,14 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 			// Active uniqueness includes AppId so one TemplateName can have multiple
 			// WABA apps (equal-distribution / throughput). Empty AppId matches empty.
 			query = query.Where("TemplateName = ?", template.TemplateName)
-			
+
 			appID := strings.TrimSpace(template.AppId)
 			if appID == "" {
 				query = query.Where("(AppId IS NULL OR AppId = '')")
 			} else {
 				query = query.Where("AppId = ?", appID)
 			}
-			
+
 		case "RCS", "EMAIL":
 			query = query.Where("TemplateName = ?", template.TemplateName)
 		}
