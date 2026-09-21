@@ -1,11 +1,59 @@
 package templatevars_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wecredit/communication-sdk/internal/channels/sms/templatevars"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
+
+func TestClassifyTemplateFormatLegacyNamedAndMixed(t *testing.T) {
+	format, legacy, named, err := templatevars.ClassifyTemplateFormat("Hi {#var#}")
+	if err != nil || format != templatevars.TemplateFormatLegacy || len(legacy) != 1 || len(named) != 0 {
+		t.Fatalf("legacy classification = %v, %v, %v, %v", format, legacy, named, err)
+	}
+
+	format, _, named, err = templatevars.ClassifyTemplateFormat("Hi # LINK # and #name#")
+	if err != nil || format != templatevars.TemplateFormatNamed || len(named) != 2 || named[0].Name != "LINK" || named[1].Name != "NAME" {
+		t.Fatalf("named classification = %v, %v, %v", format, named, err)
+	}
+
+	_, _, _, err = templatevars.ClassifyTemplateFormat("Hi {#var#} and #LINK#")
+	if !errors.Is(err, templatevars.ErrMixedTemplateFormat) {
+		t.Fatalf("expected mixed format error, got %v", err)
+	}
+}
+
+func TestClassifyTemplateFormatLegacyIsCaseSensitive(t *testing.T) {
+	format, legacy, named, err := templatevars.ClassifyTemplateFormat("Hi {#VAR#}")
+	if err != nil || format != templatevars.TemplateFormatNone || len(legacy) != 0 || len(named) != 0 {
+		t.Fatalf("classification = %v, %v, %v, %v", format, legacy, named, err)
+	}
+}
+
+func TestApplyNamedTemplateVariables(t *testing.T) {
+	text, err := templatevars.ApplyNamedTemplateVariables(extapimodels.SmsRequestBody{
+		TemplateText: "Hi # NAME #, amount #AMOUNT#, link #link# and again #LINK#",
+		CustomerName: "Asha", EmiAmount: "30000", PaymentLink: "https://example.com/apply",
+		TemplateVariableValues: "Asha,30000,https://example.com/apply,https://example.com/apply",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "Hi Asha, amount 30000, link https://example.com/apply and again https://example.com/apply"
+	if text != want {
+		t.Fatalf("text = %q, want %q", text, want)
+	}
+}
+
+func TestApplyNamedTemplateVariablesRejectsUnsupported(t *testing.T) {
+	_, err := templatevars.ApplyNamedTemplateVariables(extapimodels.SmsRequestBody{TemplateText: "Apply #123#", TemplateVariableValues: "value"})
+	if err == nil || !strings.Contains(err.Error(), "123") {
+		t.Fatalf("expected unsupported variable error, got %v", err)
+	}
+}
 
 func TestApplyTemplateVariablesReplacesPaymentLink(t *testing.T) {
 	text, err := templatevars.ApplyTemplateVariables(extapimodels.SmsRequestBody{
