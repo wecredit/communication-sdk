@@ -137,6 +137,28 @@ func TestValidateTemplateStructure(t *testing.T) {
 	}
 }
 
+func TestValidateTemplateStructureWeCreditNamedPlaceholders(t *testing.T) {
+	base := func(text, variables string) apiModels.Templatedetails {
+		return apiModels.Templatedetails{
+			Process: "P", Client: "wecredit", Channel: "SMS", Vendor: "V",
+			DltTemplateId: 1, TemplateCategory: 3, TemplateText: text, TemplateVariables: variables,
+		}
+	}
+
+	if err := apiServices.ValidateTemplateStructure(base("Hi # NAME #, apply #link#", "")); err != nil {
+		t.Fatalf("supported named template rejected: %v", err)
+	}
+	if err := apiServices.ValidateTemplateStructure(base("Hi #LINK#", "PaymentLink")); err != nil {
+		t.Fatalf("stale named metadata should be ignored: %v", err)
+	}
+	if err := apiServices.ValidateTemplateStructure(base("Hi #UNKNOWN#", "")); err == nil || !strings.Contains(err.Error(), "UNKNOWN") {
+		t.Fatalf("expected unsupported variable error, got %v", err)
+	}
+	if err := apiServices.ValidateTemplateStructure(base("Hi {#var#} #LINK#", "PaymentLink")); err == nil || !strings.Contains(err.Error(), "mix") {
+		t.Fatalf("expected mixed-format error, got %v", err)
+	}
+}
+
 func TestTemplateCreateRequestPreservesActiveFlag(t *testing.T) {
 	request := apiModels.TemplateCreateRequest{
 		Client:   "wecredit",
