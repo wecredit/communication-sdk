@@ -300,13 +300,15 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
-	channel := strings.ToLower(strings.TrimSpace(data.Channel))
-	poolKey := ClientChannelPoolKey(client, channel)
+	// SMS and WhatsApp share one client pool. The message itself carries the
+	// channel, so an idle channel's workers are automatically available to the
+	// channel with backlog.
+	poolKey := ClientPoolKey(client)
 
 	clientMux.Lock()
 	handler, exists := clientHandlers[poolKey]
 	if !exists {
-		workerCount := ClientChannelWorkerCount(client, channel)
+		workerCount := ClientSharedWorkerCount(client)
 		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
 			msgChan: make(chan MessageWrapper, bufferSize),
@@ -351,7 +353,8 @@ func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
 	return data, nil
 }
 
-// ClientChannelPoolKey is client|channel (channel empty → client|default).
+// ClientChannelPoolKey is retained for channel-specific configuration/tests.
+// Runtime workers use ClientPoolKey so channels share capacity.
 func ClientChannelPoolKey(client, channel string) string {
 	client = strings.ToLower(strings.TrimSpace(client))
 	channel = strings.ToLower(strings.TrimSpace(channel))
@@ -359,6 +362,44 @@ func ClientChannelPoolKey(client, channel string) string {
 		channel = "default"
 	}
 	return client + "|" + channel
+}
+
+// ClientPoolKey identifies the shared runtime worker pool for a client.
+func ClientPoolKey(client string) string {
+	return strings.ToLower(strings.TrimSpace(client))
+}
+
+// ClientSharedWorkerCount returns the total worker budget shared by SMS and
+// WhatsApp for a client. Explicit channel overrides are additive: a 50/50
+// configuration creates one 100-worker pool, not two isolated 50-worker pools.
+// If no channel overrides are configured for the client, the legacy client
+// worker setting remains the fallback.
+func ClientSharedWorkerCount(client string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	total := 0
+	configured := false
+
+	for _, entry := range strings.Split(config.Configs.ConsumerChannelWorkerOverrides, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		workers, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || workers < 1 {
+			continue
+		}
+		configured = true
+		total += workers
+	}
+
+	if configured {
+		if total > maxClientWorkers {
+			return maxClientWorkers
+		}
+		return total
+	}
+
+	return ClientWorkerCount(client)
 }
 
 // ClientChannelWorkerCount resolves CONSUMER_CHANNEL_WORKER_OVERRIDES
@@ -438,6 +479,7 @@ func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan Messa
 	}()
 
 	timeout := time.NewTimer(time.Hour)
+	defer timeout.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -469,16 +511,10 @@ func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan Messa
 				}
 			}
 		case <-timeout.C:
-			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for pool: %s", poolKey))
-			clientMux.Lock()
-			if handler, ok := clientHandlers[poolKey]; ok {
-				handler.closeOnce.Do(func() {
-					close(handler.msgChan)
-				})
-				delete(clientHandlers, poolKey)
-			}
-			clientMux.Unlock()
-			return
+			// Keep the shared pool alive. A single idle worker must not close the
+			// client queue while other workers are processing another channel.
+			utils.Debug(fmt.Sprintf("Worker idle for 1 hour in shared pool: %s", poolKey))
+			timeout.Reset(time.Hour)
 		}
 	}
 }
