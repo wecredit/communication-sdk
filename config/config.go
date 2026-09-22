@@ -10,6 +10,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/wecredit/communication-sdk/internal/database"
+	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/queue"
@@ -48,6 +49,10 @@ func LoadConfigs() error {
 				}
 			}
 		}
+	}
+
+	if err := ratelimit.InitFromConfig(Configs.ProviderRPSOverrides, Configs.ProviderRPSApprovedCaps, Configs.ProviderRPSDefault); err != nil {
+		return fmt.Errorf("invalid PROVIDER_RPS_OVERRIDES vs PROVIDER_RPS_APPROVED_CAPS: %w", err)
 	}
 
 	// Initialize Redis Connection

@@ -234,6 +234,7 @@ func ConsumerService(_ string) {
 		handler.closeOnce.Do(func() {
 			close(handler.msgChan)
 		})
+		delete(clientHandlers, client)
 		handlers = append(handlers, handler)
 		clients = append(clients, client)
 	}
@@ -300,32 +301,34 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
+	channel := strings.ToLower(strings.TrimSpace(data.Channel))
+	poolKey := ClientChannelPoolKey(client, channel)
+
 	clientMux.Lock()
-	handler, exists := clientHandlers[client]
+	handler, exists := clientHandlers[poolKey]
 	if !exists {
-		workerCount := ClientWorkerCount(client)
+		workerCount := ClientChannelWorkerCount(client, channel)
 		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
 			msgChan: make(chan MessageWrapper, bufferSize),
 			wg:      &sync.WaitGroup{},
 			workers: workerCount,
 		}
-		clientHandlers[client] = handler
+		clientHandlers[poolKey] = handler
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, handler.wg)
+			go startClientWorker(ctx, poolKey, handler.msgChan, queue.SQSClient, handler.wg)
 		}
-		utils.Info(fmt.Sprintf("Started %d workers for client: %s", handler.workers, client))
+		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
-	clientMux.Unlock()
-
 	handler.msgChan <- MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
 		RedriveMaxReceiveCount: redriveMaxReceiveCount,
 	}
+	clientMux.Unlock()
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -347,6 +350,57 @@ func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
 		return data, fmt.Errorf("unrecognized SQS body (not SNS envelope or CommApiRequestBody)")
 	}
 	return data, nil
+}
+
+// ClientChannelPoolKey is client|channel (channel empty → client|default).
+func ClientChannelPoolKey(client, channel string) string {
+	client = strings.ToLower(strings.TrimSpace(client))
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		channel = "default"
+	}
+	return client + "|" + channel
+}
+
+// ClientChannelWorkerCount resolves CONSUMER_CHANNEL_WORKER_OVERRIDES
+// (client:channel:n), then the broad SMS/WhatsApp channel setting, then
+// CONSUMER_CLIENT_WORKER_OVERRIDES (client:n), then default.
+func ClientChannelWorkerCount(client, channel string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel != "" {
+		want := client + ":" + channel
+		for _, entry := range strings.Split(config.Configs.ConsumerChannelWorkerOverrides, ",") {
+			parts := strings.Split(strings.TrimSpace(entry), ":")
+			if len(parts) != 3 {
+				continue
+			}
+
+			key := strings.ToLower(strings.TrimSpace(parts[0])) + ":" + strings.ToLower(strings.TrimSpace(parts[1]))
+			if key != want {
+				continue
+			}
+
+			value, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+			if err == nil && value > 0 && value <= maxClientWorkers {
+				return value
+			}
+		}
+	}
+
+	var channelWorkers string
+	switch channel {
+	case strings.ToLower(variables.SMS):
+		channelWorkers = config.Configs.SMSWorkers
+	case strings.ToLower(variables.WhatsApp):
+		channelWorkers = config.Configs.WhatsAppWorkers
+	}
+
+	if workers := boundedConsumerConfigInt(channelWorkers, 0, maxClientWorkers); workers > 0 {
+		return workers
+	}
+
+	return ClientWorkerCount(client)
 }
 
 func ClientWorkerCount(client string) int {
@@ -376,10 +430,10 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", client, r))
+			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
 		}
 		wg.Done()
 	}()
@@ -388,11 +442,11 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 	for {
 		select {
 		case <-ctx.Done():
-			utils.Warn(fmt.Sprintf("Shutting down worker for client: %s", client))
+			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
 		case msgWrapper, ok := <-msgChan:
 			if !ok {
-				utils.Warn(fmt.Sprintf("Channel closed for client: %s", client))
+				utils.Warn(fmt.Sprintf("Channel closed for pool: %s", poolKey))
 				return
 			}
 			if !timeout.Stop() {
@@ -408,7 +462,7 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				// - If it's a transient error, don't delete (let it retry)
 				// - If it's a permanent error, delete to prevent infinite retries
 				// For now, we let SQS handle retries via visibility timeout
-				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
+				utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
 			} else if isMessageProcessed && !deleted {
 				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
 				if !deleted {
@@ -416,13 +470,13 @@ func startClientWorker(ctx context.Context, client string, msgChan <-chan Messag
 				}
 			}
 		case <-timeout.C:
-			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for client: %s", client))
+			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for pool: %s", poolKey))
 			clientMux.Lock()
-			if handler, ok := clientHandlers[client]; ok {
+			if handler, ok := clientHandlers[poolKey]; ok {
 				handler.closeOnce.Do(func() {
 					close(handler.msgChan)
 				})
-				delete(clientHandlers, client)
+				delete(clientHandlers, poolKey)
 			}
 			clientMux.Unlock()
 			return
@@ -1048,7 +1102,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 	}
 
-	result, err := sms.SendSmsByProcess(data)
+	result, err := sms.SendSmsByProcessWithContext(ctx, data)
 
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))

@@ -55,7 +55,7 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		utils.Error(fmt.Errorf("error occured while getting WP payload: %v", err))
 	}
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, pinnacleApiModel.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.PINNACLE, pinnacleApiModel.Client, "whatsapp")); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		return responseBody
 	}

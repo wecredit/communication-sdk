@@ -51,7 +51,7 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 		return responseBody
 	}
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.TIMES, timesApiModel.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.TIMES, timesApiModel.Client, "whatsapp")); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		return responseBody
 	}
