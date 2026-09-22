@@ -362,7 +362,8 @@ func ClientChannelPoolKey(client, channel string) string {
 }
 
 // ClientChannelWorkerCount resolves CONSUMER_CHANNEL_WORKER_OVERRIDES
-// (client:channel:n), then CONSUMER_CLIENT_WORKER_OVERRIDES (client:n), then default.
+// (client:channel:n), then the broad SMS/WhatsApp channel setting, then
+// CONSUMER_CLIENT_WORKER_OVERRIDES (client:n), then default.
 func ClientChannelWorkerCount(client, channel string) int {
 	client = strings.ToLower(strings.TrimSpace(client))
 	channel = strings.ToLower(strings.TrimSpace(channel))
@@ -384,6 +385,18 @@ func ClientChannelWorkerCount(client, channel string) int {
 				return value
 			}
 		}
+	}
+
+	var channelWorkers string
+	switch channel {
+	case strings.ToLower(variables.SMS):
+		channelWorkers = config.Configs.SMSWorkers
+	case strings.ToLower(variables.WhatsApp):
+		channelWorkers = config.Configs.WhatsAppWorkers
+	}
+	
+	if workers := boundedConsumerConfigInt(channelWorkers, 0, maxClientWorkers); workers > 0 {
+		return workers
 	}
 
 	return ClientWorkerCount(client)
