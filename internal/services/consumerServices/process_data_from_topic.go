@@ -685,7 +685,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, MapWhatsappMysqlOutput(dbMappedData)); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 	}
 
@@ -1582,10 +1582,6 @@ func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output m
 	if name := strings.TrimSpace(data.TemplateReference); name != "" {
 		row["TemplateName"] = name
 	}
-	if appID := strings.TrimSpace(data.AppId); appID != "" {
-		row["AppId"] = appID
-	}
-
 	if output == nil {
 		return row
 	}
@@ -1624,28 +1620,36 @@ func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output m
 		}
 	}
 
-	if v, ok := output["AppId"]; ok {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			row["AppId"] = strings.TrimSpace(s)
-		}
-	}
-
 	if v, ok := output["PaymentLink"]; ok {
 		row["PaymentLink"] = v
-	}
-
-	if v, ok := output["RawPayload"]; ok {
-		row["RawPayload"] = v
-	}
-
-	if v, ok := output["RawResponse"]; ok {
-		row["RawResponse"] = v
 	}
 
 	if _, ok := output["IsSent"]; ok {
 		row["IsSent"] = mapBool(output, "IsSent") || output["IsSent"] == 1 || output["IsSent"] == true || output["IsSent"] == "1"
 	}
 
+	return row
+}
+
+// MapWhatsappMysqlOutput restricts the lender-shaped audit write to columns
+// supported by the legacy MySQL WhatsappOutputTable. Provider raw payloads and
+// marketing AppId are persisted by the marketing SQL output sink instead.
+func MapWhatsappMysqlOutput(output map[string]interface{}) map[string]interface{} {
+	row := make(map[string]interface{}, 8)
+	for _, column := range []string{
+		"CommId",
+		"Vendor",
+		"MobileNumber",
+		"IsSent",
+		"TransactionId",
+		"ResponseMessage",
+		"PaymentLink",
+		"TemplateName",
+	} {
+		if value, ok := output[column]; ok {
+			row[column] = value
+		}
+	}
 	return row
 }
 
