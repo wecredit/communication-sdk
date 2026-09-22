@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/config"
@@ -18,8 +19,9 @@ import (
 // delivery identity field: {GenerateRedisKeyForRequest}:{tokenFingerprint}.
 type tokenClaimStore interface {
 	Get(field string) (exists bool, transactionID, errorMessage string, err error)
+	ClaimedAt(field string) (claimedAt time.Time, exists bool, err error)
 	Claim(field string) error
-	ReclaimBlank(field string) (bool, error)
+	ReclaimExpired(field string, cutoff time.Time) (bool, error)
 	SetTransactionID(field, transactionID string) error
 	SetErrorMessage(field, errorMessage string) error
 }
@@ -44,12 +46,16 @@ func (c *redisTokenClaims) Get(field string) (bool, string, string, error) {
 	return redis.GetMobileDataFromRedis(c.hash, field, c.rdb)
 }
 
-func (c *redisTokenClaims) Claim(field string) error {
-	return redis.SetMobileChannelKey(c.rdb, c.hash, field)
+func (c *redisTokenClaims) ClaimedAt(field string) (time.Time, bool, error) {
+	return redis.GetPushClaimedAt(c.hash, field, c.rdb)
 }
 
-func (c *redisTokenClaims) ReclaimBlank(field string) (bool, error) {
-	return redis.ReclaimBlankMobileChannelKey(c.rdb, c.hash, field)
+func (c *redisTokenClaims) Claim(field string) error {
+	return redis.SetPushClaimKey(c.rdb, c.hash, field)
+}
+
+func (c *redisTokenClaims) ReclaimExpired(field string, cutoff time.Time) (bool, error) {
+	return redis.ReclaimExpiredPushClaim(c.rdb, c.hash, field, cutoff)
 }
 
 func (c *redisTokenClaims) SetTransactionID(field, transactionID string) error {

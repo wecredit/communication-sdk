@@ -18,6 +18,7 @@ import (
 const (
 	providerName          = "FCM"
 	maxParallelTokenSends = 10
+	pushClaimLease        = 5 * time.Minute
 
 	outcomeSubmitted      = "submitted"
 	outcomeFailedFinal    = "failed_final"
@@ -351,9 +352,24 @@ func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBod
 			return true, nil
 		}
 
-		// A blank claim may belong to a worker currently sending to FCM.
-		// Never reclaim it here; doing so can allow a concurrent duplicate send.
-		return true, nil
+		claimedAt, _, claimErr := claims.ClaimedAt(field)
+		if claimErr != nil {
+			return false, claimErr
+		}
+
+		if claimedAt.IsZero() {
+			// Legacy blank claims have no known age, so keep them at-most-once.
+			return true, nil
+		}
+
+		reclaimed, reclaimErr := claims.ReclaimExpired(field, time.Now().UTC().Add(-pushClaimLease))
+		if reclaimErr != nil {
+			return false, reclaimErr
+		}
+		
+		if !reclaimed {
+			return true, nil
+		}
 	}
 
 	if err := claims.Claim(field); err != nil {

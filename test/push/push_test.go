@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wecredit/communication-sdk/internal/channels/push"
 	"github.com/wecredit/communication-sdk/internal/channels/push/fcm"
@@ -174,12 +175,13 @@ func TestTokenRedisFieldUsesEventIdBase(t *testing.T) {
 
 // fakeClaims is an in-memory tokenClaimStore for unit tests.
 type fakeClaims struct {
-	mu     sync.Mutex
-	fields map[string]string // "" blank, "txn:..." or "err:..."
+	mu        sync.Mutex
+	fields    map[string]string // "" blank, "txn:..." or "err:..."
+	claimedAt map[string]time.Time
 }
 
 func newFakeClaims() *fakeClaims {
-	return &fakeClaims{fields: make(map[string]string)}
+	return &fakeClaims{fields: make(map[string]string), claimedAt: make(map[string]time.Time)}
 }
 
 func (c *fakeClaims) Get(field string) (bool, string, string, error) {
@@ -205,17 +207,27 @@ func (c *fakeClaims) Claim(field string) error {
 		return errors.New("key already exists in redis")
 	}
 	c.fields[field] = ""
+	c.claimedAt[field] = time.Now().UTC()
 	return nil
 }
 
-func (c *fakeClaims) ReclaimBlank(field string) (bool, error) {
+func (c *fakeClaims) ClaimedAt(field string) (time.Time, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	claimedAt, ok := c.claimedAt[field]
+	return claimedAt, ok, nil
+}
+
+func (c *fakeClaims) ReclaimExpired(field string, cutoff time.Time) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	val, ok := c.fields[field]
-	if !ok || val != "" {
+	claimedAt, hasTimestamp := c.claimedAt[field]
+	if !ok || val != "" || !hasTimestamp || claimedAt.After(cutoff) {
 		return false, nil
 	}
 	delete(c.fields, field)
+	delete(c.claimedAt, field)
 	return true, nil
 }
 
@@ -477,8 +489,11 @@ type failingClaimStore struct {
 func (c *failingClaimStore) Get(string) (bool, string, string, error) {
 	return false, "", "", nil
 }
+func (c *failingClaimStore) ClaimedAt(string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
 func (c *failingClaimStore) Claim(string) error { return c.err }
-func (c *failingClaimStore) ReclaimBlank(string) (bool, error) {
+func (c *failingClaimStore) ReclaimExpired(string, time.Time) (bool, error) {
 	return false, nil
 }
 func (c *failingClaimStore) SetTransactionID(string, string) error { return nil }

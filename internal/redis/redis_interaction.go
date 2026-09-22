@@ -5,12 +5,68 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
 )
+
+func GetPushClaimedAt(commIdempotentKey, redisKey string, rdb *redis.Client) (time.Time, bool, error) {
+	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		return time.Time{}, false, nil
+	}
+
+	if err != nil {
+		return time.Time{}, false, err
+	}
+
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil || data.ClaimedAtUnix <= 0 {
+		return time.Time{}, true, nil
+	}
+
+	return time.Unix(data.ClaimedAtUnix, 0), true, nil
+}
+
+func SetPushClaimKey(rdb *redis.Client, commIdempotentKey, redisKey string) error {
+	data, err := json.Marshal(redisModels.MobileChannelRedisData{ClaimedAtUnix: time.Now().UTC().Unix()})
+	if err != nil {
+		return fmt.Errorf("marshal PUSH claim: %w", err)
+	}
+	
+	created, err := rdb.HSetNX(context.Background(), commIdempotentKey, redisKey, string(data)).Result()
+	if err != nil {
+		return err
+	}
+
+	if !created {
+		return fmt.Errorf("key %s already exists in redis", redisKey)
+	}
+
+	return nil
+}
+
+func ReclaimExpiredPushClaim(rdb *redis.Client, commIdempotentKey, redisKey string, cutoff time.Time) (bool, error) {
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false or string.sub(val, 1, 1) ~= '{' then return 0 end
+local claimed = string.match(val, '"claimedAtUnix"%s*:%s*(%d+)')
+if claimed == nil or tonumber(claimed) > tonumber(ARGV[2]) then return 0 end
+if string.match(val, '"transactionId"%s*:%s*"[^"]+"') then return 0 end
+if string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+	
+	result, err := rdb.Eval(context.Background(), script, []string{commIdempotentKey}, redisKey, fmt.Sprintf("%d", cutoff.UTC().Unix())).Int()
+	if err != nil {
+		return false, fmt.Errorf("reclaim expired PUSH claim %s: %w", redisKey, err)
+	}
+
+	return result > 0, nil
+}
 
 // Function to store data into redis from db
 func StoreDataInRedis(query string, db *gorm.DB, RDB *redis.Client, redisKey string) error {
