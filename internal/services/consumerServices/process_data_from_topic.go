@@ -233,6 +233,7 @@ func ConsumerService(_ string) {
 		handler.closeOnce.Do(func() {
 			close(handler.msgChan)
 		})
+		delete(clientHandlers, client)
 		handlers = append(handlers, handler)
 		clients = append(clients, client)
 	}
@@ -320,14 +321,13 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
-	clientMux.Unlock()
-
 	handler.msgChan <- MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
 		RedriveMaxReceiveCount: redriveMaxReceiveCount,
 	}
+	clientMux.Unlock()
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -394,7 +394,7 @@ func ClientChannelWorkerCount(client, channel string) int {
 	case strings.ToLower(variables.WhatsApp):
 		channelWorkers = config.Configs.WhatsAppWorkers
 	}
-	
+
 	if workers := boundedConsumerConfigInt(channelWorkers, 0, maxClientWorkers); workers > 0 {
 		return workers
 	}
@@ -1044,7 +1044,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 	}
 
-	result, err := sms.SendSmsByProcess(data)
+	result, err := sms.SendSmsByProcessWithContext(ctx, data)
 
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))

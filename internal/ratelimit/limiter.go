@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -175,7 +176,7 @@ func ParseOverrides(raw string) map[string]float64 {
 			continue
 		}
 		rps, err := strconv.ParseFloat(strings.TrimSpace(pieces[len(pieces)-1]), 64)
-		if err != nil || rps <= 0 {
+		if err != nil || rps <= 0 || math.IsNaN(rps) || math.IsInf(rps, 0) {
 			continue
 		}
 		name := strings.ToLower(strings.Join(pieces[:len(pieces)-1], ":"))
@@ -187,6 +188,13 @@ func ParseOverrides(raw string) map[string]float64 {
 // ValidateOverridesAgainstCaps ensures every override ≤ matching approved cap
 // (exact key, then vendor:client, then vendor). Empty caps skips validation.
 func ValidateOverridesAgainstCaps(overridesRaw, capsRaw string) error {
+	if err := validateOverrideEntries(overridesRaw, "overrides"); err != nil {
+		return err
+	}
+
+	if err := validateOverrideEntries(capsRaw, "approved caps"); err != nil {
+		return err
+	}
 	overrides := ParseOverrides(overridesRaw)
 	caps := ParseOverrides(capsRaw)
 	if len(caps) == 0 {
@@ -201,6 +209,33 @@ func ValidateOverridesAgainstCaps(overridesRaw, capsRaw string) error {
 			return fmt.Errorf("provider_rps_overrides_exceed_cap: %s=%.0f exceeds approved cap %.0f", key, rps, cap)
 		}
 	}
+	return nil
+}
+
+func validateOverrideEntries(raw, label string) error {
+	for _, part := range strings.Split(strings.TrimSpace(raw), ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		pieces := strings.Split(part, ":")
+		if len(pieces) < 2 || len(pieces) > 4 || strings.TrimSpace(strings.Join(pieces[:len(pieces)-1], ":")) == "" {
+			return fmt.Errorf("invalid provider rate limit %s entry %q", label, part)
+		}
+
+		for _, keyPart := range pieces[:len(pieces)-1] {
+			if strings.TrimSpace(keyPart) == "" {
+				return fmt.Errorf("invalid provider rate limit %s entry %q", label, part)
+			}
+		}
+
+		rps, err := strconv.ParseFloat(strings.TrimSpace(pieces[len(pieces)-1]), 64)
+		if err != nil || rps <= 0 || math.IsNaN(rps) || math.IsInf(rps, 0) {
+			return fmt.Errorf("invalid provider rate limit %s entry %q", label, part)
+		}
+	}
+
 	return nil
 }
 
@@ -262,7 +297,7 @@ func positiveFloat(raw string, fallback float64) float64 {
 		return fallback
 	}
 	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v <= 0 {
+	if err != nil || v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return fallback
 	}
 	return v

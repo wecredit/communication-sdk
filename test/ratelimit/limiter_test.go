@@ -58,6 +58,21 @@ func TestValidateOverridesAgainstCapsRejectsOverCap(t *testing.T) {
 	}
 }
 
+func TestValidateOverridesAgainstCapsRejectsMalformedEntry(t *testing.T) {
+	err := ratelimit.ValidateOverridesAgainstCaps("sinch:wecredit:sms:not-a-number", testCaps)
+	if err == nil || !strings.Contains(err.Error(), "invalid provider rate limit overrides entry") {
+		t.Fatalf("want malformed override error, got %v", err)
+	}
+}
+
+func TestValidateOverridesAgainstCapsRejectsNonFiniteRate(t *testing.T) {
+	for _, raw := range []string{"sinch:wecredit:sms:NaN", "sinch:wecredit:sms:+Inf"} {
+		if err := ratelimit.ValidateOverridesAgainstCaps(raw, testCaps); err == nil {
+			t.Fatalf("expected non-finite rate %q to be rejected", raw)
+		}
+	}
+}
+
 func TestTryApplyOverridesKeepsLastGoodOnRefuse(t *testing.T) {
 	ratelimit.ResetForTest()
 	caps := "sinch:wecredit:whatsapp:130"
