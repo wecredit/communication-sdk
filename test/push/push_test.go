@@ -350,6 +350,39 @@ func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
 	}
 }
 
+func TestPushDoesNotReclaimInFlightEventClaim(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+
+	claims := newFakeClaims()
+	fingerprint, err := push.FingerprintToken("token-a")
+	if err != nil {
+		t.Fatalf("fingerprint token: %v", err)
+	}
+	field := push.TokenRedisField(sdkModels.CommApiRequestBody{
+		EventId: "event-1", Client: "zapcash", Channel: "PUSH", ProcessName: "OFFER", Stage: 1,
+	}, fingerprint)
+	if err := claims.Claim(field); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+
+	executor := &fakeExecutor{}
+	service, err := push.NewService(claims, executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		EventId: "event-1", Client: "zapcash", Channel: "PUSH", ProcessName: "OFFER", Stage: 1,
+		DeviceTokens: []string{"token-a"},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if result.Skipped != 1 || len(executor.payloads) != 0 {
+		t.Fatalf("result=%+v payloads=%d, want skip without FCM", result, len(executor.payloads))
+	}
+}
+
 func TestPushShouldHitVendorOffDoesNotAckWhenClaimFails(t *testing.T) {
 	cache.InitializeCache()
 	seedZapCashPushShouldHitVendor(t, false)

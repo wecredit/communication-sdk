@@ -45,6 +45,7 @@ type cachedToken struct {
 // accounts and caches them independently for each client and Firebase project.
 type TokenProvider struct {
 	mu         sync.Mutex
+	refreshMu  map[string]*sync.Mutex
 	httpClient *http.Client
 	tokens     map[string]cachedToken
 	now        func() time.Time
@@ -57,13 +58,25 @@ func NewTokenProvider(httpClient *http.Client) *TokenProvider {
 
 	return &TokenProvider{
 		httpClient: httpClient,
+		refreshMu:  make(map[string]*sync.Mutex),
 		tokens:     make(map[string]cachedToken),
 		now:        time.Now,
 	}
 }
 
-// Token returns a bearer token for client. The mutex intentionally covers a
-// refresh so concurrent sends cannot stampede Google's token endpoint.
+func (p *TokenProvider) refreshLock(key string) *sync.Mutex {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if lock, ok := p.refreshMu[key]; ok {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	p.refreshMu[key] = lock
+	return lock
+}
+
+// Token returns a bearer token for client. Refreshes are serialized per cache
+// key so one stalled OAuth request cannot block unrelated clients.
 func (p *TokenProvider) Token(ctx context.Context, client string, cfg ClientConfig) (string, error) {
 	client = strings.ToLower(strings.TrimSpace(client))
 	if client == "" {
@@ -75,11 +88,15 @@ func (p *TokenProvider) Token(ctx context.Context, client string, cfg ClientConf
 	}
 
 	cacheKey := client + "\x00" + cfg.ProjectID + "\x00" + cfg.CredentialsFile
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	refreshLock := p.refreshLock(cacheKey)
+	refreshLock.Lock()
+	defer refreshLock.Unlock()
 
 	now := p.now()
-	if token, exists := p.tokens[cacheKey]; exists && now.Add(time.Minute).Before(token.expiresAt) {
+	p.mu.Lock()
+	token, exists := p.tokens[cacheKey]
+	p.mu.Unlock()
+	if exists && now.Add(time.Minute).Before(token.expiresAt) {
 		return token.value, nil
 	}
 
@@ -130,10 +147,12 @@ func (p *TokenProvider) Token(ctx context.Context, client string, cfg ClientConf
 		return "", RetryableAttemptError("AUTH_RESPONSE_INCOMPLETE", fmt.Errorf("FCM token endpoint returned an incomplete response for client %q", client))
 	}
 
+	p.mu.Lock()
 	p.tokens[cacheKey] = cachedToken{
 		value:     decoded.AccessToken,
 		expiresAt: now.Add(time.Duration(decoded.ExpiresIn) * time.Second),
 	}
+	p.mu.Unlock()
 
 	return decoded.AccessToken, nil
 }

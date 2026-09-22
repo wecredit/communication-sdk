@@ -351,18 +351,9 @@ func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBod
 			return true, nil
 		}
 
-		if strings.TrimSpace(request.EventId) != "" {
-			reclaimed, reclaimErr := claims.ReclaimBlank(field)
-			if reclaimErr != nil {
-				return false, reclaimErr
-			}
-
-			if !reclaimed {
-				return true, nil
-			}
-		} else {
-			return true, nil
-		}
+		// A blank claim may belong to a worker currently sending to FCM.
+		// Never reclaim it here; doing so can allow a concurrent duplicate send.
+		return true, nil
 	}
 
 	if err := claims.Claim(field); err != nil {
