@@ -26,6 +26,10 @@ var pinnacleSensitiveNumber = regexp.MustCompile(`\b[0-9]{10,15}\b`)
 // POST https://api.pinnacle.in/index.php/sms/json
 // (avoids GET path encoding issues with https:// links that contain '/').
 func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
+	return HitPinnacleApiWithContext(context.Background(), data)
+}
+
+func HitPinnacleApiWithContext(ctx context.Context, data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	var pinnacleSmsResponse extapimodels.SmsResponse
 	pinnacleSmsResponse.IsSent = false
 	pinnacleSmsResponse.Outcome = outcome.FailedFinal
@@ -50,7 +54,7 @@ func HitPinnacleApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 
 	logPinnacleJSONRequest(data, apiURL, apiPayload)
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.PINNACLE, data.Client)); err != nil {
+	if err := ratelimit.WaitFor(ctx, ratelimit.KeyWithChannel(variables.PINNACLE, data.Client, "sms")); err != nil {
 		pinnacleSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		pinnacleSmsResponse.Outcome = outcome.FailedRetryable
 		return pinnacleSmsResponse

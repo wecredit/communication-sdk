@@ -1,6 +1,7 @@
 package sms
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +43,10 @@ type SendSmsResult struct {
 // stage-0 / template-reference sends do not collide. CommId stays WC-<CLIENT>-...
 // Durable CommId provider-claim is deferred until a store is approved.
 func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
+	return SendSmsByProcessWithContext(context.Background(), msg)
+}
+
+func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 	req := smsRequestFromMessage(msg)
 	if decision := smspolicy.Evaluate(msg.Source, msg.SourceRowId, msg.Channel, msg.CampaignDate, smspolicy.Now()); !decision.Allowed() {
 		return complianceBlockedResult(msg, req, decision)
@@ -102,7 +107,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 			Outcome:         outcome.FailedFinal,
 			ResponseMessage: fmt.Sprintf("template variable substitution failed: %v", applyErr),
 		}
-		
+
 		return buildSmsResult(msg, req, response)
 	}
 
@@ -129,7 +134,7 @@ func SendSmsByProcess(msg sdkModels.CommApiRequestBody) (SendSmsResult, error) {
 	case variables.SINCH:
 		response = sinchSms.HitSinchSmsApi(req)
 	case variables.PINNACLE:
-		response = pinnacleSms.HitPinnacleApi(req)
+		response = pinnacleSms.HitPinnacleApiWithContext(ctx, req)
 	default:
 		response.Outcome = outcome.FailedFinal
 		response.ResponseMessage = fmt.Sprintf("unsupported SMS vendor: %s", msg.Vendor)

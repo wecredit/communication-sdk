@@ -33,16 +33,16 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 		return sinchSmsResponse
 	}
 
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, data.Client)); err != nil {
-		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
-		sinchSmsResponse.Outcome = outcome.FailedRetryable
-		return sinchSmsResponse
-	}
-
 	// If the SMS is a regulated marketing SMS and the result is a compliance failure, then we need to evaluate the decision
 	if decision := smspolicy.Evaluate(data.Source, data.SourceRowId, data.Channel, data.CampaignDate, smspolicy.Now()); !decision.Allowed() {
 		sinchSmsResponse.ResponseMessage = decision.ErrorMessage()
 		sinchSmsResponse.Outcome = outcome.FailedFinal
+		return sinchSmsResponse
+	}
+
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.SINCH, data.Client, "sms")); err != nil {
+		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		sinchSmsResponse.Outcome = outcome.FailedRetryable
 		return sinchSmsResponse
 	}
 

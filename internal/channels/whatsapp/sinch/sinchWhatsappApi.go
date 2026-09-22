@@ -68,7 +68,7 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (e
 	responseBody.IsSent = false
 
 	// Message-send RPS only (token path is outside this bucket — OQ-5 / Tushar).
-	if err := ratelimit.WaitFor(context.Background(), ratelimit.Key(variables.SINCH, sinchApiModel.Client)); err != nil {
+	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.SINCH, sinchApiModel.Client, "whatsapp")); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		return responseBody, false
 	}
