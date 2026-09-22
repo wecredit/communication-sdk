@@ -58,6 +58,30 @@ func TestClientChannelWorkerCountAndPoolKey(t *testing.T) {
 	}
 }
 
+func TestClientSharedWorkerCountAddsChannelBudgets(t *testing.T) {
+	original := config.Configs
+	t.Cleanup(func() { config.Configs = original })
+	config.Configs.ConsumerDefaultClientWorkers = "5"
+	config.Configs.ConsumerClientWorkerOverrides = "wecredit:10"
+	config.Configs.ConsumerChannelWorkerOverrides = "wecredit:sms:50,wecredit:whatsapp:50"
+
+	if got := services.ClientSharedWorkerCount("WeCredit"); got != 100 {
+		t.Fatalf("shared worker budget = %d, want 100", got)
+	}
+}
+
+func TestClientSharedWorkerCountFallsBackToClientBudget(t *testing.T) {
+	original := config.Configs
+	t.Cleanup(func() { config.Configs = original })
+	config.Configs.ConsumerDefaultClientWorkers = "5"
+	config.Configs.ConsumerClientWorkerOverrides = "wecredit:25"
+	config.Configs.ConsumerChannelWorkerOverrides = ""
+
+	if got := services.ClientSharedWorkerCount("wecredit"); got != 25 {
+		t.Fatalf("shared worker fallback = %d, want 25", got)
+	}
+}
+
 func TestClientChannelWorkerCountNoCrossClientLeak(t *testing.T) {
 	original := config.Configs
 	t.Cleanup(func() { config.Configs = original })
