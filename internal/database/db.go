@@ -2,6 +2,8 @@ package database
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var (
@@ -31,6 +34,17 @@ const (
 	ConnectionTypeRead  = "read"
 	ConnectionTypeWrite = "write"
 )
+
+func gormConfig() *gorm.Config {
+	return &gorm.Config{
+		Logger: gormlogger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), gormlogger.Config{
+			SlowThreshold:             400 * time.Millisecond,
+			LogLevel:                  gormlogger.Warn,
+			IgnoreRecordNotFoundError: false,
+			Colorful:                  true,
+		}),
+	}
+}
 
 // GetDSN generates the DSN string for the database connection
 func GetDSN(user, password, server, port, database string) string {
@@ -58,7 +72,7 @@ func connectAnalyticsDB(config models.Config) error {
 	)
 
 	var err error
-	DBanalytics, err = gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+	DBanalytics, err = gorm.Open(sqlserver.Open(dsn), gormConfig())
 	if err != nil {
 		return fmt.Errorf("failed to connect to Analytical DB: %w", err)
 	}
@@ -108,7 +122,7 @@ func connectTechDB(connectionType string, config models.Config) error {
 		config.DbNameTech,
 	)
 
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(dsn), gormConfig())
 	if err != nil {
 		return fmt.Errorf("failed to connect to %s: %w", dbName, err)
 	}
@@ -153,7 +167,7 @@ func connectMarketingDB(config models.Config) error {
 	}
 
 	dsn := GetDSN(user, password, server, port, config.DbNameMarketing)
-	db, err := gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(sqlserver.Open(dsn), gormConfig())
 	if err != nil {
 		return fmt.Errorf("failed to connect to Marketing DB: %w", err)
 	}
