@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,8 +58,15 @@ type ConsumerQueueRuntime struct {
 	RedriveMaxReceiveCount int
 }
 
+type clientBuffer struct {
+	ch     chan MessageWrapper
+	sendMu sync.Mutex
+	closed bool
+}
+
 type clientRoutine struct {
-	msgChan   chan MessageWrapper
+	buffers   map[string]*clientBuffer
+	buffersMu sync.RWMutex
 	closeOnce sync.Once
 	wg        *sync.WaitGroup
 	workers   int
@@ -230,9 +238,7 @@ func ConsumerService(_ string) {
 	handlers := make([]*clientRoutine, 0, len(clientHandlers))
 	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
-		handler.closeOnce.Do(func() {
-			close(handler.msgChan)
-		})
+		handler.closeOnce.Do(handler.closeBuffers)
 		delete(clientHandlers, client)
 		handlers = append(handlers, handler)
 		clients = append(clients, client)
@@ -300,18 +306,17 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
-	// SMS and WhatsApp share one client pool. The message itself carries the
-	// channel, so an idle channel's workers are automatically available to the
-	// channel with backlog.
+	// SMS and WhatsApp share one client pool, but each channel has its own
+	// bounded buffer. Workers select across the buffers, so an idle channel
+	// does not reserve any part of the shared worker budget.
 	poolKey := ClientPoolKey(client)
 
 	clientMux.Lock()
 	handler, exists := clientHandlers[poolKey]
 	if !exists {
 		workerCount := ClientSharedWorkerCount(client)
-		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
 		handler = &clientRoutine{
-			msgChan: make(chan MessageWrapper, bufferSize),
+			buffers: make(map[string]*clientBuffer),
 			wg:      &sync.WaitGroup{},
 			workers: workerCount,
 		}
@@ -319,17 +324,20 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, poolKey, handler.msgChan, queue.SQSClient, handler.wg)
+			go startClientWorker(ctx, poolKey, handler, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
-	handler.msgChan <- MessageWrapper{
+	bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+	handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
+	clientMux.Unlock()
+
+	handler.enqueue(ctx, data.Channel, MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
 		RedriveMaxReceiveCount: redriveMaxReceiveCount,
-	}
-	clientMux.Unlock()
+	})
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -470,7 +478,103 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+// ClientChannelBufferKey normalizes the channel name used to isolate pending
+// message buffers within a shared client worker pool.
+func ClientChannelBufferKey(channel string) string {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		return "default"
+	}
+	return channel
+}
+
+func channelBufferCapacity(channel string, totalBufferSize int) int {
+	key := ClientChannelBufferKey(channel)
+	if key == strings.ToLower(variables.SMS) || key == strings.ToLower(variables.WhatsApp) {
+		// Preserve the existing aggregate client buffer when both primary
+		// channels are present: e.g. configured 200 becomes 100 + 100.
+		if totalBufferSize > 1 {
+			return (totalBufferSize + 1) / 2
+		}
+	}
+	return totalBufferSize
+}
+
+func (handler *clientRoutine) bufferFor(channel string, bufferSize int) *clientBuffer {
+	key := ClientChannelBufferKey(channel)
+	handler.buffersMu.Lock()
+	defer handler.buffersMu.Unlock()
+	if buffer, ok := handler.buffers[key]; ok {
+		return buffer
+	}
+	buffer := &clientBuffer{ch: make(chan MessageWrapper, bufferSize)}
+	handler.buffers[key] = buffer
+	return buffer
+}
+
+func (handler *clientRoutine) enqueue(ctx context.Context, channel string, message MessageWrapper) {
+	// Keep the potentially blocking send out of clientMux. A full SMS buffer
+	// must not block WhatsApp handler lookup or buffer creation.
+	handler.buffersMu.RLock()
+	buffer := handler.buffers[ClientChannelBufferKey(channel)]
+	handler.buffersMu.RUnlock()
+	if buffer != nil {
+		buffer.sendMu.Lock()
+		defer buffer.sendMu.Unlock()
+		if !buffer.closed {
+			select {
+			case buffer.ch <- message:
+			case <-ctx.Done():
+			}
+		}
+	}
+}
+
+func (handler *clientRoutine) closeBuffers() {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	for _, buffer := range handler.buffers {
+		buffer.sendMu.Lock()
+		if !buffer.closed {
+			buffer.closed = true
+			close(buffer.ch)
+		}
+		buffer.sendMu.Unlock()
+	}
+}
+
+func (handler *clientRoutine) buffersSnapshot() []*clientBuffer {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	buffers := make([]*clientBuffer, 0, len(handler.buffers))
+	for _, buffer := range handler.buffers {
+		buffers = append(buffers, buffer)
+	}
+	return buffers
+}
+
+func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool) {
+	for {
+		buffers := handler.buffersSnapshot()
+		cases := make([]reflect.SelectCase, 0, len(buffers)+1)
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		for _, buffer := range buffers {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(buffer.ch)})
+		}
+
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 0 {
+			return MessageWrapper{}, false
+		}
+		if ok {
+			return value.Interface().(MessageWrapper), true
+		}
+		// A closed buffer is expected during shutdown. Rebuild the select set
+		// so other buffers can still be drained if shutdown is extended.
+	}
+}
+
+func startClientWorker(ctx context.Context, poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
@@ -478,43 +582,27 @@ func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan Messa
 		wg.Done()
 	}()
 
-	timeout := time.NewTimer(time.Hour)
-	defer timeout.Stop()
 	for {
-		select {
-		case <-ctx.Done():
+		msgWrapper, ok := handler.receive(ctx)
+		if !ok {
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
-		case msgWrapper, ok := <-msgChan:
-			if !ok {
-				utils.Warn(fmt.Sprintf("Channel closed for pool: %s", poolKey))
-				return
+		}
+		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		// Note: Message deletion is handled inside processMessage and channel handlers
+		// Only delete here if processMessage explicitly indicates it should be deleted
+		// but wasn't already deleted (e.g., on fatal errors)
+		if !isMessageProcessed {
+			// If message processing failed and wasn't deleted, we need to decide:
+			// - If it's a transient error, don't delete (let it retry)
+			// - If it's a permanent error, delete to prevent infinite retries
+			// For now, we let SQS handle retries via visibility timeout
+			utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
+		} else if isMessageProcessed && !deleted {
+			deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 			}
-			if !timeout.Stop() {
-				<-timeout.C
-			}
-			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
-			// Note: Message deletion is handled inside processMessage and channel handlers
-			// Only delete here if processMessage explicitly indicates it should be deleted
-			// but wasn't already deleted (e.g., on fatal errors)
-			if !isMessageProcessed {
-				// If message processing failed and wasn't deleted, we need to decide:
-				// - If it's a transient error, don't delete (let it retry)
-				// - If it's a permanent error, delete to prevent infinite retries
-				// For now, we let SQS handle retries via visibility timeout
-				utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
-			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
-				if !deleted {
-					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
-				}
-			}
-		case <-timeout.C:
-			// Keep the shared pool alive. A single idle worker must not close the
-			// client queue while other workers are processing another channel.
-			utils.Debug(fmt.Sprintf("Worker idle for 1 hour in shared pool: %s", poolKey))
-			timeout.Reset(time.Hour)
 		}
 	}
 }

@@ -70,6 +70,15 @@ func TestClientSharedWorkerCountAddsChannelBudgets(t *testing.T) {
 	}
 }
 
+func TestClientChannelBufferKeyIsolatedByChannel(t *testing.T) {
+	if sms, whatsapp := services.ClientChannelBufferKey("SMS"), services.ClientChannelBufferKey(" whatsapp "); sms == whatsapp {
+		t.Fatalf("SMS and WhatsApp must use distinct buffers: %q", sms)
+	}
+	if got := services.ClientChannelBufferKey(""); got != "default" {
+		t.Fatalf("empty channel buffer key = %q, want default", got)
+	}
+}
+
 func TestClientSharedWorkerCountFallsBackToClientBudget(t *testing.T) {
 	original := config.Configs
 	t.Cleanup(func() { config.Configs = original })
