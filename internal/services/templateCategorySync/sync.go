@@ -625,8 +625,10 @@ func deactivateMissingTemplates(vendor string, local map[string]struct{}, pendin
 	res := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
 		Where("Channel = ? AND Vendor = ? AND TemplateName IN ?", variables.WhatsApp, vendor, names).
 		Updates(map[string]interface{}{
-			"IsActive": false,
-			"Error":    "Template not returned by provider listing",
+			"IsActive":  false,
+			"Error":     "Template not returned by provider listing",
+			"UpdatedOn": time.Now(),
+			"UpdatedBy": categorySyncUpdatedBy,
 		})
 	if res.Error != nil {
 		return 0, fmt.Errorf("deactivate missing %s templates: %w", vendor, res.Error)

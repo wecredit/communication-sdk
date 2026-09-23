@@ -13,6 +13,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+const categorySyncUpdatedBy = "template-category-sync"
+
 // Batch failure policy: log + metric, one chunk retry, split-in-half retry, then per-name
 // applyCategoryUpdate (time.Now() for CategoryUpdatedOn). Split still applies both halves;
 // leaf failures are joined and returned so the cron is not marked fully successful.
@@ -115,10 +117,17 @@ func applyBatchCategoryUpdate(vendor string, names []string, computed ApplyCateg
 }
 
 func categoryUpdatesMap(computed ApplyCategoryUpdateResult, categoryUpdatedOn *time.Time) map[string]interface{} {
+	updatedOn := time.Now()
+	if categoryUpdatedOn != nil {
+		updatedOn = *categoryUpdatedOn
+	}
+
 	updates := map[string]interface{}{
 		"ProviderTemplateCategory": computed.ProviderCategory,
 		"IsActive":                 computed.IsActive,
 		"Error":                    computed.Error,
+		"UpdatedOn":                updatedOn,
+		"UpdatedBy":                categorySyncUpdatedBy,
 	}
 
 	if computed.TouchCategoryOn {
