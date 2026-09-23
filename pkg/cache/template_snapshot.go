@@ -124,7 +124,7 @@ func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, c
 		appID := strings.ToLower(strings.TrimSpace(row.AppId))
 		return "named\x00" + process + "\x00" + strings.ToLower(name) + "\x00" + appID + "\x00" + base, ""
 
-	case "RCS", "EMAIL":
+	case "RCS", "EMAIL", "PUSH":
 		name := strings.TrimSpace(row.TemplateName)
 		if name == "" {
 			return "", "reference template has no TemplateName"

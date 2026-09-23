@@ -17,11 +17,11 @@ func (c *CommSdkClient) Send(msg *sdkModels.CommApiRequestBody) (*sdkModels.Comm
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("unauthorized client for username %s and channel %s", c.ClientName, c.Channel)
 	}
 
-	c.Channel = strings.ToUpper(c.Channel)
-	msg.Channel = strings.ToUpper(msg.Channel)
-	msg.ProcessName = strings.ToUpper(msg.ProcessName)
-	c.ClientName = strings.ToLower(c.ClientName)
-	msg.Description = strings.ToUpper(msg.Description)
+	c.Channel = strings.ToUpper(strings.TrimSpace(c.Channel))
+	msg.Channel = strings.ToUpper(strings.TrimSpace(msg.Channel))
+	msg.ProcessName = strings.ToUpper(strings.TrimSpace(msg.ProcessName))
+	c.ClientName = strings.ToLower(strings.TrimSpace(c.ClientName))
+	msg.Description = strings.ToUpper(strings.TrimSpace(msg.Description))
 
 	if c.Channel != msg.Channel {
 		return &sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("channel mismatch: expected %s, got %s", c.Channel, msg.Channel)

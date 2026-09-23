@@ -4,4 +4,5 @@ package redisModels
 type MobileChannelRedisData struct {
 	TransactionId string `json:"transactionId,omitempty"`
 	ErrorMessage  string `json:"errorMessage,omitempty"`
+	ClaimedAtUnix int64  `json:"claimedAtUnix,omitempty"`
 }
