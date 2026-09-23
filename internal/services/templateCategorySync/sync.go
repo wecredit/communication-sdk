@@ -136,6 +136,12 @@ func syncTimes() (int, error) {
 		return total, fmt.Errorf("Times template sync: %d of %d panel(s) failed", failed, len(panels))
 	}
 
+	missing, missingErr := deactivateMissingTemplates(variables.TIMES, local, pending)
+	if missingErr != nil {
+		return total, missingErr
+	}
+	total += missing
+
 	return total, nil
 }
 
@@ -241,6 +247,12 @@ func syncTimesSingleHostFallback(local map[string]struct{}) (int, error) {
 		return total, fmt.Errorf("Times single-host fallback: %d of %d AppId(s) failed", failed, len(appIDs))
 	}
 
+	missing, missingErr := deactivateMissingTemplates(variables.TIMES, local, pending)
+	if missingErr != nil {
+		return total, missingErr
+	}
+	total += missing
+
 	return total, nil
 }
 
@@ -318,6 +330,12 @@ func syncPinnacle() (int, error) {
 		return total, fmt.Errorf("Pinnacle template sync: %d of %d panel(s) failed", failed, len(panels))
 	}
 
+	missing, missingErr := deactivateMissingTemplates(variables.PINNACLE, local, pending)
+	if missingErr != nil {
+		return total, missingErr
+	}
+	total += missing
+
 	return total, nil
 }
 
@@ -372,6 +390,12 @@ func syncPinnacleSingleHostFallback(apiKey string, local map[string]struct{}) (i
 	if failed > 0 {
 		return total, fmt.Errorf("Pinnacle single-host fallback: %d of %d AppId(s) failed", failed, len(appIDs))
 	}
+
+	missing, missingErr := deactivateMissingTemplates(variables.PINNACLE, local, pending)
+	if missingErr != nil {
+		return total, missingErr
+	}
+	total += missing
 
 	return total, nil
 }
@@ -585,6 +609,30 @@ func applyCategoryUpdate(vendor, templateName, apiCategory, apiStatus string) (i
 		return 0, res.Error
 	}
 
+	return int(res.RowsAffected), nil
+}
+
+// deactivateMissingTemplates handles provider APIs that omit inactive or
+// deleted templates from their listing. This must only run after every panel
+// for the vendor succeeds, otherwise a failed panel would make valid rows look
+// absent. Existing provider category metadata is intentionally preserved.
+func deactivateMissingTemplates(vendor string, local map[string]struct{}, pending map[string]TemplateCategoryRow) (int, error) {
+	names := MissingTemplateNames(local, pending)
+	if len(names) == 0 {
+		return 0, nil
+	}
+
+	res := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
+		Where("Channel = ? AND Vendor = ? AND TemplateName IN ?", variables.WhatsApp, vendor, names).
+		Updates(map[string]interface{}{
+			"IsActive": false,
+			"Error":    "Template not returned by provider listing",
+		})
+	if res.Error != nil {
+		return 0, fmt.Errorf("deactivate missing %s templates: %w", vendor, res.Error)
+	}
+
+	utils.Info(fmt.Sprintf("WhatsApp template category sync vendor=%s missing_from_listing=%d deactivated=%d", vendor, len(names), res.RowsAffected))
 	return int(res.RowsAffected), nil
 }
 
