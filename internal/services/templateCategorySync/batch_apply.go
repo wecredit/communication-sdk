@@ -13,7 +13,10 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
-const categorySyncUpdatedBy = "template-category-sync"
+const (
+	categorySyncUpdatedBy = "template-category-sync"
+	categorySyncClient    = "wecredit"
+)
 
 // Batch failure policy: log + metric, one chunk retry, split-in-half retry, then per-name
 // applyCategoryUpdate (time.Now() for CategoryUpdatedOn). Split still applies both halves;
@@ -107,7 +110,7 @@ func applyBatchCategoryUpdate(vendor string, names []string, computed ApplyCateg
 
 	updates := categoryUpdatesMap(computed, touchedAt)
 	res := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
-		Where("Channel = ? AND Vendor = ? AND TemplateName IN ?", variables.WhatsApp, vendor, names).
+		Where("Client = ? AND Channel = ? AND Vendor = ? AND TemplateName IN ?", categorySyncClient, variables.WhatsApp, vendor, names).
 		Updates(updates)
 	if res.Error != nil {
 		return 0, res.Error
@@ -142,7 +145,7 @@ func categoryUpdatesMap(computed ApplyCategoryUpdateResult, categoryUpdatedOn *t
 func loadLocalTemplateNames(vendor string) (map[string]struct{}, error) {
 	var names []string
 	err := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
-		Where("Channel = ? AND Vendor = ? AND TemplateName IS NOT NULL AND TemplateName <> ''", variables.WhatsApp, vendor).
+		Where("Client = ? AND Channel = ? AND Vendor = ? AND TemplateName IS NOT NULL AND TemplateName <> ''", categorySyncClient, variables.WhatsApp, vendor).
 		Distinct("TemplateName").
 		Pluck("TemplateName", &names).Error
 	if err != nil {

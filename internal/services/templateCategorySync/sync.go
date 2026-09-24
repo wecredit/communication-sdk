@@ -533,7 +533,7 @@ func fetchAppConfigValue(configKey string) (string, error) {
 func distinctAppIDs(vendor string) ([]string, error) {
 	var appIDs []string
 	err := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
-		Where("Channel = ? AND Vendor = ? AND AppId IS NOT NULL AND AppId <> ''", variables.WhatsApp, vendor).
+		Where("Client = ? AND Channel = ? AND Vendor = ? AND AppId IS NOT NULL AND AppId <> ''", categorySyncClient, variables.WhatsApp, vendor).
 		Distinct("AppId").
 		Pluck("AppId", &appIDs).Error
 	if err != nil {
@@ -603,7 +603,7 @@ func applyCategoryUpdate(vendor, templateName, apiCategory, apiStatus string) (i
 	updates := categoryUpdatesMap(computed, touchedAt)
 
 	res := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
-		Where("Channel = ? AND Vendor = ? AND TemplateName = ?", variables.WhatsApp, vendor, templateName).
+		Where("Client = ? AND Channel = ? AND Vendor = ? AND TemplateName = ?", categorySyncClient, variables.WhatsApp, vendor, templateName).
 		Updates(updates)
 	if res.Error != nil {
 		return 0, res.Error
@@ -623,7 +623,7 @@ func deactivateMissingTemplates(vendor string, local map[string]struct{}, pendin
 	}
 
 	res := database.DBtechWrite.Table(config.Configs.TemplateDetailsTable).
-		Where("Channel = ? AND Vendor = ? AND TemplateName IN ?", variables.WhatsApp, vendor, names).
+		Where("Client = ? AND Channel = ? AND Vendor = ? AND TemplateName IN ?", categorySyncClient, variables.WhatsApp, vendor, names).
 		Updates(map[string]interface{}{
 			"IsActive":  false,
 			"Error":     "Template not returned by provider listing",
