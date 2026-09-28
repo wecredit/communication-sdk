@@ -3,8 +3,8 @@ package sinchPayloads_test
 import (
 	"testing"
 
-	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	sinchSmsPayload "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
+	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	models "github.com/wecredit/communication-sdk/sdk/models"
 )
 
@@ -26,7 +26,27 @@ func TestGetTemplatePayloadUsesTemplateHeader(t *testing.T) {
 	}
 }
 
-func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
+func TestGetTemplatePayloadDoesNotReapplyPlaceholders(t *testing.T) {
+	config := models.Config{
+		SinchSmsApiUserName: "wecredit-user", SinchSmsApiPassword: "wecredit-password",
+		SinchSmsApiAppID: "wecredit-app", SinchSmsApiSender: "WECRPL",
+	}
+	// Substitution happens in sms.SendSmsByProcess; payload builder must pass text through.
+	payload, err := sinchSmsPayload.GetTemplatePayload(extapimodels.SmsRequestBody{
+		Client: "wecredit", Process: "fatakpay", Description: "test",
+		TemplateHeader: "WECRQT", DltTemplateId: 1707177200722881790,
+		TemplateCategory: "3", TemplateText: "already resolved {#var#} left alone",
+		TemplateVariables: "urg", Mobile: "9876543210",
+	}, config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["text"] != "already resolved {#var#} left alone" {
+		t.Fatalf("text = %v", payload["text"])
+	}
+}
+
+func TestApplySinchTemplateVariablesWrapper(t *testing.T) {
 	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
 		TemplateText:      "Apply here {#var#} WeCredit",
 		TemplateVariables: "PaymentLink",
@@ -36,88 +56,6 @@ func TestApplySinchTemplateVariablesReplacesPaymentLink(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if text != "Apply here https://example.com/apply WeCredit" {
-		t.Fatalf("text = %q", text)
-	}
-}
-
-func TestApplySinchTemplateVariablesMapsDynamicNamedValuesOntoVarPlaceholders(t *testing.T) {
-	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:           "Chhoti zaroorat, sahi support. Salaried users ke liye Credittplus se Rs 35000 tak loan. Abhi explore karein {#var#} WeCredit",
-		TemplateVariables:      "urg",
-		TemplateVariableValues: "https://loan.credittnow.com/",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	want := "Chhoti zaroorat, sahi support. Salaried users ke liye Credittplus se Rs 35000 tak loan. Abhi explore karein https://loan.credittnow.com/ WeCredit"
-	if text != want {
-		t.Fatalf("text = %q, want %q", text, want)
-	}
-}
-
-func TestApplySinchTemplateVariablesMapsMultipleDynamicValuesInOrder(t *testing.T) {
-	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:           "Hi {#var#} open {#var#}",
-		TemplateVariables:      "args,urg",
-		TemplateVariableValues: "Asha, https://loan.credittnow.com/",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if text != "Hi Asha open https://loan.credittnow.com/" {
-		t.Fatalf("text = %q", text)
-	}
-}
-
-func TestApplySinchTemplateVariablesUsesPositionalCsv(t *testing.T) {
-	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:           "Hi {#var#} pay {#var#}",
-		TemplateVariables:      "CustomerName,PaymentLink",
-		TemplateVariableValues: "Asha, https://pay.example/1",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if text != "Hi Asha pay https://pay.example/1" {
-		t.Fatalf("text = %q", text)
-	}
-}
-
-func TestApplySinchTemplateVariablesNamedFieldsWinWhenCsvEmpty(t *testing.T) {
-	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:      "Hi {#var#}",
-		TemplateVariables: "CustomerName",
-		CustomerName:      "ZapCash User",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if text != "Hi ZapCash User" {
-		t.Fatalf("text = %q", text)
-	}
-}
-
-func TestApplySinchTemplateVariablesRejectsPlaceholderCountMismatch(t *testing.T) {
-	_, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:      "Hi {#var#} then {#var#}",
-		TemplateVariables: "CustomerName",
-		CustomerName:      "Asha",
-	})
-	if err == nil {
-		t.Fatal("expected placeholder/key count mismatch")
-	}
-}
-
-func TestOverlayKeepsLoanIdAndApplicationNumberDistinct(t *testing.T) {
-	text, err := sinchSmsPayload.ApplySinchTemplateVariables(extapimodels.SmsRequestBody{
-		TemplateText:           "loan {#var#} app {#var#}",
-		TemplateVariables:      "LoanId,ApplicationNumber",
-		TemplateVariableValues: "L-1,A-9",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if text != "loan L-1 app A-9" {
 		t.Fatalf("text = %q", text)
 	}
 }

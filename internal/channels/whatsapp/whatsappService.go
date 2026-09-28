@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	pinnacleWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle"
@@ -30,39 +31,55 @@ var paymentLinkStages = map[int]bool{
 	// 8: true,
 }
 
-func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
+type SendWhatsappResult struct {
+	Processed         bool
+	Accepted          bool
+	ResolvedVendor    string
+	ResolvedTemplate  string
+	TemplateVariables string
+	TransactionID     string
+	DBData            map[string]interface{}
+}
+
+func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, error) {
 	requestBody := extapimodels.WhatsappRequestBody{
-		Mobile:             msg.Mobile,
-		Process:            msg.ProcessName,
-		Client:             msg.Client,
-		EmiAmount:          msg.EmiAmount,
-		CustomerName:       msg.CustomerName,
-		LoanId:             msg.LoanId,
-		ApplicationNumber:  msg.ApplicationNumber,
-		DueDate:            msg.DueDate,
-		Description:        msg.Description,
-		TotalPayableAmount: msg.TotalPayableAmount,
-		TodayPayableAmount: msg.TodayPayableAmount,
-		SavingAmount:       msg.SavingAmount,
-		BounceCharge:       msg.BounceCharge,
-		CommId:             msg.CommId,
+		Mobile:                 msg.Mobile,
+		Process:                msg.ProcessName,
+		Client:                 msg.Client,
+		EmiAmount:              msg.EmiAmount,
+		CustomerName:           msg.CustomerName,
+		LoanId:                 msg.LoanId,
+		ApplicationNumber:      msg.ApplicationNumber,
+		DueDate:                msg.DueDate,
+		Description:            msg.Description,
+		TotalPayableAmount:     msg.TotalPayableAmount,
+		TodayPayableAmount:     msg.TodayPayableAmount,
+		SavingAmount:           msg.SavingAmount,
+		BounceCharge:           msg.BounceCharge,
+		CommId:                 msg.CommId,
+		TemplateVariableValues: msg.TemplateVariableValues,
+		DynamicMobile:          msg.DynamicMobile,
+	}
+
+	if strings.TrimSpace(requestBody.DynamicMobile) == "" {
+		requestBody.DynamicMobile = msg.Mobile
 	}
 
 	utils.Debug("Fetching WHATSAPP process data from cache")
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
-		return false, nil, errors.New("template data not found in cache")
+		return SendWhatsappResult{}, errors.New("template data not found in cache")
 	}
 
 	data, matchedVendor, err := channelHelper.ResolveTemplateData(msg, templateDetails)
 	if err != nil {
-		return channelHelper.HandleTemplateNotFoundError(msg, err)
+		processed, dbData, handleErr := channelHelper.HandleTemplateNotFoundError(msg, err)
+		return SendWhatsappResult{Processed: processed, DBData: dbData}, handleErr
 	}
 
-	msg.Vendor = matchedVendor
-
 	channelHelper.PopulateWhatsappFields(&requestBody, data)
+	ApplyWhatsappVendorAppIdPrecedence(&msg, &requestBody, matchedVendor)
 
 	// Handling For Payment Link
 	// Check if current stage should use payment link instead of button url
@@ -111,6 +128,24 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	if err != nil {
 		utils.Error(fmt.Errorf("error in mapping data into dbModel: %v", err))
 	}
+	if dbMappedData == nil {
+		dbMappedData = map[string]interface{}{}
+	}
+
+	// Persist the AppId actually used for send (TemplateDetails, else request overlay).
+	if appID := strings.TrimSpace(requestBody.AppId); appID != "" {
+		dbMappedData["AppId"] = appID
+	}
+
+	result := SendWhatsappResult{
+		Processed:         true,
+		Accepted:          shouldHitVendor && response.IsSent,
+		ResolvedVendor:    msg.Vendor,
+		ResolvedTemplate:  requestBody.TemplateName,
+		TemplateVariables: requestBody.TemplateVariables,
+		TransactionID:     response.TransactionId,
+		DBData:            dbMappedData,
+	}
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
@@ -119,7 +154,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 		if msg.Client == variables.CreditSea {
 			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
 		}
-		return true, dbMappedData, nil
+		return result, nil
 	}
 
 	if !shouldHitVendor {
@@ -131,9 +166,36 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]interfa
 	}
 
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
-	return true, dbMappedData, nil // message processed but not sent as shouldHitVendor is false or response.IsSent is false
+	return result, nil // terminal, but not provider-accepted
 
 	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
 	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	// }
+}
+
+// ApplyWhatsappVendorAppIdPrecedence applies Vendor/AppId rules after TemplateDetails populate.
+//
+// When TrustPayloadWhatsappIdentity is set (nurture blank-TemplateName Redis RR), keep the
+// payload Vendor+AppId pair atomically — do not let a later TemplateDetails read split them.
+// Otherwise golden path: Vendor = matchedVendor; AppId = TemplateDetails then payload fallback.
+func ApplyWhatsappVendorAppIdPrecedence(
+	msg *sdkModels.CommApiRequestBody,
+	requestBody *extapimodels.WhatsappRequestBody,
+	matchedVendor string,
+) {
+	if msg == nil || requestBody == nil {
+		return
+	}
+
+	if msg.TrustPayloadWhatsappIdentity {
+		if appID := strings.TrimSpace(msg.AppId); appID != "" {
+			requestBody.AppId = appID
+		}
+		return
+	}
+
+	msg.Vendor = matchedVendor
+	if strings.TrimSpace(requestBody.AppId) == "" {
+		requestBody.AppId = strings.TrimSpace(msg.AppId)
+	}
 }

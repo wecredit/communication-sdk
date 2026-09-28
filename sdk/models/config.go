@@ -31,6 +31,12 @@ type Config struct {
 	DbPasswordMarketing       string `envconfig:"DB_PASSWORD_MARKETING"`
 	DbNameMarketing           string `envconfig:"DB_NAME_MARKETING"`
 	CommDispatchTrackingTable string `envconfig:"COMM_DISPATCH_TRACKING_TABLE" default:"dbo.CommDispatchTracking"`
+	CommMarketingInputTable   string `envconfig:"COMM_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommMarketingInput"`
+	// WeCredit WhatsApp marketing tables (Marketing SQL Server). Marketing WA also
+	// dual-writes MySQL SdkWhatsappInputTable + WhatsappOutputTable (SMS parity).
+	// Lender WhatsApp continues to use MySQL WhatsappOutputTable only.
+	CommWhatsappMarketingInputTable  string `envconfig:"COMM_WHATSAPP_MARKETING_INPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingInput"`
+	CommWhatsappMarketingOutputTable string `envconfig:"COMM_WHATSAPP_MARKETING_OUTPUT_TABLE_NAME" default:"dbo.CommWhatsappMarketingOutput"`
 
 	// Aws Queue Details
 	QueueConnectionString string `envconfig:"AZURE_SERVICEBUS_CONNECTION_STRING"`
@@ -43,6 +49,9 @@ type Config struct {
 	AwsSnsArn string `envconfig:"AWS_COMM_TOPIC_ARN"`
 	// WeCredit SMS: prefer SQS-direct (plan A). When set, SDK Send skips SNS for wecredit+SMS.
 	AwsWeCreditSmsQueueUrl string `envconfig:"AWS_WECREDIT_SMS_QUEUE_URL"`
+
+	// WeCredit WhatsApp staging queue. Leave unset in production until rate limiting is approved.
+	AwsWeCreditWhatsappQueueUrl string `envconfig:"AWS_WECREDIT_WHATSAPP_QUEUE_URL"`
 	// Deprecated for WeCredit SMS isolation — kept only as optional SNS fallback if queue URL is empty.
 	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
@@ -50,11 +59,28 @@ type Config struct {
 	AwsZapCashQueueUrl     string `envconfig:"AWS_ZAPCASH_QUEUE_URL"`
 	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
+	// ZapCash monitoring copies ride the existing SNS -> shared SQS path.
+	ZapCashMonitoringEnabled  string `envconfig:"ZAPCASH_MONITORING_ENABLED" default:"false"`
+	ZapCashMonitorRecipients  string `envconfig:"ZAPCASH_MONITOR_RECIPIENTS"`
+	ZapCashMonitorProfileJSON string `envconfig:"ZAPCASH_MONITOR_PROFILE_JSON"`
+
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
 	RedisPassword     string `envconfig:"REDIS_PASSWORD"`
 	RedisMapKey       string `envconfig:"REDIS_MAP_KEY"`
 	CommIdempotentKey string `envconfig:"COMM_IDEMPOTENT_KEY"`
+
+	// ConfigurationVersion is durable cache state. Redis pub/sub is only the
+	// fast notification path; polling this version recovers missed messages.
+	Environment                     string `envconfig:"ENVIRONMENT" default:"dev"`
+	ConfigurationVersionTable       string `envconfig:"CONFIGURATION_VERSION_TABLE" default:"ConfigurationVersion"`
+	CacheVersionPollIntervalSeconds string `envconfig:"CACHE_VERSION_POLL_INTERVAL_SECONDS" default:"90"`
+	CacheReloadMinIntervalSeconds   string `envconfig:"CACHE_RELOAD_MIN_INTERVAL_SECONDS" default:"60"`
+	CommAdminUsername               string `envconfig:"COMM_ADMIN_USERNAME"`
+	CommAdminPassword               string `envconfig:"COMM_ADMIN_PASSWORD"`
+	CommSuperAdminRoles             string `envconfig:"COMM_SUPER_ADMIN_ROLES" default:"marketing"`
+	CommClientRolePrefix            string `envconfig:"COMM_CLIENT_ROLE_PREFIX" default:"marketing_"`
+	CommIdentitySecret              string `envconfig:"COMM_IDENTITY_SECRET"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
@@ -78,6 +104,8 @@ type Config struct {
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`
 	TemplateDetailsTable string `envconfig:"TEMPLATE_TABLE"`
+	LenderStagesTable    string `envconfig:"LENDER_STAGES_TABLE_NAME" default:"LendersStages"`
+	TemplateStageTable   string `envconfig:"TEMPLATE_STAGE_TABLE_NAME" default:"TemplateStage"`
 
 	CommAuditTable string `envconfig:"COMM_AUDIT_TABLE"`
 
@@ -93,6 +121,27 @@ type Config struct {
 	SinchWhatsappPassword      string `envconfig:"SINCH_API_PASSWORD"`
 	SinchWhatsappCallbackURL   string `envconfig:"SINCH_WP_CALLBACK_URL"`
 	SinchRcsApiUrl             string `envconfig:"SINCH_RCS_API_URL"`
+	// WhatsappTemplateSyncEnabled gates SDK Times/Pinnacle category sync cron body.
+	WhatsappTemplateSyncEnabled string `envconfig:"WHATSAPP_TEMPLATE_SYNC_ENABLED" default:"false"`
+	// WhatsappTemplateSyncAllowSingleHostFallback UAT-only: if true and AppConfig
+	// WHATSAPP_VENDOR_BASE_URLS is empty/missing, fall back to single env host +
+	// TemplateDetails AppIds. Must be unset/false in prod.
+	WhatsappTemplateSyncAllowSingleHostFallback string `envconfig:"WHATSAPP_TEMPLATE_SYNC_ALLOW_SINGLE_HOST_FALLBACK" default:"false"`
+	// AppConfigTableName Communication MySQL key/value table (panel list + nurture knobs).
+	AppConfigTableName string `envconfig:"APP_CONFIG_TABLE_NAME" default:"AppConfig"`
+	// TimesWpTemplateListBaseUrl optional origin for Times template get-list (defaults to host of TIMES_WP_API_URL).
+	TimesWpTemplateListBaseUrl string `envconfig:"TIMES_WP_TEMPLATE_LIST_BASE_URL"`
+	// TimesWpTemplateListEndpoint path appended to base (default /wa/v1/templates/get-list).
+	TimesWpTemplateListEndpoint string `envconfig:"TIMES_WP_TEMPLATE_LIST_ENDPOINT" default:"/wa/v1/templates/get-list"`
+	// PinnacleWhatsappTemplateListBaseUrl is the Graph-style base for GET {base}/{appId}/message_templates
+	// and preferred send path {base}/{appId}/messages when AppId is set.
+	PinnacleWhatsappTemplateListBaseUrl string `envconfig:"PINNACLE_WP_TEMPLATE_LIST_BASE_URL"`
+	// PinnacleWhatsappBaseUrl optional alias for send URL construction (falls back to list base).
+	PinnacleWhatsappBaseUrl string `envconfig:"PINNACLE_WP_BASE_URL"`
+	// PinnacleWhatsappApiKey used for WeCredit marketing Pinnacle (falls back to ZapCash key).
+	PinnacleWhatsappApiKey string `envconfig:"PINNACLE_WP_API_KEY"`
+	// PinnacleWhatsappMessageApiUrl full send URL override when base+AppId path not used.
+	PinnacleWhatsappMessageApiUrl string `envconfig:"PINNACLE_WP_MESSAGE_API_URL"`
 
 	// Sinch Whatsapp CreditSea  Variables
 	CreditSeaSinchWhatsappUsername string `envconfig:"SINCH_CREDITSEA_API_USERNAME"`
@@ -118,18 +167,25 @@ type Config struct {
 	SinchSmsApiUrl       string `envconfig:"SINCH_SMS_API_URL"`
 
 	// CreditSea Sinch SMS API Variables
-	CreditSeaSinchSmsApiAppID     string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
-	CreditSeaSinchSmsApiUserName  string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
-	CreditSeaSinchSmsApiPassword  string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
-	CreditSeaSinchSmsApiSender    string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
-	ConsumerDefaultClientWorkers  string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
-	ConsumerClientWorkerOverrides string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
-	ConsumerClientBufferSize      string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
+	CreditSeaSinchSmsApiAppID      string `envconfig:"CREDITSEA_SINCH_SMS_API_APP_ID"`
+	CreditSeaSinchSmsApiUserName   string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
+	CreditSeaSinchSmsApiPassword   string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
+	CreditSeaSinchSmsApiSender     string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
+	ConsumerDefaultClientWorkers   string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
+	ConsumerClientWorkerOverrides  string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
+	ConsumerChannelWorkerOverrides string `envconfig:"CONSUMER_CHANNEL_WORKER_OVERRIDES"`
+	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
+	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
+	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
 
-	// Per-provider SMS outbound rate limits (token bucket; no external deps).
-	// Overrides format: vendor:client:rps or vendor:rps (comma-separated).
+	// Per-provider SMS and WhatsApp outbound rate limits (in-process token bucket
+	// per ECS task — N tasks ≈ N × configured RPS). Overrides format:
+	// vendor:client:channel:rps | vendor:client:rps | vendor:rps (comma-separated).
 	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
+	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
+	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`

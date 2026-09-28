@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
@@ -23,9 +25,11 @@ import (
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
 	"github.com/wecredit/communication-sdk/internal/database"
+	"github.com/wecredit/communication-sdk/internal/metrics"
 	"github.com/wecredit/communication-sdk/internal/models/awsModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
+	"github.com/wecredit/communication-sdk/internal/services/monitoring"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
@@ -34,13 +38,35 @@ import (
 )
 
 type MessageWrapper struct {
-	Message  *sqs.Message
-	Payload  sdkModels.CommApiRequestBody
-	QueueURL string
+	Message                *sqs.Message
+	Payload                sdkModels.CommApiRequestBody
+	QueueURL               string
+	RedriveMaxReceiveCount int
+}
+
+type sqsQueueAttributesAPI interface {
+	GetQueueAttributes(*sqs.GetQueueAttributesInput) (*sqs.GetQueueAttributesOutput, error)
+}
+
+type sqsRedrivePolicy struct {
+	DeadLetterTargetARN string          `json:"deadLetterTargetArn"`
+	MaxReceiveCount     json.RawMessage `json:"maxReceiveCount"`
+}
+
+type ConsumerQueueRuntime struct {
+	URL                    string
+	RedriveMaxReceiveCount int
+}
+
+type clientBuffer struct {
+	ch     chan MessageWrapper
+	sendMu sync.Mutex
+	closed bool
 }
 
 type clientRoutine struct {
-	msgChan   chan MessageWrapper
+	buffers   map[string]*clientBuffer
+	buffersMu sync.RWMutex
 	closeOnce sync.Once
 	wg        *sync.WaitGroup
 	workers   int
@@ -78,7 +104,114 @@ func ConsumerQueueURLs() []string {
 	add(config.Configs.AwsWeCreditSmsQueueUrl)
 	// ZapCash SQS-direct publish target.
 	add(config.Configs.AwsZapCashQueueUrl)
+	// WeCredit + TrustFin WhatsApp SQS-direct staging target.
+	add(config.Configs.AwsWeCreditWhatsappQueueUrl)
 	return urls
+}
+
+func LoadWhatsappRedriveMaxReceiveCount(client sqsQueueAttributesAPI, queueURL string) (int, error) {
+	if client == nil {
+		return 0, fmt.Errorf("SQS client is not initialized")
+	}
+
+	queueURL = strings.TrimSpace(queueURL)
+	if queueURL == "" {
+		return 0, fmt.Errorf("WhatsApp queue URL is required")
+	}
+
+	result, err := client.GetQueueAttributes(&sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(queueURL),
+		AttributeNames: []*string{aws.String("RedrivePolicy")},
+	})
+
+	if err != nil {
+		return 0, fmt.Errorf("get WhatsApp queue redrive policy: %w", err)
+	}
+
+	if result == nil || result.Attributes == nil {
+		return 0, fmt.Errorf("WhatsApp queue redrive policy is missing")
+	}
+
+	return ParseRedriveMaxReceiveCount(aws.StringValue(result.Attributes["RedrivePolicy"]))
+}
+
+func ParseRedriveMaxReceiveCount(raw string) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, fmt.Errorf("WhatsApp queue redrive policy is missing")
+	}
+
+	var policy sqsRedrivePolicy
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return 0, fmt.Errorf("parse WhatsApp queue redrive policy: %w", err)
+	}
+
+	if strings.TrimSpace(policy.DeadLetterTargetARN) == "" {
+		return 0, fmt.Errorf("WhatsApp queue redrive policy has no dead-letter target")
+	}
+
+	maxReceiveCount, err := parseRedriveMaxReceiveCountValue(policy.MaxReceiveCount)
+	if err != nil || maxReceiveCount < 1 {
+		return 0, fmt.Errorf("WhatsApp queue redrive policy has invalid maxReceiveCount")
+	}
+
+	return maxReceiveCount, nil
+}
+
+// parseRedriveMaxReceiveCountValue accepts AWS RedrivePolicy shapes where
+// maxReceiveCount is either a JSON number (5) or a JSON string ("5").
+func parseRedriveMaxReceiveCountValue(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 {
+		return 0, fmt.Errorf("missing maxReceiveCount")
+	}
+
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return 0, fmt.Errorf("missing maxReceiveCount")
+	}
+
+	if trimmed[0] == '"' {
+		var asString string
+		if err := json.Unmarshal(raw, &asString); err != nil {
+			return 0, err
+		}
+		return strconv.Atoi(strings.TrimSpace(asString))
+	}
+
+	var asNumber int
+	if err := json.Unmarshal(raw, &asNumber); err != nil {
+		return 0, err
+	}
+
+	return asNumber, nil
+}
+
+// PrepareConsumerQueues validates queue URLs and redrive policies for WhatsApp.
+func PrepareConsumerQueues(client sqsQueueAttributesAPI, queueURLs []string, whatsappQueueURL string) []ConsumerQueueRuntime {
+	runtimes := make([]ConsumerQueueRuntime, 0, len(queueURLs))
+	whatsappQueueURL = strings.TrimSpace(whatsappQueueURL)
+	for _, rawURL := range queueURLs {
+		url := strings.TrimSpace(rawURL)
+		if url == "" {
+			continue
+		}
+
+		runtime := ConsumerQueueRuntime{URL: url}
+		if whatsappQueueURL != "" && strings.EqualFold(url, whatsappQueueURL) {
+			maxReceiveCount, err := LoadWhatsappRedriveMaxReceiveCount(client, url)
+			if err != nil {
+				utils.Error(fmt.Errorf("WhatsApp consumer disabled: %v", err))
+				metrics.CountByReason("MarketingWhatsappQueueConfigError", "wecredit-whatsapp", "invalid_redrive_policy", 1)
+				continue
+			}
+
+			runtime.RedriveMaxReceiveCount = maxReceiveCount
+			utils.Info(fmt.Sprintf("validated WhatsApp SQS redrive policy maxReceiveCount=%d", maxReceiveCount))
+		}
+
+		runtimes = append(runtimes, runtime)
+	}
+
+	return runtimes
 }
 
 // ConsumerService long-polls every configured SDK work queue and routes into shared
@@ -96,10 +229,10 @@ func ConsumerService(_ string) {
 		utils.Error(fmt.Errorf("no SQS queue URLs configured (set AWS_QUEUE_URL and/or AWS_WECREDIT_SMS_QUEUE_URL and/or AWS_ZAPCASH_QUEUE_URL)"))
 		return
 	}
-	for _, queueURL := range queueURLs {
-		url := queueURL
+	for _, runtime := range PrepareConsumerQueues(queue.SQSClient, queueURLs, config.Configs.AwsWeCreditWhatsappQueueUrl) {
+		url := runtime.URL
 		utils.Info(fmt.Sprintf("starting communication SQS consumer for queue: %s", url))
-		go pollCommunicationQueue(ctx, url)
+		go pollCommunicationQueue(ctx, url, runtime.RedriveMaxReceiveCount)
 	}
 
 	<-ctx.Done()
@@ -108,9 +241,8 @@ func ConsumerService(_ string) {
 	handlers := make([]*clientRoutine, 0, len(clientHandlers))
 	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
-		handler.closeOnce.Do(func() {
-			close(handler.msgChan)
-		})
+		handler.closeOnce.Do(handler.closeBuffers)
+		delete(clientHandlers, client)
 		handlers = append(handlers, handler)
 		clients = append(clients, client)
 	}
@@ -121,7 +253,7 @@ func ConsumerService(_ string) {
 	}
 }
 
-func pollCommunicationQueue(ctx context.Context, queueURL string) {
+func pollCommunicationQueue(ctx context.Context, queueURL string, redriveMaxReceiveCount int) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -132,6 +264,7 @@ func pollCommunicationQueue(ctx context.Context, queueURL string) {
 				MaxNumberOfMessages: aws.Int64(10),
 				WaitTimeSeconds:     aws.Int64(10),
 				VisibilityTimeout:   aws.Int64(300),
+				AttributeNames:      []*string{aws.String("ApproximateReceiveCount"), aws.String("SentTimestamp")},
 			})
 			if err != nil {
 				utils.Error(fmt.Errorf("error receiving messages from %s: %v", queueURL, err))
@@ -145,13 +278,13 @@ func pollCommunicationQueue(ctx context.Context, queueURL string) {
 			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
 
 			for _, msg := range result.Messages {
-				routeMessageToClient(ctx, msg, queueURL)
+				routeMessageToClient(ctx, msg, queueURL, redriveMaxReceiveCount)
 			}
 		}
 	}
 }
 
-func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string) {
+func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string, redriveMaxReceiveCount int) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in routeMessageToClient: %v", r))
@@ -176,27 +309,38 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
+	// SMS and WhatsApp share one client pool, but each channel has its own
+	// bounded buffer. Workers select across the buffers, so an idle channel
+	// does not reserve any part of the shared worker budget.
+	poolKey := ClientPoolKey(client)
+
 	clientMux.Lock()
-	handler, exists := clientHandlers[client]
+	handler, exists := clientHandlers[poolKey]
 	if !exists {
-		workerCount := ClientWorkerCount(client)
-		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+		workerCount := ClientSharedWorkerCount(client)
 		handler = &clientRoutine{
-			msgChan: make(chan MessageWrapper, bufferSize),
+			buffers: make(map[string]*clientBuffer),
 			wg:      &sync.WaitGroup{},
 			workers: workerCount,
 		}
-		clientHandlers[client] = handler
+		clientHandlers[poolKey] = handler
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, client, handler.msgChan, queue.SQSClient, handler.wg)
+			go startClientWorker(ctx, poolKey, handler, queue.SQSClient, handler.wg)
 		}
-		utils.Info(fmt.Sprintf("Started %d workers for client: %s", handler.workers, client))
+		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
+	bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+	handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
 	clientMux.Unlock()
 
-	handler.msgChan <- MessageWrapper{Message: msg, Payload: data, QueueURL: queueURL}
+	handler.enqueue(ctx, data.Channel, MessageWrapper{
+		Message:                msg,
+		Payload:                data,
+		QueueURL:               queueURL,
+		RedriveMaxReceiveCount: redriveMaxReceiveCount,
+	})
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -218,6 +362,96 @@ func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
 		return data, fmt.Errorf("unrecognized SQS body (not SNS envelope or CommApiRequestBody)")
 	}
 	return data, nil
+}
+
+// ClientChannelPoolKey is retained for channel-specific configuration/tests.
+// Runtime workers use ClientPoolKey so channels share capacity.
+func ClientChannelPoolKey(client, channel string) string {
+	client = strings.ToLower(strings.TrimSpace(client))
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		channel = "default"
+	}
+	return client + "|" + channel
+}
+
+// ClientPoolKey identifies the shared runtime worker pool for a client.
+func ClientPoolKey(client string) string {
+	return strings.ToLower(strings.TrimSpace(client))
+}
+
+// ClientSharedWorkerCount returns the total worker budget shared by SMS and
+// WhatsApp for a client. Explicit channel overrides are additive: a 50/50
+// configuration creates one 100-worker pool, not two isolated 50-worker pools.
+// If no channel overrides are configured for the client, the legacy client
+// worker setting remains the fallback.
+func ClientSharedWorkerCount(client string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	total := 0
+	configured := false
+
+	for _, entry := range strings.Split(config.Configs.ConsumerChannelWorkerOverrides, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		workers, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || workers < 1 {
+			continue
+		}
+		configured = true
+		total += workers
+	}
+
+	if configured {
+		if total > maxClientWorkers {
+			return maxClientWorkers
+		}
+		return total
+	}
+
+	return ClientWorkerCount(client)
+}
+
+// ClientChannelWorkerCount resolves CONSUMER_CHANNEL_WORKER_OVERRIDES
+// (client:channel:n), then the broad SMS/WhatsApp channel setting, then
+// CONSUMER_CLIENT_WORKER_OVERRIDES (client:n), then default.
+func ClientChannelWorkerCount(client, channel string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel != "" {
+		want := client + ":" + channel
+		for _, entry := range strings.Split(config.Configs.ConsumerChannelWorkerOverrides, ",") {
+			parts := strings.Split(strings.TrimSpace(entry), ":")
+			if len(parts) != 3 {
+				continue
+			}
+
+			key := strings.ToLower(strings.TrimSpace(parts[0])) + ":" + strings.ToLower(strings.TrimSpace(parts[1]))
+			if key != want {
+				continue
+			}
+
+			value, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+			if err == nil && value > 0 && value <= maxClientWorkers {
+				return value
+			}
+		}
+	}
+
+	var channelWorkers string
+	switch channel {
+	case strings.ToLower(variables.SMS):
+		channelWorkers = config.Configs.SMSWorkers
+	case strings.ToLower(variables.WhatsApp):
+		channelWorkers = config.Configs.WhatsAppWorkers
+	}
+
+	if workers := boundedConsumerConfigInt(channelWorkers, 0, maxClientWorkers); workers > 0 {
+		return workers
+	}
+
+	return ClientWorkerCount(client)
 }
 
 func ClientWorkerCount(client string) int {
@@ -247,56 +481,131 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, client string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+// ClientChannelBufferKey normalizes the channel name used to isolate pending
+// message buffers within a shared client worker pool.
+func ClientChannelBufferKey(channel string) string {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		return "default"
+	}
+	return channel
+}
+
+func channelBufferCapacity(channel string, totalBufferSize int) int {
+	key := ClientChannelBufferKey(channel)
+	if key == strings.ToLower(variables.SMS) || key == strings.ToLower(variables.WhatsApp) {
+		// Preserve the existing aggregate client buffer when both primary
+		// channels are present: e.g. configured 200 becomes 100 + 100.
+		if totalBufferSize > 1 {
+			return (totalBufferSize + 1) / 2
+		}
+	}
+	return totalBufferSize
+}
+
+func (handler *clientRoutine) bufferFor(channel string, bufferSize int) *clientBuffer {
+	key := ClientChannelBufferKey(channel)
+	handler.buffersMu.Lock()
+	defer handler.buffersMu.Unlock()
+	if buffer, ok := handler.buffers[key]; ok {
+		return buffer
+	}
+	buffer := &clientBuffer{ch: make(chan MessageWrapper, bufferSize)}
+	handler.buffers[key] = buffer
+	return buffer
+}
+
+func (handler *clientRoutine) enqueue(ctx context.Context, channel string, message MessageWrapper) {
+	// Keep the potentially blocking send out of clientMux. A full SMS buffer
+	// must not block WhatsApp handler lookup or buffer creation.
+	handler.buffersMu.RLock()
+	buffer := handler.buffers[ClientChannelBufferKey(channel)]
+	handler.buffersMu.RUnlock()
+	if buffer != nil {
+		buffer.sendMu.Lock()
+		defer buffer.sendMu.Unlock()
+		if !buffer.closed {
+			select {
+			case buffer.ch <- message:
+			case <-ctx.Done():
+			}
+		}
+	}
+}
+
+func (handler *clientRoutine) closeBuffers() {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	for _, buffer := range handler.buffers {
+		buffer.sendMu.Lock()
+		if !buffer.closed {
+			buffer.closed = true
+			close(buffer.ch)
+		}
+		buffer.sendMu.Unlock()
+	}
+}
+
+func (handler *clientRoutine) buffersSnapshot() []*clientBuffer {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	buffers := make([]*clientBuffer, 0, len(handler.buffers))
+	for _, buffer := range handler.buffers {
+		buffers = append(buffers, buffer)
+	}
+	return buffers
+}
+
+func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool) {
+	for {
+		buffers := handler.buffersSnapshot()
+		cases := make([]reflect.SelectCase, 0, len(buffers)+1)
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		for _, buffer := range buffers {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(buffer.ch)})
+		}
+
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 0 {
+			return MessageWrapper{}, false
+		}
+		if ok {
+			return value.Interface().(MessageWrapper), true
+		}
+		// A closed buffer is expected during shutdown. Rebuild the select set
+		// so other buffers can still be drained if shutdown is extended.
+	}
+}
+
+func startClientWorker(ctx context.Context, poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", client, r))
+			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
 		}
 		wg.Done()
 	}()
 
-	timeout := time.NewTimer(time.Hour)
 	for {
-		select {
-		case <-ctx.Done():
-			utils.Warn(fmt.Sprintf("Shutting down worker for client: %s", client))
+		msgWrapper, ok := handler.receive(ctx)
+		if !ok {
+			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
-		case msgWrapper, ok := <-msgChan:
-			if !ok {
-				utils.Warn(fmt.Sprintf("Channel closed for client: %s", client))
-				return
+		}
+		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		// Note: Message deletion is handled inside processMessage and channel handlers
+		// Only delete here if processMessage explicitly indicates it should be deleted
+		// but wasn't already deleted (e.g., on fatal errors)
+		if !isMessageProcessed {
+			// If message processing failed and wasn't deleted, we need to decide:
+			// - If it's a transient error, don't delete (let it retry)
+			// - If it's a permanent error, delete to prevent infinite retries
+			// For now, we let SQS handle retries via visibility timeout
+			utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
+		} else if isMessageProcessed && !deleted {
+			deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 			}
-			if !timeout.Stop() {
-				<-timeout.C
-			}
-			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
-			// Note: Message deletion is handled inside processMessage and channel handlers
-			// Only delete here if processMessage explicitly indicates it should be deleted
-			// but wasn't already deleted (e.g., on fatal errors)
-			if !isMessageProcessed {
-				// If message processing failed and wasn't deleted, we need to decide:
-				// - If it's a transient error, don't delete (let it retry)
-				// - If it's a permanent error, delete to prevent infinite retries
-				// For now, we let SQS handle retries via visibility timeout
-				utils.Debug(fmt.Sprintf("[Client:%s] Message processing returned false, will retry after visibility timeout", client))
-			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
-				if !deleted {
-					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
-				}
-			}
-		case <-timeout.C:
-			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for client: %s", client))
-			clientMux.Lock()
-			if handler, ok := clientHandlers[client]; ok {
-				handler.closeOnce.Do(func() {
-					close(handler.msgChan)
-				})
-				delete(clientHandlers, client)
-			}
-			clientMux.Unlock()
-			return
 		}
 	}
 }
@@ -428,7 +737,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 
 	switch data.Channel {
 	case variables.WhatsApp:
-		isMessageProcessed, deleted := handleWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+		isMessageProcessed, deleted := handleWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg, msgWrapper.RedriveMaxReceiveCount)
 		return isMessageProcessed, deleted
 	case variables.RCS:
 		isMessageProcessed, deleted := handleRCS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
@@ -451,7 +760,11 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	}
 }
 
-func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
+	if isMarketingWPDispatch(data) {
+		return handleMarketingWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg, redriveMaxReceiveCount)
+	}
+
 	// if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
 	// 	utils.Error(fmt.Errorf("error inserting data into wp input table for mobile %s: %v", data.Mobile, err))
 	// }
@@ -493,7 +806,9 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	var deleted bool
 	var delErr error
 
-	isMessageProcessed, dbMappedData, err := whatsapp.SendWpByProcess(data)
+	wpResult, err := whatsapp.SendWpByProcess(data)
+	isMessageProcessed := wpResult.Processed
+	dbMappedData = wpResult.DBData
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
 		// If processing failed, don't delete message - let it retry after visibility timeout
@@ -504,11 +819,24 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial whatsapp processing: %v", delErr))
 			}
-		} else {
-			releaseMarketingSMSClaims(data)
+		} else if isMarketingSMSDispatch(data) {
+			releaseMarketingDispatchClaims(data)
 		}
 		releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 		return isMessageProcessed, deleted
+	}
+
+	if ShouldSubmitZapCashMonitoring(data, wpResult.Accepted) {
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:           data,
+			ResolvedVendor:    wpResult.ResolvedVendor,
+			ResolvedTemplate:  wpResult.ResolvedTemplate,
+			TemplateVariables: wpResult.TemplateVariables,
+			TransactionID:     wpResult.TransactionID,
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted WhatsApp send for vendor=%s template=%s",
+				data.Client, data.CommId, wpResult.ResolvedVendor, wpResult.ResolvedTemplate))
+		}
 	}
 
 	// if message processed successfully, delete it and then insert it into database
@@ -517,17 +845,243 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful whatsapp processing: %v", err))
 		}
-	} else {
-		releaseMarketingSMSClaims(data)
+	} else if isMarketingSMSDispatch(data) {
+		releaseMarketingDispatchClaims(data)
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, MapWhatsappMysqlOutput(dbMappedData)); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 	}
 
 	releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 	return isMessageProcessed, deleted
 
+}
+
+// MarketingWhatsappDependencies defines the dependencies for marketing WhatsApp dispatch.
+// Terminal outcomes write MySQL WhatsappOutputTable + Marketing CommWhatsappMarketingOutput
+// (SMS parity: SmsOutputTable + CommDispatchTracking). Not CommDispatchTracking.
+type MarketingWhatsappDependencies struct {
+	Claim       func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error)
+	Assign      func(*sdkModels.CommApiRequestBody) bool
+	Send        func(sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error)
+	UpdateError func(sdkModels.CommApiRequestBody, string) error
+	// WriteInputAudit persists SdkWhatsappInputTable (best-effort; SMS SdkSmsInput parity).
+	WriteInputAudit func(sdkModels.CommApiRequestBody, map[string]interface{}) error
+	// WriteOutput persists using the current request payload (post-Assign / ResolveCommID).
+	WriteOutput func(sdkModels.CommApiRequestBody, map[string]interface{}) error
+	// OutputRecorded checks Marketing output for SourceRowId (Redis skip-send redelivery idempotency).
+	OutputRecorded func(int64) (bool, error)
+	Delete         func(sdkModels.CommApiRequestBody) (bool, error)
+	Release        func(sdkModels.CommApiRequestBody)
+	Blank          func(sdkModels.CommApiRequestBody, *sqs.Message, int)
+}
+
+// handleMarketingWhatsapp handles marketing WhatsApp dispatch.
+func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
+	deps := MarketingWhatsappDependencies{
+		Claim:  claimOrSkipMarketingDispatch,
+		Assign: AssignVendor,
+		Send: func(msg sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
+			result, err := whatsapp.SendWpByProcess(msg)
+			return result.Processed, result.DBData, err
+		},
+		UpdateError: channelHelper.UpdateRedisErrorMessage,
+		WriteInputAudit: func(payload sdkModels.CommApiRequestBody, audit map[string]interface{}) error {
+			// SMS marketing inserts SdkSmsInputTable before send; same for WA.
+			if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, audit); err != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting whatsapp input audit: %v", payload.Client, payload.CommId, err))
+			}
+			return nil // best-effort; never block the send (SMS parity)
+		},
+		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
+			// Dual sink (SMS parity): MySQL WhatsappOutputTable + Marketing Output.
+			// Both must succeed before SQS ACK. Lender-only WA still uses MySQL alone
+			// in handleWhatsapp.
+			mysqlErr, marketingErr := RunParallelSMSPostSendWrites(
+				func() error {
+					return database.InsertData(
+						config.Configs.WhatsappOutputTable,
+						database.DBtechWrite,
+						MapMarketingWhatsappMysqlOutput(payload, output),
+					)
+				},
+				func() error {
+					return database.InsertData(
+						config.Configs.CommWhatsappMarketingOutputTable,
+						database.DBMarketing,
+						MapMarketingWhatsappOutput(payload, output),
+					)
+				},
+			)
+			if mysqlErr != nil || marketingErr != nil {
+				logWhatsappPostSendPersistenceFailure(payload, mysqlErr, marketingErr)
+				if mysqlErr != nil {
+					return mysqlErr
+				}
+				return marketingErr
+			}
+			return nil
+		},
+		OutputRecorded: func(sourceRowId int64) (bool, error) {
+			return database.CommWhatsappMarketingOutputExists(
+				database.DBMarketing,
+				config.Configs.CommWhatsappMarketingOutputTable,
+				sourceRowId,
+			)
+		},
+		Delete: func(payload sdkModels.CommApiRequestBody) (bool, error) {
+			return deleteMessage(ctx, sqsClient, queueURL, msg, payload)
+		},
+		Release: releaseMarketingDispatchClaims,
+		Blank:   recordBlankMarketingWhatsappClaim,
+	}
+
+	return HandleMarketingWhatsappWithDependencies(data, dbMappedData, msg, redriveMaxReceiveCount, deps)
+}
+
+// writeMarketingWhatsappTerminalOutput persists a terminal WA outcome to both audit sinks, then ACKs SQS.
+func writeMarketingWhatsappTerminalOutput(data sdkModels.CommApiRequestBody, deps MarketingWhatsappDependencies, output map[string]interface{}, deleteFailMsg string) (bool, bool) {
+	if err := deps.WriteOutput(data, output); err != nil {
+		return false, false
+	}
+
+	deleted, err := deps.Delete(data)
+	if !deleted {
+		utils.Error(fmt.Errorf("%s: %v", deleteFailMsg, err))
+	}
+
+	return true, deleted
+}
+
+// HandleMarketingWhatsappWithDependencies handles marketing WhatsApp dispatch with dependencies.
+func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, msg *sqs.Message, redriveMaxReceiveCount int, deps MarketingWhatsappDependencies) (bool, bool) {
+	skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := deps.Claim(data)
+	if claimErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s EventId:%s] marketing WhatsApp redis claim failed: %v", data.Client, data.EventId, claimErr))
+		return false, false
+	}
+
+	if skipSend {
+		if strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == "" {
+			deps.Blank(data, msg, redriveMaxReceiveCount)
+			return false, false
+		}
+
+		// Redelivery after a successful terminal write: repair SQS only (SMS tracking idempotency parity).
+		if data.SourceRowId != 0 && deps.OutputRecorded != nil {
+			alreadyRecorded, existsErr := deps.OutputRecorded(data.SourceRowId)
+			if existsErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] marketing WhatsApp output existence check failed: %v", data.Client, data.SourceRowId, existsErr))
+				return false, false
+			}
+
+			if alreadyRecorded {
+				deleted, delErr := deps.Delete(data)
+				if !deleted {
+					utils.Error(fmt.Errorf("failed to delete redelivered marketing WhatsApp after output already recorded: %v", delErr))
+				}
+				return true, deleted
+			}
+		}
+
+		output := map[string]interface{}{}
+		if txn := strings.TrimSpace(redisTxn); txn != "" {
+			output["IsSent"] = true
+			output["TransactionId"] = txn
+		} else {
+			output["IsSent"] = false
+			output["ResponseMessage"] = strings.TrimSpace(redisErr)
+		}
+
+		return writeMarketingWhatsappTerminalOutput(data, deps, output, "failed to delete terminal Redis duplicate marketing WhatsApp")
+	}
+
+	if campaignDuplicate {
+		dupErr := campaignDuplicateError(data)
+		// Record a terminal Redis value so redelivery does not see a blank claim.
+		if err := deps.UpdateError(data, dupErr); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record campaign-duplicate WhatsApp in Redis: %v", data.Client, data.EventId, err))
+			return false, false
+		}
+		return writeMarketingWhatsappTerminalOutput(data, deps, map[string]interface{}{
+			"IsSent":          false,
+			"ResponseMessage": dupErr,
+		}, "failed to delete campaign-duplicate marketing WhatsApp")
+	}
+
+	data.CommId = sdkServices.ResolveCommID(data.CommId, data.Client)
+	if !deps.Assign(&data) {
+		const inactiveVendorError = "requested vendor is not active"
+		if err := deps.UpdateError(data, inactiveVendorError); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record inactive WhatsApp vendor in Redis: %v", data.Client, data.EventId, err))
+			return false, false
+		}
+
+		return writeMarketingWhatsappTerminalOutput(data, deps, map[string]interface{}{
+			"IsSent":          false,
+			"ResponseMessage": inactiveVendorError,
+		}, "failed to delete WhatsApp rejected for inactive vendor")
+	}
+
+	// SMS marketing inserts SdkSmsInput before send; WA inserts SdkWhatsappInput the same way.
+	if deps.WriteInputAudit != nil {
+		if dbMappedData == nil {
+			dbMappedData = map[string]interface{}{}
+		}
+		dbMappedData["CommId"] = data.CommId
+		_ = deps.WriteInputAudit(data, dbMappedData)
+	}
+
+	// WeCredit WA same-day cap is client_channel_mobile (no process); cleared by 1 AM FlushAll.
+	isMessageProcessed, outputData, sendErr := deps.Send(data)
+	if sendErr != nil && !isMessageProcessed {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] retryable WhatsApp processing error: %v", data.Client, data.CommId, sendErr))
+		deps.Release(data)
+		return false, false
+	}
+
+	if !isMessageProcessed {
+		deps.Release(data)
+		return false, false
+	}
+
+	if outputData == nil {
+		outputData = dbMappedData
+	}
+	if outputData == nil {
+		outputData = map[string]interface{}{}
+	}
+
+	responseMessage := mapString(outputData, "ResponseMessage")
+	isSent := mapBool(outputData, "IsSent")
+	if !isSent {
+		if responseMessage == "" && sendErr != nil {
+			responseMessage = sendErr.Error()
+		}
+		if responseMessage == "" {
+			responseMessage = "WhatsApp provider rejected the request"
+		}
+		outputData["ResponseMessage"] = responseMessage
+		outputData["IsSent"] = false
+		if err := deps.UpdateError(data, responseMessage); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record terminal WhatsApp rejection in Redis: %v", data.Client, data.EventId, err))
+			return false, false
+		}
+	}
+
+	// Dual audit sinks via WriteOutput (MySQL WhatsappOutput + Marketing Output).
+	// Production WriteOutput logs sink failures itself (SMS dual-write parity).
+	if err := deps.WriteOutput(data, outputData); err != nil {
+		return false, false
+	}
+
+	deleted, err := deps.Delete(data)
+	if !deleted {
+		utils.Error(fmt.Errorf("failed to delete terminal marketing WhatsApp: %v", err))
+	}
+
+	return true, deleted
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
@@ -539,7 +1093,8 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
-	isMessageProcessed, sent, err := rcs.SendRcsByProcess(data)
+	rcsResult, err := rcs.SendRcsByProcess(data)
+	isMessageProcessed := rcsResult.Processed
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
 		// If processing failed, don't delete message - let it retry after visibility timeout
@@ -550,11 +1105,25 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial RCS processing: %v", delErr))
 			}
-		} else {
-			releaseMarketingSMSClaims(data)
+		} else if isMarketingSMSDispatch(data) {
+			releaseMarketingDispatchClaims(data)
 		}
-		releaseZapCashClaimIfUnsent(data, queueURL, sent)
+		releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
 		return isMessageProcessed, deleted
+	}
+
+	if ShouldSubmitZapCashMonitoring(data, rcsResult.Accepted) {
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:              data,
+			ResolvedVendor:       rcsResult.ResolvedVendor,
+			ResolvedTemplate:     rcsResult.ResolvedTemplate,
+			TemplateVariables:    rcsResult.TemplateVariables,
+			SMSFallbackVariables: rcsResult.SMSFallbackVariables,
+			TransactionID:        rcsResult.TransactionID,
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted RCS send for vendor=%s template=%s",
+				data.Client, data.CommId, rcsResult.ResolvedVendor, rcsResult.ResolvedTemplate))
+		}
 	}
 
 	if isMessageProcessed {
@@ -562,11 +1131,11 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful RCS processing: %v", err))
 		}
-	} else {
-		releaseMarketingSMSClaims(data)
+	} else if isMarketingSMSDispatch(data) {
+		releaseMarketingDispatchClaims(data)
 	}
 
-	releaseZapCashClaimIfUnsent(data, queueURL, sent)
+	releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
 	return isMessageProcessed, deleted
 }
 
@@ -576,15 +1145,29 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	marketing := isMarketingSMSDispatch(data)
 
 	if marketing {
-		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingSMS(data)
+		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingDispatch(data)
 		if claimErr != nil {
 			utils.Error(fmt.Errorf("[Client:%s EventId:%s] marketing SMS redis claim failed: %v", data.Client, data.EventId, claimErr))
 			return false, false
 		}
 
 		if skipSend {
-			if trackErr := recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr); trackErr != nil {
-				return false, false
+			// Blank Redis state means another worker is still in flight. A terminal
+			// Redis state is a redelivery and must repair both audit sinks before ACK.
+			if strings.TrimSpace(redisTxn) != "" || strings.TrimSpace(redisErr) != "" {
+				replayResult := sms.TerminalReplayResult(data, redisTxn, redisErr)
+				outputErr, trackingErr := RunParallelSMSPostSendWrites(
+					func() error {
+						return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, replayResult.DBData)
+					},
+					func() error {
+						return recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
+					},
+				)
+				if outputErr != nil || trackingErr != nil {
+					logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+					return false, false
+				}
 			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
@@ -630,7 +1213,8 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 	}
 
-	result, err := sms.SendSmsByProcess(data)
+	result, err := sms.SendSmsByProcessWithContext(ctx, data)
+
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		if marketing && result.AckSQS {
@@ -644,19 +1228,76 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial SMS processing: %v", delErr))
 			}
-		} else if !result.AckSQS {
-			releaseMarketingSMSClaims(data)
+		} else if marketing && !result.AckSQS {
+			releaseMarketingDispatchClaims(data)
 		}
 		releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
 		return result.Processed, deleted
 	}
 
-	if marketing && result.AckSQS {
-		if trackErr := recordMarketingSMSTrackingFromSend(data, result, nil); trackErr != nil {
+	if ShouldSubmitZapCashMonitoring(data, result.Accepted) {
+		utils.Info(fmt.Sprintf("[Client:%s CommId:%s Channel:%s] submitting ZapCash monitoring copy for vendor=%s template=%s mobile_tail=%s",
+			data.Client, data.CommId, data.Channel, result.ResolvedVendor, result.ResolvedTemplate, monitoring.MaskMobile(data.Mobile)))
+		if !monitoring.TrySubmit(monitoring.AcceptedResult{
+			Payload:           data,
+			ResolvedVendor:    result.ResolvedVendor,
+			ResolvedTemplate:  result.ResolvedTemplate,
+			TemplateVariables: result.TemplateVariables,
+			TransactionID:     result.TransactionID,
+		}) {
+			utils.Warn(fmt.Sprintf("[Client:%s CommId:%s] ZapCash monitoring copy dropped after accepted SMS send for vendor=%s template=%s",
+				data.Client, data.CommId, result.ResolvedVendor, result.ResolvedTemplate))
+		}
+	}
+
+	// Compliance failures are terminal only after both independent databases
+	// confirm persistence. The independent idempotent writes run concurrently;
+	// SQS acknowledgement still waits for both of them to complete successfully.
+	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
+		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+			func() error {
+				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+			},
+			func() error {
+				return recordMarketingSMSTrackingFromSend(data, result, nil)
+			},
+		)
+
+		if outputErr != nil || trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+			releaseMarketingDispatchClaims(data)
 			return false, false
 		}
-	} else if !result.AckSQS {
-		releaseMarketingSMSClaims(data)
+
+		if redisErr := channelHelper.UpdateRedisErrorMessage(data, complianceFailureMessage(result)); redisErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s SourceRowId:%d] failed to cache compliance result: %v", data.Client, data.SourceRowId, redisErr))
+		}
+
+		deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if !deleted {
+			utils.Error(fmt.Errorf("failed to delete compliance-blocked marketing SMS after persistence: %v", delErr))
+		}
+
+		return true, deleted
+	}
+
+	outputWritten := false
+	if marketing && result.AckSQS {
+		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+			func() error {
+				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+			},
+			func() error {
+				return recordMarketingSMSTrackingFromSend(data, result, nil)
+			},
+		)
+		outputWritten = true
+		if outputErr != nil || trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+			return false, false
+		}
+	} else if marketing && !result.AckSQS {
+		releaseMarketingDispatchClaims(data)
 	}
 
 	if result.AckSQS {
@@ -668,12 +1309,77 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		utils.Info(fmt.Sprintf("[Client:%s CommId:%s] retaining SQS message for non-terminal SMS outcome", data.Client, data.CommId))
 	}
 
-	if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
+	if !outputWritten {
+		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
+		}
 	}
 
 	releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
 	return result.Processed, deleted
+}
+
+func complianceFailureMessage(result sms.SendSmsResult) string {
+	message, _ := result.DBData["ResponseMessage"].(string)
+	return strings.TrimSpace(message)
+}
+
+// isWeCreditSMSComplianceFailure checks if the given result is a compliance failure for a WeCredit SMS
+func isWeCreditSMSComplianceFailure(result sms.SendSmsResult) bool {
+	message := complianceFailureMessage(result)
+	return strings.Contains(message, "WECREDIT_SMS_CUTOFF") ||
+		strings.Contains(message, "WECREDIT_SMS_EXPIRED") ||
+		strings.Contains(message, "WECREDIT_SMS_CAMPAIGN_DATE_INVALID")
+}
+
+// RunParallelSMSPostSendWrites executes the independent audit writes together
+// and waits for both results. Used by marketing SMS and WhatsApp. The caller
+// must not acknowledge SQS unless both returned errors are nil.
+func RunParallelSMSPostSendWrites(outputWrite, trackingWrite func() error) (outputErr, trackingErr error) {
+	var group errgroup.Group
+	group.Go(func() error {
+		outputErr = outputWrite()
+		return outputErr
+	})
+	group.Go(func() error {
+		trackingErr = trackingWrite()
+		return trackingErr
+	})
+	_ = group.Wait()
+	return outputErr, trackingErr
+}
+
+func logSMSPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, outputErr, trackingErr error) {
+	outputStatus := "succeeded"
+	if outputErr != nil {
+		outputStatus = outputErr.Error()
+	}
+
+	trackingStatus := "succeeded"
+	if trackingErr != nil {
+		trackingStatus = trackingErr.Error()
+	}
+
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: sms_output=%s comm_dispatch_tracking=%s",
+		data.Client, data.CommId, data.EventId, outputStatus, trackingStatus,
+	))
+}
+
+func logWhatsappPostSendPersistenceFailure(data sdkModels.CommApiRequestBody, mysqlErr, marketingErr error) {
+	mysqlStatus := "succeeded"
+	if mysqlErr != nil {
+		mysqlStatus = mysqlErr.Error()
+	}
+	marketingStatus := "succeeded"
+	if marketingErr != nil {
+		marketingStatus = marketingErr.Error()
+	}
+
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s EventId:%s] partial post-send persistence failure: whatsapp_output=%s comm_whatsapp_marketing_output=%s",
+		data.Client, data.CommId, data.EventId, mysqlStatus, marketingStatus,
+	))
 }
 
 func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
@@ -698,8 +1404,8 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial Email processing: %v", delErr))
 			}
-		} else {
-			releaseMarketingSMSClaims(data)
+		} else if isMarketingSMSDispatch(data) {
+			releaseMarketingDispatchClaims(data)
 		}
 		releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
 		return isMessageProcessed, deleted
@@ -710,8 +1416,8 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful Email processing: %v", err))
 		}
-	} else {
-		releaseMarketingSMSClaims(data)
+	} else if isMarketingSMSDispatch(data) {
+		releaseMarketingDispatchClaims(data)
 	}
 
 	delete(dbMappedData, "MobileNumber")
@@ -792,11 +1498,30 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 
 func rejectRequestedVendor(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
 	releaseZapCashClaimIfUnsent(data, queueURL, false)
+	if data.IsMonitorCopy {
+		utils.Warn(fmt.Sprintf("ZapCash monitoring copy rejected because pinned vendor is inactive channel=%s stage=%.2f vendor=%s commId=%s",
+			data.Channel, data.Stage, data.Vendor, data.CommId))
+	}
 	deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to delete message rejected for inactive requested vendor: %v", err))
 	}
 	return true, deleted
+}
+
+// ShouldSubmitZapCashMonitoring is the pure production-handler gate. TrySubmit repeats
+// the identity checks defensively, but no ineligible result should reach that boundary.
+func ShouldSubmitZapCashMonitoring(data sdkModels.CommApiRequestBody, providerAccepted bool) bool {
+	if !providerAccepted || data.IsMonitorCopy || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") {
+		return false
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(data.Channel)) {
+	case variables.SMS, variables.RCS, variables.WhatsApp:
+		return true
+	default:
+		return false
+	}
 }
 
 func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
@@ -851,7 +1576,11 @@ func lenderInputAuditTable(channel string) string {
 	}
 }
 
-func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
+func isMarketingWPDispatch(data sdkModels.CommApiRequestBody) bool {
+	return strings.EqualFold(strings.TrimSpace(data.Source), "marketing") && data.SourceRowId != 0
+}
+
+func claimOrSkipMarketingDispatch(data sdkModels.CommApiRequestBody) (skipSend, campaignDuplicate bool, redisTxn, redisErr string, err error) {
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
 	exists, txn, errMsg, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
@@ -907,7 +1636,7 @@ func claimOrSkipMarketingSMS(data sdkModels.CommApiRequestBody) (skipSend, campa
 	return false, true, "", "", nil
 }
 
-func releaseMarketingSMSClaims(data sdkModels.CommApiRequestBody) {
+func releaseMarketingDispatchClaims(data sdkModels.CommApiRequestBody) {
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
 	_, _ = redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
 	if channelHelper.IsMarketingCampaignRequest(data) {
@@ -916,10 +1645,237 @@ func releaseMarketingSMSClaims(data sdkModels.CommApiRequestBody) {
 }
 
 func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
+	client := strings.ToLower(strings.TrimSpace(data.Client))
+	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
+	if client == "wecredit" && channel == "WHATSAPP" {
+		return fmt.Sprintf("whatsapp already sent today for mobile %s", strings.TrimSpace(data.Mobile))
+	}
+
 	return fmt.Sprintf("campaign duplicate: channel %s process %s event_id %s already sent today",
-		strings.ToUpper(strings.TrimSpace(data.Channel)),
+		channel,
 		strings.ToLower(strings.TrimSpace(data.ProcessName)),
 		strings.TrimSpace(data.EventId))
+}
+
+// recordBlankMarketingWhatsappClaim records a blank marketing WhatsApp claim.
+func recordBlankMarketingWhatsappClaim(data sdkModels.CommApiRequestBody, msg *sqs.Message, redriveMaxReceiveCount int) {
+	receiveCount := approximateReceiveCount(msg)
+	fields := map[string]interface{}{
+		"reason":                  "blank_redis_claim",
+		"lane":                    "wecredit-whatsapp",
+		"client":                  strings.ToLower(strings.TrimSpace(data.Client)),
+		"eventId":                 strings.TrimSpace(data.EventId),
+		"sourceRowId":             data.SourceRowId,
+		"sqsMessageId":            aws.StringValue(messageID(msg)),
+		"approximateReceiveCount": receiveCount,
+	}
+
+	raw, err := json.Marshal(fields)
+	if err == nil {
+		utils.Error(errors.New(string(raw)))
+	}
+
+	metrics.CountByReason("MarketingWhatsappBlankRedisClaim", "wecredit-whatsapp", "blank_redis_claim", 1)
+	metrics.CountByReason("MarketingWhatsappRetry", "wecredit-whatsapp", "blank_redis_claim", 1)
+
+	// Check if the message should be emitted to the DLQ.
+	if ShouldEmitWhatsappDLQImminent(msg, redriveMaxReceiveCount) {
+		metrics.CountByReason("MarketingWhatsappDLQImminent", "wecredit-whatsapp", "blank_redis_claim", 1)
+	}
+}
+
+func ShouldEmitWhatsappDLQImminent(msg *sqs.Message, redriveMaxReceiveCount int) bool {
+	return redriveMaxReceiveCount > 0 && approximateReceiveCount(msg) >= redriveMaxReceiveCount
+}
+
+func messageID(msg *sqs.Message) *string {
+	if msg == nil {
+		return nil
+	}
+	return msg.MessageId
+}
+
+func approximateReceiveCount(msg *sqs.Message) int {
+	if msg == nil || msg.Attributes == nil {
+		return 1
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(aws.StringValue(msg.Attributes["ApproximateReceiveCount"])))
+	if err != nil || count < 1 {
+		return 1
+	}
+	return count
+}
+
+func mapString(data map[string]interface{}, key string) string {
+	if data == nil {
+		return ""
+	}
+	value, _ := data[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func mapBool(data map[string]interface{}, key string) bool {
+	if data == nil {
+		return false
+	}
+	switch value := data[key].(type) {
+	case bool:
+		return value
+	case int:
+		return value == 1
+	case int64:
+		return value == 1
+	case float64:
+		return value == 1
+	default:
+		return false
+	}
+}
+
+// MapMarketingWhatsappOutput projects SDK send DBData onto CommWhatsappMarketingOutput columns.
+func MapMarketingWhatsappOutput(data sdkModels.CommApiRequestBody, output map[string]interface{}) map[string]interface{} {
+	row := map[string]interface{}{
+		"SourceRowId":    data.SourceRowId,
+		"EventId":        data.EventId,
+		"CommId":         data.CommId,
+		"Mobile":         data.Mobile,
+		"Vendor":         data.Vendor,
+		"Process":        data.ProcessName,
+		"Client":         data.Client,
+		"TemplateName":   data.TemplateReference,
+		"AppId":          data.AppId,
+		"Tag1":           data.Tag1,
+		"Tag2":           data.Tag2,
+		"DynamicMobile":  data.DynamicMobile,
+		"VariablesValue": data.TemplateVariableValues,
+		"HitTime":        time.Now(),
+	}
+
+	if !data.ScheduledAt.IsZero() {
+		row["ScheduledAt"] = data.ScheduledAt
+	}
+
+	if output != nil {
+		if v, ok := output["AppId"]; ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				row["AppId"] = strings.TrimSpace(s)
+			}
+		}
+
+		if v, ok := output["TransactionId"]; ok {
+			row["TransactionId"] = v
+			row["MessageId"] = v
+		}
+
+		if v, ok := output["ResponseMessage"]; ok {
+			row["ResponseMessage"] = v
+		}
+
+		if v, ok := output["IsSent"]; ok {
+			row["IsSent"] = mapBool(output, "IsSent") || v == 1 || v == true || v == "1"
+		}
+
+		if v, ok := output["RawPayload"]; ok {
+			row["RawPayload"] = v
+		}
+
+		if v, ok := output["RawResponse"]; ok {
+			row["RawResponse"] = v
+		}
+
+		if v, ok := output["MobileNumber"]; ok {
+			if mobile, _ := row["Mobile"].(string); strings.TrimSpace(mobile) == "" {
+				row["Mobile"] = v
+			}
+		}
+	}
+
+	return row
+}
+
+// MapMarketingWhatsappMysqlOutput projects terminal WA outcomes onto MySQL WhatsappOutputTable
+// columns (lender-shaped audit). Used alongside CommWhatsappMarketingOutput — SMS parity
+// with SmsOutputTable + tracking.
+func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output map[string]interface{}) map[string]interface{} {
+	row := map[string]interface{}{
+		"CommId":       data.CommId,
+		"Vendor":       data.Vendor,
+		"MobileNumber": data.Mobile,
+		"IsSent":       false,
+	}
+
+	if name := strings.TrimSpace(data.TemplateReference); name != "" {
+		row["TemplateName"] = name
+	}
+	if output == nil {
+		return row
+	}
+
+	if v, ok := output["CommId"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["CommId"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["Vendor"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["Vendor"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["MobileNumber"]; ok {
+		row["MobileNumber"] = v
+	} else if v, ok := output["Mobile"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["MobileNumber"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["TransactionId"]; ok {
+		row["TransactionId"] = v
+	}
+
+	if v, ok := output["ResponseMessage"]; ok {
+		row["ResponseMessage"] = v
+	}
+
+	if v, ok := output["TemplateName"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			row["TemplateName"] = strings.TrimSpace(s)
+		}
+	}
+
+	if v, ok := output["PaymentLink"]; ok {
+		row["PaymentLink"] = v
+	}
+
+	if _, ok := output["IsSent"]; ok {
+		row["IsSent"] = mapBool(output, "IsSent") || output["IsSent"] == 1 || output["IsSent"] == true || output["IsSent"] == "1"
+	}
+
+	return row
+}
+
+// MapWhatsappMysqlOutput restricts the lender-shaped audit write to columns
+// supported by the legacy MySQL WhatsappOutputTable. Provider raw payloads and
+// marketing AppId are persisted by the marketing SQL output sink instead.
+func MapWhatsappMysqlOutput(output map[string]interface{}) map[string]interface{} {
+	row := make(map[string]interface{}, 8)
+	for _, column := range []string{
+		"CommId",
+		"Vendor",
+		"MobileNumber",
+		"IsSent",
+		"TransactionId",
+		"ResponseMessage",
+		"PaymentLink",
+		"TemplateName",
+	} {
+		if value, ok := output[column]; ok {
+			row[column] = value
+		}
+	}
+	return row
 }
 
 // recordMarketingSMSTrackingFromRedisSkip writes tracking when Redis already has a
@@ -955,7 +1911,7 @@ func recordMarketingSMSTrackingFromSend(data sdkModels.CommApiRequestBody, resul
 }
 
 func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, transactionId, errorMessage string) error {
-	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
+	err := database.InsertCommDispatchTracking(database.DBMarketing, config.Configs.CommMarketingInputTable, config.Configs.CommDispatchTrackingTable, database.CommDispatchTrackingRow{
 		Source:            data.Source,
 		SourceRowId:       data.SourceRowId,
 		Channel:           "SMS",
@@ -973,6 +1929,12 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 		utils.Info(fmt.Sprintf("dispatch tracking already recorded for sourceRowId=%d", data.SourceRowId))
 		return nil
 	}
+
+	if errors.Is(err, database.ErrDispatchSourceAlreadyTerminal) {
+		utils.Info(fmt.Sprintf("dispatch source already terminal sourceRowId=%d; preserving first terminal outcome", data.SourceRowId))
+		return nil
+	}
+
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to insert dispatch tracking sourceRowId=%d: %v", data.SourceRowId, err))
 		return err

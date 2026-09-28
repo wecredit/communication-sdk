@@ -58,6 +58,42 @@ func TestFetchTemplateDataByReference(t *testing.T) {
 	}
 }
 
+func TestFetchTemplateDataByReferenceRequiresProcess(t *testing.T) {
+	msg := sdkModels.CommApiRequestBody{
+		Client: "wecredit", Channel: "SMS", Vendor: "PINNACLE", TemplateReference: "1777178764367201169",
+	}
+
+	_, _, err := channelHelper.FetchTemplateDataByReference(msg, map[string]map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "process name is required") {
+		t.Fatalf("error = %v, want missing-process validation", err)
+	}
+}
+
+func TestFetchTemplateDataByReferenceSeparatesProcesses(t *testing.T) {
+	templates := map[string]map[string]interface{}{
+		"branch": {
+			"IsActive": variables.Active, "DltTemplateId": int64(1777178764367201169),
+			"Client": "wecredit", "Channel": "SMS", "Vendor": "PINNACLE", "Process": "Branch", "TemplateText": "production",
+		},
+		"branch-test": {
+			"IsActive": variables.Active, "DltTemplateId": int64(1777178764367201169),
+			"Client": "wecredit", "Channel": "SMS", "Vendor": "PINNACLE", "Process": "Branch_test", "TemplateText": "test",
+		},
+	}
+	msg := sdkModels.CommApiRequestBody{
+		ProcessName: "Branch_test", Client: "wecredit", Channel: "SMS", Vendor: "PINNACLE",
+		TemplateReference: "1777178764367201169",
+	}
+
+	data, _, err := channelHelper.FetchTemplateDataByReference(msg, templates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data["TemplateText"] != "test" {
+		t.Fatalf("TemplateText = %v, want test process template", data["TemplateText"])
+	}
+}
+
 func TestResolveTemplateDataUsesReferenceWhenPresent(t *testing.T) {
 	msg := sdkModels.CommApiRequestBody{
 		ProcessName:       "fatakpay",
@@ -173,5 +209,63 @@ func TestFetchTemplateDataSameVendorStageFallback(t *testing.T) {
 	}
 	if data["TemplateText"] != "fallback" {
 		t.Fatalf("TemplateText = %v", data["TemplateText"])
+	}
+}
+
+func TestFetchTemplateDataByReferenceMatchesByTemplateName(t *testing.T) {
+	templates := map[string]map[string]interface{}{
+		"a": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "SINCH",
+			"Process": "camp_a", "AppId": "app-a",
+		},
+		"b": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa_other",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "SINCH",
+			"Process": "camp_a", "AppId": "app-b",
+		},
+	}
+	msg := sdkModels.CommApiRequestBody{
+		ProcessName: "camp_a", Client: "wecredit", Channel: "WHATSAPP", Vendor: "SINCH",
+		TemplateReference: "tpl_wa",
+	}
+	data, _, err := channelHelper.FetchTemplateDataByReference(msg, templates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data["AppId"] != "app-a" {
+		t.Fatalf("AppId = %v, want app-a", data["AppId"])
+	}
+}
+
+func TestFetchTemplateDataByReferenceDisambiguatesWhatsappAppId(t *testing.T) {
+	templates := map[string]map[string]interface{}{
+		"a": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "PINNACLE",
+			"Process": "camp_a", "AppId": "app-a", "TemplateText": "via-a",
+		},
+		"b": {
+			"IsActive": variables.Active, "TemplateName": "tpl_wa",
+			"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "PINNACLE",
+			"Process": "camp_a", "AppId": "app-b", "TemplateText": "via-b",
+		},
+	}
+	msg := sdkModels.CommApiRequestBody{
+		ProcessName: "camp_a", Client: "wecredit", Channel: "WHATSAPP", Vendor: "PINNACLE",
+		TemplateReference: "tpl_wa", AppId: "app-b",
+	}
+	data, _, err := channelHelper.FetchTemplateDataByReference(msg, templates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if data["TemplateText"] != "via-b" {
+		t.Fatalf("TemplateText = %v, want via-b", data["TemplateText"])
+	}
+
+	msg.AppId = ""
+	_, _, err = channelHelper.FetchTemplateDataByReference(msg, templates)
+	if err == nil || !strings.Contains(err.Error(), "multiple active templates") {
+		t.Fatalf("error = %v, want multiple-active without AppId", err)
 	}
 }

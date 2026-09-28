@@ -30,6 +30,10 @@ const (
 
 var (
 	ErrDispatchTrackingAlreadyExists = errors.New("dispatch tracking row already exists")
+	// ErrDispatchSourceAlreadyTerminal is retained for callers that still check it.
+	// The plain-INSERT path no longer reads/locks the source row, so this is unused
+	// by InsertCommDispatchTracking itself.
+	ErrDispatchSourceAlreadyTerminal = errors.New("dispatch source row is already terminal")
 	trackingSensitiveNumber          = regexp.MustCompile(`\b[0-9]{10,15}\b`)
 )
 
@@ -48,7 +52,13 @@ type CommDispatchTrackingRow struct {
 	TemplateReference string
 }
 
-func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchTrackingRow) error {
+// InsertCommDispatchTracking writes one tracking row with a plain INSERT.
+// Hermis has no CommDispatchTracking path (WA-only plain output INSERTs). This
+// SMS speed path intentionally skips UPDLOCK / WHERE NOT EXISTS (those caused
+// 800–1300ms SLOW SQL under concurrency). Idempotency relies on a unique key
+// (2627/2601 → ErrDispatchTrackingAlreadyExists) when present; without it, SQS
+// redelivery can insert duplicate tracking rows.
+func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row CommDispatchTrackingRow) error {
 	if db == nil {
 		return fmt.Errorf("marketing database is not initialized")
 	}
@@ -56,6 +66,7 @@ func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchT
 	if tableName == "" {
 		return fmt.Errorf("tracking table name is required")
 	}
+	_ = sourceTable // kept in signature for callers; locking path removed
 
 	source := clampTracking(row.Source, trackingSourceMax)
 	channel := clampTracking(row.Channel, trackingChannelMax)
@@ -66,19 +77,11 @@ func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchT
 		return fmt.Errorf("invalid tracking outcome %q", row.Outcome)
 	}
 
-	// Approved table: PK on Id only, DF CreatedOn/UpdatedOn = SYSDATETIME(), AppliedOn left NULL.
-	// Skip a second row for the same (Source, SourceRowId, Channel). Concurrent inserts can
-	// still race this NOT EXISTS check; add a unique index in SSMS (not AutoMigrate) if duplicates appear.
 	query := fmt.Sprintf(`INSERT INTO %s (
 		[Source], SourceRowId, Channel, Client, Vendor, Process, EventId,
 		CommId, TransactionId, Outcome, ErrorMessage, TemplateReference,
 		CreatedOn, UpdatedOn
-	)
-	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), SYSDATETIME()
-	WHERE NOT EXISTS (
-		SELECT 1 FROM %s t
-		WHERE t.[Source] = ? AND t.SourceRowId = ? AND t.Channel = ?
-	)`, tableName, tableName)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), SYSDATETIME())`, tableName)
 
 	result := db.Exec(query,
 		source,
@@ -93,9 +96,6 @@ func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchT
 		row.Outcome,
 		nullIfBlank(sanitizeTrackingError(row.ErrorMessage)),
 		nullIfBlank(clampTracking(row.TemplateReference, trackingTemplateMax)),
-		source,
-		row.SourceRowId,
-		channel,
 	)
 	if result.Error != nil {
 		if isSQLServerUniqueViolation(result.Error) {
@@ -103,11 +103,35 @@ func InsertCommDispatchTracking(db *gorm.DB, tableName string, row CommDispatchT
 		}
 		return fmt.Errorf("insert dispatch tracking: %w", result.Error)
 	}
-	if result.RowsAffected == 0 {
-		return ErrDispatchTrackingAlreadyExists
-	}
+
 	utils.Info(fmt.Sprintf("inserted dispatch tracking sourceRowId=%d outcome=%s", row.SourceRowId, row.Outcome))
 	return nil
+}
+
+// CommWhatsappMarketingOutputExists reports whether any output row exists for a marketing input id.
+// Only used on Redis skip-send redelivery (not the happy-path insert) so SQS can ACK without a second write.
+func CommWhatsappMarketingOutputExists(db *gorm.DB, tableName string, sourceRowId int64) (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("marketing database is not initialized")
+	}
+	tableName = strings.TrimSpace(tableName)
+	if tableName == "" {
+		return false, fmt.Errorf("whatsapp marketing output table name is required")
+	}
+	if sourceRowId == 0 {
+		return false, nil
+	}
+
+	var exists int
+	query := fmt.Sprintf(
+		`SELECT TOP (1) 1 FROM %s WITH (NOLOCK) WHERE SourceRowId = ?`,
+		tableName,
+	)
+	
+	if err := db.Raw(query, sourceRowId).Scan(&exists).Error; err != nil {
+		return false, fmt.Errorf("check whatsapp marketing output sourceRowId=%d: %w", sourceRowId, err)
+	}
+	return exists == 1, nil
 }
 
 func clampTracking(value string, max int) string {
