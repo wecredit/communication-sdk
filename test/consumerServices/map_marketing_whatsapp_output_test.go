@@ -79,16 +79,60 @@ func TestMapMarketingWhatsappMysqlOutputLenderShaped(t *testing.T) {
 	if out["MobileNumber"] != "9999999999" {
 		t.Fatalf("MobileNumber = %v, want provider/mobile override", out["MobileNumber"])
 	}
-	if out["AppId"] != "template-app" {
-		t.Fatalf("AppId = %v", out["AppId"])
-	}
 	if out["IsSent"] != true {
 		t.Fatalf("IsSent = %v", out["IsSent"])
+	}
+	if _, ok := out["AppId"]; ok {
+		t.Fatal("MySQL WhatsappOutput must not include AppId")
 	}
 	if _, ok := out["SourceRowId"]; ok {
 		t.Fatal("MySQL WhatsappOutput must not include Marketing SourceRowId")
 	}
 	if _, ok := out["EventId"]; ok {
 		t.Fatal("MySQL WhatsappOutput must not include Marketing EventId")
+	}
+}
+
+func TestMapWhatsappMysqlOutputAllowlist(t *testing.T) {
+	out := services.MapWhatsappMysqlOutput(map[string]interface{}{
+		"CommId":          "WC-TEST",
+		"Vendor":          "TIMES",
+		"MobileNumber":    "9876543210",
+		"IsSent":          true,
+		"TransactionId":   "txn-1",
+		"ResponseMessage": "ok",
+		"PaymentLink":     "",
+		"TemplateName":    "tpl_wa",
+		"AppId":           "must-not-be-written",
+		"RawPayload":      `{"request":true}`,
+		"RawResponse":     `{"response":true}`,
+	})
+
+	if len(out) != 8 {
+		t.Fatalf("allowlisted column count = %d, want 8", len(out))
+	}
+	for _, column := range []string{"AppId", "RawPayload", "RawResponse"} {
+		if _, ok := out[column]; ok {
+			t.Fatalf("legacy MySQL output must not include %s", column)
+		}
+	}
+}
+
+func TestMapMarketingWhatsappMysqlOutputExcludesMarketingOnlyRawFields(t *testing.T) {
+	data := sdkModels.CommApiRequestBody{
+		CommId: "WC-TEST",
+		Mobile: "9876543210",
+		Vendor: "SINCH",
+	}
+	out := services.MapMarketingWhatsappMysqlOutput(data, map[string]interface{}{
+		"RawPayload":  `{"request":true}`,
+		"RawResponse": `{"response":true}`,
+	})
+
+	if _, ok := out["RawPayload"]; ok {
+		t.Fatal("MySQL WhatsappOutput must not include RawPayload")
+	}
+	if _, ok := out["RawResponse"]; ok {
+		t.Fatal("MySQL WhatsappOutput must not include RawResponse")
 	}
 }

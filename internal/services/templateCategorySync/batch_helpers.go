@@ -103,3 +103,19 @@ func ResolvePendingUpdate(pending map[string]TemplateCategoryRow, name string) A
 
 	return ComputeCategoryUpdate(row.Name, row.Category, row.Status)
 }
+
+// MissingTemplateNames returns local template names that were not present in
+// any successful provider listing. Callers should only use this after every
+// configured panel for the vendor has completed successfully; a failed panel
+// makes absence ambiguous.
+func MissingTemplateNames(local map[string]struct{}, pending map[string]TemplateCategoryRow) []string {
+	names := make([]string, 0)
+	for name := range local {
+		if _, ok := pending[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	
+	sort.Strings(names)
+	return names
+}

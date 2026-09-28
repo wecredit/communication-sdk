@@ -1,6 +1,7 @@
 package templateCategorySync_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wecredit/communication-sdk/internal/services/templateCategorySync"
@@ -52,5 +53,22 @@ func TestParseVendorPanelsJSONInvalid(t *testing.T) {
 	_, err := templateCategorySync.ParseVendorPanelsJSON(`{not-json`)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestMissingTemplateNames(t *testing.T) {
+	local := map[string]struct{}{
+		"w6_branch_utility_21_july_02": {},
+		"w6_branch_utility_21_july_03": {},
+		"present":                      {},
+	}
+	pending := map[string]templateCategorySync.TemplateCategoryRow{
+		"present": {Name: "present", Category: "UTILITY", Status: "APPROVED"},
+	}
+
+	got := templateCategorySync.MissingTemplateNames(local, pending)
+	want := []string{"w6_branch_utility_21_july_02", "w6_branch_utility_21_july_03"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing names = %#v, want %#v", got, want)
 	}
 }

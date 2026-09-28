@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,8 +59,15 @@ type ConsumerQueueRuntime struct {
 	RedriveMaxReceiveCount int
 }
 
+type clientBuffer struct {
+	ch     chan MessageWrapper
+	sendMu sync.Mutex
+	closed bool
+}
+
 type clientRoutine struct {
-	msgChan   chan MessageWrapper
+	buffers   map[string]*clientBuffer
+	buffersMu sync.RWMutex
 	closeOnce sync.Once
 	wg        *sync.WaitGroup
 	workers   int
@@ -231,9 +239,7 @@ func ConsumerService(_ string) {
 	handlers := make([]*clientRoutine, 0, len(clientHandlers))
 	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
-		handler.closeOnce.Do(func() {
-			close(handler.msgChan)
-		})
+		handler.closeOnce.Do(handler.closeBuffers)
 		delete(clientHandlers, client)
 		handlers = append(handlers, handler)
 		clients = append(clients, client)
@@ -301,16 +307,17 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
-	channel := strings.ToLower(strings.TrimSpace(data.Channel))
-	poolKey := ClientChannelPoolKey(client, channel)
+	// SMS and WhatsApp share one client pool, but each channel has its own
+	// bounded buffer. Workers select across the buffers, so an idle channel
+	// does not reserve any part of the shared worker budget.
+	poolKey := ClientPoolKey(client)
 
 	clientMux.Lock()
 	handler, exists := clientHandlers[poolKey]
 	if !exists {
-		workerCount := ClientChannelWorkerCount(client, channel)
-		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+		workerCount := ClientSharedWorkerCount(client)
 		handler = &clientRoutine{
-			msgChan: make(chan MessageWrapper, bufferSize),
+			buffers: make(map[string]*clientBuffer),
 			wg:      &sync.WaitGroup{},
 			workers: workerCount,
 		}
@@ -318,17 +325,20 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, poolKey, handler.msgChan, queue.SQSClient, handler.wg)
+			go startClientWorker(ctx, poolKey, handler, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
-	handler.msgChan <- MessageWrapper{
+	bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+	handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
+	clientMux.Unlock()
+
+	handler.enqueue(ctx, data.Channel, MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
 		RedriveMaxReceiveCount: redriveMaxReceiveCount,
-	}
-	clientMux.Unlock()
+	})
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -352,7 +362,8 @@ func parseSQSCommPayload(body string) (sdkModels.CommApiRequestBody, error) {
 	return data, nil
 }
 
-// ClientChannelPoolKey is client|channel (channel empty → client|default).
+// ClientChannelPoolKey is retained for channel-specific configuration/tests.
+// Runtime workers use ClientPoolKey so channels share capacity.
 func ClientChannelPoolKey(client, channel string) string {
 	client = strings.ToLower(strings.TrimSpace(client))
 	channel = strings.ToLower(strings.TrimSpace(channel))
@@ -360,6 +371,44 @@ func ClientChannelPoolKey(client, channel string) string {
 		channel = "default"
 	}
 	return client + "|" + channel
+}
+
+// ClientPoolKey identifies the shared runtime worker pool for a client.
+func ClientPoolKey(client string) string {
+	return strings.ToLower(strings.TrimSpace(client))
+}
+
+// ClientSharedWorkerCount returns the total worker budget shared by SMS and
+// WhatsApp for a client. Explicit channel overrides are additive: a 50/50
+// configuration creates one 100-worker pool, not two isolated 50-worker pools.
+// If no channel overrides are configured for the client, the legacy client
+// worker setting remains the fallback.
+func ClientSharedWorkerCount(client string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	total := 0
+	configured := false
+
+	for _, entry := range strings.Split(config.Configs.ConsumerChannelWorkerOverrides, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		workers, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || workers < 1 {
+			continue
+		}
+		configured = true
+		total += workers
+	}
+
+	if configured {
+		if total > maxClientWorkers {
+			return maxClientWorkers
+		}
+		return total
+	}
+
+	return ClientWorkerCount(client)
 }
 
 // ClientChannelWorkerCount resolves CONSUMER_CHANNEL_WORKER_OVERRIDES
@@ -430,7 +479,103 @@ func boundedConsumerConfigInt(raw string, fallback, maximum int) int {
 	return value
 }
 
-func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan MessageWrapper, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+// ClientChannelBufferKey normalizes the channel name used to isolate pending
+// message buffers within a shared client worker pool.
+func ClientChannelBufferKey(channel string) string {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel == "" {
+		return "default"
+	}
+	return channel
+}
+
+func channelBufferCapacity(channel string, totalBufferSize int) int {
+	key := ClientChannelBufferKey(channel)
+	if key == strings.ToLower(variables.SMS) || key == strings.ToLower(variables.WhatsApp) {
+		// Preserve the existing aggregate client buffer when both primary
+		// channels are present: e.g. configured 200 becomes 100 + 100.
+		if totalBufferSize > 1 {
+			return (totalBufferSize + 1) / 2
+		}
+	}
+	return totalBufferSize
+}
+
+func (handler *clientRoutine) bufferFor(channel string, bufferSize int) *clientBuffer {
+	key := ClientChannelBufferKey(channel)
+	handler.buffersMu.Lock()
+	defer handler.buffersMu.Unlock()
+	if buffer, ok := handler.buffers[key]; ok {
+		return buffer
+	}
+	buffer := &clientBuffer{ch: make(chan MessageWrapper, bufferSize)}
+	handler.buffers[key] = buffer
+	return buffer
+}
+
+func (handler *clientRoutine) enqueue(ctx context.Context, channel string, message MessageWrapper) {
+	// Keep the potentially blocking send out of clientMux. A full SMS buffer
+	// must not block WhatsApp handler lookup or buffer creation.
+	handler.buffersMu.RLock()
+	buffer := handler.buffers[ClientChannelBufferKey(channel)]
+	handler.buffersMu.RUnlock()
+	if buffer != nil {
+		buffer.sendMu.Lock()
+		defer buffer.sendMu.Unlock()
+		if !buffer.closed {
+			select {
+			case buffer.ch <- message:
+			case <-ctx.Done():
+			}
+		}
+	}
+}
+
+func (handler *clientRoutine) closeBuffers() {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	for _, buffer := range handler.buffers {
+		buffer.sendMu.Lock()
+		if !buffer.closed {
+			buffer.closed = true
+			close(buffer.ch)
+		}
+		buffer.sendMu.Unlock()
+	}
+}
+
+func (handler *clientRoutine) buffersSnapshot() []*clientBuffer {
+	handler.buffersMu.RLock()
+	defer handler.buffersMu.RUnlock()
+	buffers := make([]*clientBuffer, 0, len(handler.buffers))
+	for _, buffer := range handler.buffers {
+		buffers = append(buffers, buffer)
+	}
+	return buffers
+}
+
+func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool) {
+	for {
+		buffers := handler.buffersSnapshot()
+		cases := make([]reflect.SelectCase, 0, len(buffers)+1)
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		for _, buffer := range buffers {
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(buffer.ch)})
+		}
+
+		chosen, value, ok := reflect.Select(cases)
+		if chosen == 0 {
+			return MessageWrapper{}, false
+		}
+		if ok {
+			return value.Interface().(MessageWrapper), true
+		}
+		// A closed buffer is expected during shutdown. Rebuild the select set
+		// so other buffers can still be drained if shutdown is extended.
+	}
+}
+
+func startClientWorker(ctx context.Context, poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
@@ -438,48 +583,27 @@ func startClientWorker(ctx context.Context, poolKey string, msgChan <-chan Messa
 		wg.Done()
 	}()
 
-	timeout := time.NewTimer(time.Hour)
 	for {
-		select {
-		case <-ctx.Done():
+		msgWrapper, ok := handler.receive(ctx)
+		if !ok {
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
-		case msgWrapper, ok := <-msgChan:
-			if !ok {
-				utils.Warn(fmt.Sprintf("Channel closed for pool: %s", poolKey))
-				return
+		}
+		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		// Note: Message deletion is handled inside processMessage and channel handlers
+		// Only delete here if processMessage explicitly indicates it should be deleted
+		// but wasn't already deleted (e.g., on fatal errors)
+		if !isMessageProcessed {
+			// If message processing failed and wasn't deleted, we need to decide:
+			// - If it's a transient error, don't delete (let it retry)
+			// - If it's a permanent error, delete to prevent infinite retries
+			// For now, we let SQS handle retries via visibility timeout
+			utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
+		} else if isMessageProcessed && !deleted {
+			deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 			}
-			if !timeout.Stop() {
-				<-timeout.C
-			}
-			timeout.Reset(time.Hour)
-			isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
-			// Note: Message deletion is handled inside processMessage and channel handlers
-			// Only delete here if processMessage explicitly indicates it should be deleted
-			// but wasn't already deleted (e.g., on fatal errors)
-			if !isMessageProcessed {
-				// If message processing failed and wasn't deleted, we need to decide:
-				// - If it's a transient error, don't delete (let it retry)
-				// - If it's a permanent error, delete to prevent infinite retries
-				// For now, we let SQS handle retries via visibility timeout
-				utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
-			} else if isMessageProcessed && !deleted {
-				deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
-				if !deleted {
-					utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
-				}
-			}
-		case <-timeout.C:
-			utils.Warn(fmt.Sprintf("Worker timeout: no messages for 1 hour for pool: %s", poolKey))
-			clientMux.Lock()
-			if handler, ok := clientHandlers[poolKey]; ok {
-				handler.closeOnce.Do(func() {
-					close(handler.msgChan)
-				})
-				delete(clientHandlers, poolKey)
-			}
-			clientMux.Unlock()
-			return
 		}
 	}
 }
@@ -743,7 +867,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, dbMappedData); err != nil {
+	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, MapWhatsappMysqlOutput(dbMappedData)); err != nil {
 		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
 	}
 
@@ -1644,10 +1768,6 @@ func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output m
 	if name := strings.TrimSpace(data.TemplateReference); name != "" {
 		row["TemplateName"] = name
 	}
-	if appID := strings.TrimSpace(data.AppId); appID != "" {
-		row["AppId"] = appID
-	}
-
 	if output == nil {
 		return row
 	}
@@ -1686,28 +1806,36 @@ func MapMarketingWhatsappMysqlOutput(data sdkModels.CommApiRequestBody, output m
 		}
 	}
 
-	if v, ok := output["AppId"]; ok {
-		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-			row["AppId"] = strings.TrimSpace(s)
-		}
-	}
-
 	if v, ok := output["PaymentLink"]; ok {
 		row["PaymentLink"] = v
-	}
-
-	if v, ok := output["RawPayload"]; ok {
-		row["RawPayload"] = v
-	}
-
-	if v, ok := output["RawResponse"]; ok {
-		row["RawResponse"] = v
 	}
 
 	if _, ok := output["IsSent"]; ok {
 		row["IsSent"] = mapBool(output, "IsSent") || output["IsSent"] == 1 || output["IsSent"] == true || output["IsSent"] == "1"
 	}
 
+	return row
+}
+
+// MapWhatsappMysqlOutput restricts the lender-shaped audit write to columns
+// supported by the legacy MySQL WhatsappOutputTable. Provider raw payloads and
+// marketing AppId are persisted by the marketing SQL output sink instead.
+func MapWhatsappMysqlOutput(output map[string]interface{}) map[string]interface{} {
+	row := make(map[string]interface{}, 8)
+	for _, column := range []string{
+		"CommId",
+		"Vendor",
+		"MobileNumber",
+		"IsSent",
+		"TransactionId",
+		"ResponseMessage",
+		"PaymentLink",
+		"TemplateName",
+	} {
+		if value, ok := output[column]; ok {
+			row[column] = value
+		}
+	}
 	return row
 }
 
