@@ -2,15 +2,126 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"gorm.io/gorm"
 )
+
+func GetPushClaimedAt(commIdempotentKey, redisKey string, rdb *redis.Client) (time.Time, bool, error) {
+	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		return time.Time{}, false, nil
+	}
+
+	if err != nil {
+		return time.Time{}, false, err
+	}
+
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil || data.ClaimedAtUnix <= 0 {
+		return time.Time{}, true, nil
+	}
+
+	return time.Unix(data.ClaimedAtUnix, 0), true, nil
+}
+
+func GetPushAttemptCount(commIdempotentKey, redisKey string, rdb *redis.Client) (int, bool, error) {
+	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil {
+		return 0, true, nil
+	}
+	return data.AttemptCount, true, nil
+}
+
+func GetPushClaimID(commIdempotentKey, redisKey string, rdb *redis.Client) (string, bool, error) {
+	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil {
+		return "", true, nil
+	}
+	return data.ClaimID, true, nil
+}
+
+func GetPushOutcome(commIdempotentKey, redisKey string, rdb *redis.Client) (string, bool, error) {
+	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
+	if err == redis.Nil {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil {
+		return "", true, nil
+	}
+	return data.Outcome, true, nil
+}
+
+func SetPushClaimKey(rdb *redis.Client, commIdempotentKey, redisKey string) (string, error) {
+	claimIDBytes := make([]byte, 16)
+	if _, err := rand.Read(claimIDBytes); err != nil {
+		return "", fmt.Errorf("generate PUSH claim id: %w", err)
+	}
+	claimID := fmt.Sprintf("%x", claimIDBytes)
+	data, err := json.Marshal(redisModels.MobileChannelRedisData{
+		ClaimedAtUnix: time.Now().UTC().Unix(),
+		ClaimID:       claimID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal PUSH claim: %w", err)
+	}
+
+	created, err := rdb.HSetNX(context.Background(), commIdempotentKey, redisKey, string(data)).Result()
+	if err != nil {
+		return "", err
+	}
+
+	if !created {
+		return "", fmt.Errorf("key %s already exists in redis", redisKey)
+	}
+
+	return claimID, nil
+}
+
+func ReclaimExpiredPushClaim(rdb *redis.Client, commIdempotentKey, redisKey string, cutoff time.Time) (bool, error) {
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false or string.sub(val, 1, 1) ~= '{' then return 0 end
+local claimed = string.match(val, '"claimedAtUnix"%s*:%s*(%d+)')
+if claimed == nil or tonumber(claimed) > tonumber(ARGV[2]) then return 0 end
+if string.match(val, '"transactionId"%s*:%s*"[^"]+"') then return 0 end
+if string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+
+	result, err := rdb.Eval(context.Background(), script, []string{commIdempotentKey}, redisKey, fmt.Sprintf("%d", cutoff.UTC().Unix())).Int()
+	if err != nil {
+		return false, fmt.Errorf("reclaim expired PUSH claim %s: %w", redisKey, err)
+	}
+
+	return result > 0, nil
+}
 
 // Function to store data into redis from db
 func StoreDataInRedis(query string, db *gorm.DB, RDB *redis.Client, redisKey string) error {
@@ -161,30 +272,107 @@ func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, re
 // UpdateTransactionId updates the transactionId for an existing mobile_channel key
 func UpdateTransactionId(RDB *redis.Client, commIdempotentKey, redisKey, transactionId string) error {
 	ctx := context.Background()
-
-	// Update transactionId
-	data := redisModels.MobileChannelRedisData{
-		TransactionId: transactionId,
+	data, err := getMobileChannelRedisData(ctx, RDB, commIdempotentKey, redisKey)
+	if err != nil {
+		return err
 	}
-
-	// Marshal back to JSON
+	data.TransactionId = transactionId
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
+	return RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err()
+}
 
-	err = RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err()
+func UpdatePushTransactionID(RDB *redis.Client, commIdempotentKey, redisKey, claimID, transactionId string) error {
+	err := updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
+		data.TransactionId = transactionId
+	})
 	if err != nil {
 		utils.Error(fmt.Errorf("failed to update transactionId for key %s in redis: %v", redisKey, err))
-		return err
 	}
-	utils.Info(fmt.Sprintf("Key %s in hash %s updated with transactionId %s", redisKey, commIdempotentKey, transactionId))
-	return nil
+	return err
+}
+
+func UpdatePushAttemptCount(RDB *redis.Client, commIdempotentKey, redisKey, claimID string, attemptCount int) error {
+	if attemptCount < 0 {
+		return fmt.Errorf("attempt count cannot be negative")
+	}
+	return updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
+		data.AttemptCount = attemptCount
+	})
+}
+
+func UpdatePushErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, claimID, outcome, errorMessage string) error {
+	return updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
+		data.Outcome = outcome
+		data.ErrorMessage = errorMessage
+	})
+}
+
+func RefreshPushClaim(RDB *redis.Client, commIdempotentKey, redisKey, claimID string) error {
+	return updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
+		data.ClaimedAtUnix = time.Now().UTC().Unix()
+	})
+}
+
+func updatePushClaim(rdb *redis.Client, hash, field, claimID string, update func(*redisModels.MobileChannelRedisData)) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+	if strings.TrimSpace(claimID) == "" {
+		return fmt.Errorf("PUSH claim id is required")
+	}
+	ctx := context.Background()
+	return rdb.Watch(ctx, func(tx *redis.Tx) error {
+		value, err := tx.HGet(ctx, hash, field).Result()
+		if err != nil {
+			return err
+		}
+		var data redisModels.MobileChannelRedisData
+		if err := json.Unmarshal([]byte(value), &data); err != nil {
+			return fmt.Errorf("invalid PUSH claim: %w", err)
+		}
+		if data.ClaimID != claimID {
+			return fmt.Errorf("PUSH claim is no longer owned")
+		}
+		update(&data)
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal PUSH claim: %w", err)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, hash, field, string(jsonData))
+			return nil
+		})
+		return err
+	}, hash)
+}
+
+func getMobileChannelRedisData(ctx context.Context, rdb *redis.Client, hash, field string) (redisModels.MobileChannelRedisData, error) {
+	if rdb == nil {
+		return redisModels.MobileChannelRedisData{}, fmt.Errorf("redis client is nil")
+	}
+	value, err := rdb.HGet(ctx, hash, field).Result()
+	if err != nil && err != redis.Nil {
+		return redisModels.MobileChannelRedisData{}, fmt.Errorf("failed to get existing data for key %s: %v", field, err)
+	}
+	if value == "" {
+		return redisModels.MobileChannelRedisData{}, nil
+	}
+	var data redisModels.MobileChannelRedisData
+	if err := json.Unmarshal([]byte(value), &data); err != nil {
+		data.TransactionId = value
+	}
+	return data, nil
 }
 
 // UpdateErrorMessage updates the errorMessage for an existing mobile_channel key
 func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMessage string) error {
 	ctx := context.Background()
+	if RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
 
 	// Get existing data
 	val, err := RDB.HGet(ctx, commIdempotentKey, redisKey).Result()

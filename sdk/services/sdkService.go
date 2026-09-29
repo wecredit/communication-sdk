@@ -50,6 +50,12 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("%s", message)
 	}
 
+	// ValidateCommRequest trims a copy only — persist normalized identity fields.
+	data.Channel = strings.ToUpper(strings.TrimSpace(data.Channel))
+	data.Mobile = strings.TrimSpace(data.Mobile)
+	data.Email = strings.TrimSpace(data.Email)
+	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
+
 	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)
 	exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
 	if err != nil {
@@ -213,10 +219,14 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
-	if err := database.InsertData(data.InputTableName, data.DbClient, dbMappedData); err != nil {
+	// Validate the configured audit target before publishing.
+	genericAuditChannel := strings.EqualFold(data.Channel, variables.SMS) ||
+		strings.EqualFold(data.Channel, variables.RCS) ||
+		strings.EqualFold(data.Channel, variables.Email)
+	inputTableName := strings.TrimSpace(data.InputTableName)
+	if inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
 		rollbackSendClaims()
-		utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err))
-		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", data.InputTableName, data.Mobile, data.Channel, err)
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
 	}
 
 	// Enqueue for async provider workers: SQS-direct (WeCredit SMS) or SNS (legacy).
@@ -244,5 +254,30 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 	}
 
+	// Write the input audit only after the queue accepts the message. If the
+	// audit write fails now, retain the Redis claim because the message is already
+	// published and must not be republished on retry.
+	if inputTableName != "" && genericAuditChannel {
+		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err)
+		}
+	}
+
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
+}
+
+func isConfiguredInputTable(channel, tableName string) bool {
+	var configured string
+	switch {
+	case strings.EqualFold(channel, variables.SMS):
+		configured = config.Configs.SdkSmsInputTable
+	case strings.EqualFold(channel, variables.RCS):
+		configured = config.Configs.SdkRcsInputTable
+	case strings.EqualFold(channel, variables.Email):
+		configured = config.Configs.SdkEmailInputTable
+	default:
+		return false
+	}
+	return strings.TrimSpace(configured) != "" && tableName == strings.TrimSpace(configured)
 }
