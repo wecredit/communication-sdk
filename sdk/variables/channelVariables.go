@@ -6,6 +6,7 @@ var (
 	RCS      string = "RCS"
 	WhatsApp string = "WHATSAPP"
 	Email    string = "EMAIL"
+	PUSH     string = "PUSH"
 )
 
 var (

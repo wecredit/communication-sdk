@@ -68,6 +68,11 @@ func (c *Cache) Set(key string, data interface{}) bool {
 	return c.store.Set(key, data, 1)
 }
 
+// Wait blocks until pending Set operations are visible to Get.
+func (c *Cache) Wait() {
+	c.store.Wait()
+}
+
 // Get fetches the data from the cache for a given key
 func (c *Cache) Get(key string) ([]map[string]interface{}, bool) {
 	value, found := c.store.Get(key)

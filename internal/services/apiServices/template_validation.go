@@ -130,6 +130,15 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 			template.TemplateCategory != smsServiceExplicitCategory {
 			return errors.New("templateCategory must be 3 (service implicit) or 4 (service explicit) for SMS")
 		}
+
+	case "PUSH":
+		if strings.TrimSpace(template.TemplateHeader) == "" {
+			return errors.New("templateHeader is required as the title for PUSH")
+		}
+
+		if strings.TrimSpace(template.TemplateText) == "" {
+			return errors.New("templateText is required as the body for PUSH")
+		}
 	}
 
 	if template.Channel == "SMS" && strings.EqualFold(template.Client, "wecredit") {
@@ -160,7 +169,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 				return errors.New("dltTemplateId is required for SMS REFERENCE_MODE")
 			}
 
-		case "RCS", "WHATSAPP", "EMAIL":
+		case "RCS", "WHATSAPP", "EMAIL", "PUSH":
 			if template.TemplateName == "" {
 				return fmt.Errorf("templateName is required for %s REFERENCE_MODE", template.Channel)
 			}
@@ -344,8 +353,8 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 			} else {
 				query = query.Where("AppId = ?", appID)
 			}
-
-		case "RCS", "EMAIL":
+			
+		case "RCS", "EMAIL", "PUSH":
 			query = query.Where("TemplateName = ?", template.TemplateName)
 		}
 	}
