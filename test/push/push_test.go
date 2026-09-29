@@ -178,10 +178,13 @@ type fakeClaims struct {
 	mu        sync.Mutex
 	fields    map[string]string // "" blank, "txn:..." or "err:..."
 	claimedAt map[string]time.Time
+	attempts  map[string]int
+	claimIDs  map[string]string
+	outcomes  map[string]string
 }
 
 func newFakeClaims() *fakeClaims {
-	return &fakeClaims{fields: make(map[string]string), claimedAt: make(map[string]time.Time)}
+	return &fakeClaims{fields: make(map[string]string), claimedAt: make(map[string]time.Time), attempts: make(map[string]int), claimIDs: make(map[string]string), outcomes: make(map[string]string)}
 }
 
 func (c *fakeClaims) Get(field string) (bool, string, string, error) {
@@ -200,15 +203,17 @@ func (c *fakeClaims) Get(field string) (bool, string, string, error) {
 	return true, "", "", nil // blank claim
 }
 
-func (c *fakeClaims) Claim(field string) error {
+func (c *fakeClaims) Claim(field string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, exists := c.fields[field]; exists {
-		return errors.New("key already exists in redis")
+		return "", errors.New("key already exists in redis")
 	}
+	claimID := "claim-" + field
 	c.fields[field] = ""
 	c.claimedAt[field] = time.Now().UTC()
-	return nil
+	c.claimIDs[field] = claimID
+	return claimID, nil
 }
 
 func (c *fakeClaims) ClaimedAt(field string) (time.Time, bool, error) {
@@ -216,6 +221,33 @@ func (c *fakeClaims) ClaimedAt(field string) (time.Time, bool, error) {
 	defer c.mu.Unlock()
 	claimedAt, ok := c.claimedAt[field]
 	return claimedAt, ok, nil
+}
+func (c *fakeClaims) AttemptCount(field string) (int, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	attemptCount, ok := c.attempts[field]
+	return attemptCount, ok, nil
+}
+func (c *fakeClaims) ClaimID(field string) (string, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	claimID, ok := c.claimIDs[field]
+	return claimID, ok, nil
+}
+func (c *fakeClaims) RefreshClaim(field, claimID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.claimIDs[field] != claimID {
+		return errors.New("PUSH claim is no longer owned")
+	}
+	c.claimedAt[field] = time.Now().UTC()
+	return nil
+}
+func (c *fakeClaims) Outcome(field string) (string, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	outcome, ok := c.outcomes[field]
+	return outcome, ok, nil
 }
 
 func (c *fakeClaims) ReclaimExpired(field string, cutoff time.Time) (bool, error) {
@@ -228,20 +260,37 @@ func (c *fakeClaims) ReclaimExpired(field string, cutoff time.Time) (bool, error
 	}
 	delete(c.fields, field)
 	delete(c.claimedAt, field)
+	delete(c.claimIDs, field)
 	return true, nil
 }
-
-func (c *fakeClaims) SetTransactionID(field, transactionID string) error {
+func (c *fakeClaims) SetAttemptCount(field, claimID string, attemptCount int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.claimIDs[field] != claimID {
+		return errors.New("PUSH claim is no longer owned")
+	}
+	c.attempts[field] = attemptCount
+	return nil
+}
+
+func (c *fakeClaims) SetTransactionID(field, claimID, transactionID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.claimIDs[field] != claimID {
+		return errors.New("PUSH claim is no longer owned")
+	}
 	c.fields[field] = "txn:" + transactionID
 	return nil
 }
 
-func (c *fakeClaims) SetErrorMessage(field, errorMessage string) error {
+func (c *fakeClaims) SetErrorMessage(field, claimID, outcome, errorMessage string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.claimIDs[field] != claimID {
+		return errors.New("PUSH claim is no longer owned")
+	}
 	c.fields[field] = "err:" + errorMessage
+	c.outcomes[field] = outcome
 	return nil
 }
 
@@ -334,6 +383,11 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	if len(replay.OutputAudits) != 2 {
 		t.Fatalf("replay output audits = %d, want terminal replay for both tokens", len(replay.OutputAudits))
 	}
+	for _, output := range replay.OutputAudits {
+		if output["AttemptCount"] != 1 {
+			t.Fatalf("replay output attempt count = %v, want 1", output["AttemptCount"])
+		}
+	}
 }
 
 func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
@@ -374,7 +428,7 @@ func TestPushDoesNotReclaimInFlightEventClaim(t *testing.T) {
 	field := push.TokenRedisField(sdkModels.CommApiRequestBody{
 		EventId: "event-1", Client: "zapcash", Channel: "PUSH", ProcessName: "OFFER", Stage: 1,
 	}, fingerprint)
-	if err := claims.Claim(field); err != nil {
+	if _, err := claims.Claim(field); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
 
@@ -492,12 +546,17 @@ func (c *failingClaimStore) Get(string) (bool, string, string, error) {
 func (c *failingClaimStore) ClaimedAt(string) (time.Time, bool, error) {
 	return time.Time{}, false, nil
 }
-func (c *failingClaimStore) Claim(string) error { return c.err }
+func (c *failingClaimStore) Claim(string) (string, error) { return "", c.err }
 func (c *failingClaimStore) ReclaimExpired(string, time.Time) (bool, error) {
 	return false, nil
 }
-func (c *failingClaimStore) SetTransactionID(string, string) error { return nil }
-func (c *failingClaimStore) SetErrorMessage(string, string) error  { return nil }
+func (c *failingClaimStore) SetTransactionID(string, string, string) error        { return nil }
+func (c *failingClaimStore) SetErrorMessage(string, string, string, string) error { return nil }
+func (c *failingClaimStore) AttemptCount(string) (int, bool, error)               { return 0, false, nil }
+func (c *failingClaimStore) ClaimID(string) (string, bool, error)                 { return "", false, nil }
+func (c *failingClaimStore) Outcome(string) (string, bool, error)                 { return "", false, nil }
+func (c *failingClaimStore) RefreshClaim(string, string) error                    { return nil }
+func (c *failingClaimStore) SetAttemptCount(string, string, int) error            { return nil }
 
 func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
 	t.Helper()

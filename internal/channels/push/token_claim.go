@@ -19,11 +19,16 @@ import (
 // delivery identity field: {GenerateRedisKeyForRequest}:{tokenFingerprint}.
 type tokenClaimStore interface {
 	Get(field string) (exists bool, transactionID, errorMessage string, err error)
+	AttemptCount(field string) (attemptCount int, exists bool, err error)
 	ClaimedAt(field string) (claimedAt time.Time, exists bool, err error)
-	Claim(field string) error
+	Claim(field string) (claimID string, err error)
 	ReclaimExpired(field string, cutoff time.Time) (bool, error)
-	SetTransactionID(field, transactionID string) error
-	SetErrorMessage(field, errorMessage string) error
+	ClaimID(field string) (claimID string, exists bool, err error)
+	Outcome(field string) (outcome string, exists bool, err error)
+	RefreshClaim(field, claimID string) error
+	SetAttemptCount(field, claimID string, attemptCount int) error
+	SetTransactionID(field, claimID, transactionID string) error
+	SetErrorMessage(field, claimID, outcome, errorMessage string) error
 }
 
 type redisTokenClaims struct {
@@ -46,11 +51,15 @@ func (c *redisTokenClaims) Get(field string) (bool, string, string, error) {
 	return redis.GetMobileDataFromRedis(c.hash, field, c.rdb)
 }
 
+func (c *redisTokenClaims) AttemptCount(field string) (int, bool, error) {
+	return redis.GetPushAttemptCount(c.hash, field, c.rdb)
+}
+
 func (c *redisTokenClaims) ClaimedAt(field string) (time.Time, bool, error) {
 	return redis.GetPushClaimedAt(c.hash, field, c.rdb)
 }
 
-func (c *redisTokenClaims) Claim(field string) error {
+func (c *redisTokenClaims) Claim(field string) (string, error) {
 	return redis.SetPushClaimKey(c.rdb, c.hash, field)
 }
 
@@ -58,12 +67,28 @@ func (c *redisTokenClaims) ReclaimExpired(field string, cutoff time.Time) (bool,
 	return redis.ReclaimExpiredPushClaim(c.rdb, c.hash, field, cutoff)
 }
 
-func (c *redisTokenClaims) SetTransactionID(field, transactionID string) error {
-	return redis.UpdateTransactionId(c.rdb, c.hash, field, transactionID)
+func (c *redisTokenClaims) ClaimID(field string) (string, bool, error) {
+	return redis.GetPushClaimID(c.hash, field, c.rdb)
 }
 
-func (c *redisTokenClaims) SetErrorMessage(field, errorMessage string) error {
-	return redis.UpdateErrorMessage(c.rdb, c.hash, field, errorMessage)
+func (c *redisTokenClaims) Outcome(field string) (string, bool, error) {
+	return redis.GetPushOutcome(c.hash, field, c.rdb)
+}
+
+func (c *redisTokenClaims) RefreshClaim(field, claimID string) error {
+	return redis.RefreshPushClaim(c.rdb, c.hash, field, claimID)
+}
+
+func (c *redisTokenClaims) SetAttemptCount(field, claimID string, attemptCount int) error {
+	return redis.UpdatePushAttemptCount(c.rdb, c.hash, field, claimID, attemptCount)
+}
+
+func (c *redisTokenClaims) SetTransactionID(field, claimID, transactionID string) error {
+	return redis.UpdatePushTransactionID(c.rdb, c.hash, field, claimID, transactionID)
+}
+
+func (c *redisTokenClaims) SetErrorMessage(field, claimID, outcome, errorMessage string) error {
+	return redis.UpdatePushErrorMessage(c.rdb, c.hash, field, claimID, outcome, errorMessage)
 }
 
 // FingerprintToken returns a non-reversible SHA-256 hex fingerprint of a device

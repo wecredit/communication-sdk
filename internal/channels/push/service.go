@@ -211,7 +211,7 @@ func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiReq
 			return 0, fmt.Errorf("fingerprint ShouldHitVendor-off PUSH token: %w", err)
 		}
 		field := TokenRedisField(request, fp)
-		skip, claimErr := claimTokenField(claims, request, field)
+		skip, claimID, claimErr := claimTokenField(claims, request, field)
 		if claimErr != nil {
 			return 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
 		}
@@ -219,7 +219,7 @@ func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiReq
 			skipped++
 			continue
 		}
-		if err := claims.SetErrorMessage(field, skipMsg); err != nil {
+		if err := claims.SetErrorMessage(field, claimID, outcomeFailedFinal, skipMsg); err != nil {
 			return 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
 		}
 		skipped++
@@ -263,7 +263,7 @@ func (s *Service) sendToken(
 		return "", true, replay, nil
 	}
 
-	skip, err := claimTokenField(s.claims, request, field)
+	skip, claimID, err := claimTokenField(s.claims, request, field)
 	if err != nil {
 		return "", false, nil, err
 	}
@@ -273,13 +273,16 @@ func (s *Service) sendToken(
 
 	payload, err := fcm.BuildSendRequest(deviceToken, title, body, request)
 	if err != nil {
-		return s.finalizeToken(request, field, fingerprint, fcm.ExecutionResult{
+		return s.finalizeToken(request, field, fingerprint, claimID, fcm.ExecutionResult{
 			Outcome: fcm.OutcomeFailedFinal,
 			Code:    "FCM_PAYLOAD_INVALID",
 		})
 	}
 
 	observer := func(_ context.Context, attempt int) error {
+		if err := s.claims.SetAttemptCount(field, claimID, attempt); err != nil {
+			return err
+		}
 		metrics.Count("PushProviderAttempts", providerName, request.Client, 1)
 		return nil
 	}
@@ -290,6 +293,13 @@ func (s *Service) sendToken(
 		if getErr != nil {
 			return false, getErr
 		}
+		currentClaimID, claimExists, claimErr := s.claims.ClaimID(field)
+		if claimErr != nil {
+			return false, claimErr
+		}
+		if !claimExists || currentClaimID != claimID {
+			return false, nil
+		}
 		if !exists {
 			return false, nil
 		}
@@ -299,11 +309,30 @@ func (s *Service) sendToken(
 		return true, nil
 	}
 
-	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, guard, observer)
+	executionCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(pushClaimLease / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-executionCtx.Done():
+				return
+			case <-ticker.C:
+				if err := s.claims.RefreshClaim(field, claimID); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	execution, err := s.executor.ExecuteWithObserver(executionCtx, request.Client, payload, guard, observer)
+	stopHeartbeat()
+	<-heartbeatDone
 	if err != nil {
 		return "", false, nil, err
 	}
-	return s.finalizeToken(request, field, fingerprint, execution)
+	return s.finalizeToken(request, field, fingerprint, claimID, execution)
 }
 
 // terminalReplayOutput rebuilds the audit row from a terminal Redis claim on
@@ -324,68 +353,85 @@ func terminalReplayOutput(
 	}
 
 	if transactionID = strings.TrimSpace(transactionID); transactionID != "" {
+		attemptCount, _, err := claims.AttemptCount(field)
+		if err != nil {
+			return nil, false, err
+		}
 		return buildOutputAudit(request, fingerprint, outcomeSubmitted, fcm.ExecutionResult{
 			Outcome:      fcm.OutcomeSubmitted,
 			MessageID:    transactionID,
-			AttemptCount: 0,
+			AttemptCount: attemptCount,
 		}), true, nil
 	}
 
 	if errorMessage = strings.TrimSpace(errorMessage); errorMessage != "" {
-		return buildOutputAudit(request, fingerprint, outcomeFailedFinal, fcm.ExecutionResult{
-			Outcome:      fcm.OutcomeFailedFinal,
+		outcome, _, err := claims.Outcome(field)
+		if err != nil {
+			return nil, false, err
+		}
+		if strings.TrimSpace(outcome) == "" {
+			outcome = outcomeFailedFinal
+		}
+		attemptCount, _, err := claims.AttemptCount(field)
+		if err != nil {
+			return nil, false, err
+		}
+		executionOutcome := fcm.Outcome(outcome)
+		return buildOutputAudit(request, fingerprint, outcome, fcm.ExecutionResult{
+			Outcome:      executionOutcome,
 			Code:         errorMessage,
-			AttemptCount: 0,
+			AttemptCount: attemptCount,
 		}), true, nil
 	}
 
 	return nil, false, nil
 }
 
-func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBody, field string) (skip bool, err error) {
+func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBody, field string) (skip bool, claimID string, err error) {
 	exists, txn, errMsg, err := claims.Get(field)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if exists {
 		if strings.TrimSpace(txn) != "" || strings.TrimSpace(errMsg) != "" {
-			return true, nil
+			return true, "", nil
 		}
 
 		claimedAt, _, claimErr := claims.ClaimedAt(field)
 		if claimErr != nil {
-			return false, claimErr
+			return false, "", claimErr
 		}
 
 		if claimedAt.IsZero() {
 			// Legacy blank claims have no known age, so keep them at-most-once.
-			return true, nil
+			return true, "", nil
 		}
 
 		reclaimed, reclaimErr := claims.ReclaimExpired(field, time.Now().UTC().Add(-pushClaimLease))
 		if reclaimErr != nil {
-			return false, reclaimErr
+			return false, "", reclaimErr
 		}
-		
+
 		if !reclaimed {
-			return true, nil
+			return true, "", nil
 		}
 	}
 
-	if err := claims.Claim(field); err != nil {
+	claimID, err = claims.Claim(field)
+	if err != nil {
 		// HSetNX race: another worker already claimed → skip send (same as SMS).
 		// Any other Redis error must surface so the message is not Ack'd.
 		if strings.Contains(err.Error(), "already exists") {
-			return true, nil
+			return true, "", nil
 		}
-		return false, err
+		return false, "", err
 	}
-	return false, nil
+	return false, claimID, nil
 }
 
 func (s *Service) finalizeToken(
 	request sdkModels.CommApiRequestBody,
-	field, fingerprint string,
+	field, fingerprint, claimID string,
 	execution fcm.ExecutionResult,
 ) (string, bool, map[string]interface{}, error) {
 	outcome, err := mapOutcome(execution.Outcome)
@@ -395,7 +441,7 @@ func (s *Service) finalizeToken(
 
 	switch outcome {
 	case outcomeSubmitted:
-		if err := s.claims.SetTransactionID(field, execution.MessageID); err != nil {
+		if err := s.claims.SetTransactionID(field, claimID, execution.MessageID); err != nil {
 			return "", false, nil, err
 		}
 	default:
@@ -403,7 +449,7 @@ func (s *Service) finalizeToken(
 		if strings.TrimSpace(msg) == "" {
 			msg = string(execution.Outcome)
 		}
-		if err := s.claims.SetErrorMessage(field, msg); err != nil {
+		if err := s.claims.SetErrorMessage(field, claimID, outcome, msg); err != nil {
 			return "", false, nil, err
 		}
 	}

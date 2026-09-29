@@ -23,6 +23,8 @@ import (
 
 const firebaseMessagingScope = "https://www.googleapis.com/auth/firebase.messaging"
 
+const maxTokenExpirySeconds = (1<<63 - 1) / int64(time.Second)
+
 type serviceAccount struct {
 	ProjectID   string `json:"project_id"`
 	ClientEmail string `json:"client_email"`
@@ -143,18 +145,26 @@ func (p *TokenProvider) Token(ctx context.Context, client string, cfg ClientConf
 		return "", RetryableAttemptError("AUTH_RESPONSE_INVALID", fmt.Errorf("decode FCM token response for client %q: %w", client, err))
 	}
 
-	if strings.TrimSpace(decoded.AccessToken) == "" || decoded.ExpiresIn <= 0 {
+	expiresIn, err := tokenExpiryDuration(decoded.ExpiresIn)
+	if strings.TrimSpace(decoded.AccessToken) == "" || err != nil {
 		return "", RetryableAttemptError("AUTH_RESPONSE_INCOMPLETE", fmt.Errorf("FCM token endpoint returned an incomplete response for client %q", client))
 	}
 
 	p.mu.Lock()
 	p.tokens[cacheKey] = cachedToken{
 		value:     decoded.AccessToken,
-		expiresAt: now.Add(time.Duration(decoded.ExpiresIn) * time.Second),
+		expiresAt: now.Add(expiresIn),
 	}
 	p.mu.Unlock()
 
 	return decoded.AccessToken, nil
+}
+
+func tokenExpiryDuration(expiresIn int64) (time.Duration, error) {
+	if expiresIn <= 0 || expiresIn > maxTokenExpirySeconds {
+		return 0, fmt.Errorf("expires_in is outside the supported range")
+	}
+	return time.Duration(expiresIn) * time.Second, nil
 }
 
 func loadServiceAccount(cfg ClientConfig, client string) (serviceAccount, *rsa.PrivateKey, error) {

@@ -219,23 +219,14 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 	}
 
-	// SMS, RCS, and Email write a generic input-audit row when InputTableName is set.
-	// PUSH lean audit is written later in handlePush from push.Send (EventId/TemplateName/…).
+	// Validate the configured audit target before publishing.
 	genericAuditChannel := strings.EqualFold(data.Channel, variables.SMS) ||
 		strings.EqualFold(data.Channel, variables.RCS) ||
 		strings.EqualFold(data.Channel, variables.Email)
 	inputTableName := strings.TrimSpace(data.InputTableName)
-	if inputTableName != "" && genericAuditChannel {
-		if !isConfiguredInputTable(data.Channel, inputTableName) {
-			rollbackSendClaims()
-			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
-		}
-
-		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
-			rollbackSendClaims()
-			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", inputTableName, data.Mobile, data.Channel, err))
-			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s: %v", inputTableName, data.Mobile, data.Channel, err)
-		}
+	if inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
+		rollbackSendClaims()
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
 	}
 
 	// Enqueue for async provider workers: SQS-direct (WeCredit SMS) or SNS (legacy).
@@ -261,6 +252,16 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
 		}
 		utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
+	}
+
+	// Write the input audit only after the queue accepts the message. If the
+	// audit write fails now, retain the Redis claim because the message is already
+	// published and must not be republished on retry.
+	if inputTableName != "" && genericAuditChannel {
+		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
+			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err))
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err)
+		}
 	}
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
