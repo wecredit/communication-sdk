@@ -1102,13 +1102,17 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
-	// if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	// }
 	var deleted bool
 	var delErr error
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	// RCS input audit belongs to the consumer path. RawCommData is unrelated;
+	// disabling that legacy source table must not disable channel-level RCS audit.
+	dbMappedData["CommId"] = data.CommId
+	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting RCS input audit: %v", data.Client, data.CommId, err))
 	}
 
 	rcsResult, err := rcs.SendRcsByProcess(data)
