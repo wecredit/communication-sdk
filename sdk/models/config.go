@@ -94,7 +94,7 @@ type Config struct {
 	SdkWhatsappInputTable string `envconfig:"SDK_WHATSAPP_INPUT_TABLE"`
 	WhatsappOutputTable   string `envconfig:"WHATSAPP_OUTPUT_TABLE"`
 
-	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE"`
+	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE" default:"RcsInputAuditTable"`
 	RcsOutputTable   string `envconfig:"RCS_OUTPUT_TABLE"`
 
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
