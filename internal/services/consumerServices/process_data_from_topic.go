@@ -789,10 +789,6 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		return handleMarketingWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg, redriveMaxReceiveCount)
 	}
 
-	// if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into wp input table for mobile %s: %v", data.Mobile, err))
-	// }
-
 	maxCountInt, _ := strconv.Atoi(config.Configs.CreditSeaWhatsappMaxCount)
 	if data.Client == variables.CreditSea {
 		count, err := redis.GetCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
@@ -825,6 +821,13 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if !AssignVendor(&data) {
 			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 		}
+	}
+
+	// Non-marketing WhatsApp also requires the channel input audit. RawCommData
+	// is a separate legacy source table and must not control this audit write.
+	dbMappedData["CommId"] = data.CommId
+	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting WhatsApp input audit: %v", data.Client, data.CommId, err))
 	}
 	var deleted bool
 	var delErr error
