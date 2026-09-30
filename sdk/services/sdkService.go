@@ -224,7 +224,11 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		strings.EqualFold(data.Channel, variables.RCS) ||
 		strings.EqualFold(data.Channel, variables.Email)
 	inputTableName := strings.TrimSpace(data.InputTableName)
-	if inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
+	// The SDK is also embedded by nurture-engine. In that mode the SDK database
+	// handle is intentionally not initialized; nurture owns the communication
+	// audit and only uses this package to enqueue the provider request. Do not
+	// validate or write SDK input-audit tables in that mode.
+	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
 		rollbackSendClaims()
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
 	}
@@ -257,7 +261,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	// Write the input audit only after the queue accepts the message. If the
 	// audit write fails now, retain the Redis claim because the message is already
 	// published and must not be republished on retry.
-	if inputTableName != "" && genericAuditChannel {
+	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel {
 		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
 			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err))
 			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err)
@@ -265,6 +269,10 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
+}
+
+func shouldWriteInputAudit() bool {
+	return database.DBtechWrite != nil
 }
 
 func isConfiguredInputTable(channel, tableName string) bool {
