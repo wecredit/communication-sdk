@@ -21,6 +21,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
 	"github.com/wecredit/communication-sdk/internal/channels/whatsapp"
@@ -684,11 +685,16 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// 	utils.Error(fmt.Errorf("redis add failed: %v", err))
 	// }
 
-	utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	if strings.EqualFold(data.Channel, variables.PUSH) {
+		utils.Debug(fmt.Sprintf("PUSH payload received client=%s commId=%s eventId=%s deviceCount=%d",
+			data.Client, data.CommId, data.EventId, len(data.DeviceTokens)))
+	} else {
+		utils.Debug(fmt.Sprintf("Payload: %+v", data))
+	}
 
-	data.Client = strings.ToLower(data.Client)
-	data.Channel = strings.ToUpper(data.Channel)
-	data.ProcessName = strings.ToUpper(data.ProcessName)
+	data.Client = strings.ToLower(strings.TrimSpace(data.Client))
+	data.Channel = strings.ToUpper(strings.TrimSpace(data.Channel))
+	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
 	data.AzureIdempotencyKey = fmt.Sprintf("%s_%s", strings.ToLower(data.ProcessName), strings.ToLower(data.Description))
 
 	dbMappedData, err := dbservices.MapIntoDbModel(data)
@@ -748,6 +754,9 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	case variables.Email:
 		isMessageProcessed, deleted := handleEmail(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 		return isMessageProcessed, deleted
+	case variables.PUSH:
+		isMessageProcessed, deleted := handlePush(ctx, data, sqsClient, queueURL, msg)
+		return isMessageProcessed, deleted
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
 		// Delete invalid messages to prevent unnecessary retries
@@ -760,14 +769,59 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	}
 }
 
+func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	result, err := push.Send(ctx, data)
+	if err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
+			data.Client, data.CommId, data.EventId, err))
+	}
+
+	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
+	// terminal output audits from Redis claims without calling FCM again.
+	if auditErr := writePushAudits(result); auditErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
+			data.Client, data.CommId, data.EventId, auditErr))
+		return false, false
+	}
+
+	if !result.AckSQS {
+		return result.Processed, false
+	}
+
+	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if deleteErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
+			data.Client, data.CommId, data.EventId, deleteErr))
+	}
+	return result.Processed, deleted
+}
+
+func writePushAudits(result push.Result) error {
+	if result.InputAudit != nil {
+		if err := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); err != nil && !isDuplicateKeyError(err) {
+			return fmt.Errorf("insert input audit: %w", err)
+		}
+	}
+	for _, output := range result.OutputAudits {
+		if err := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); err != nil && !isDuplicateKeyError(err) {
+			return fmt.Errorf("insert output audit: %w", err)
+		}
+	}
+	return nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate entry")
+}
+
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
 	if isMarketingWPDispatch(data) {
 		return handleMarketingWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg, redriveMaxReceiveCount)
 	}
-
-	// if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into wp input table for mobile %s: %v", data.Mobile, err))
-	// }
 
 	maxCountInt, _ := strconv.Atoi(config.Configs.CreditSeaWhatsappMaxCount)
 	if data.Client == variables.CreditSea {
@@ -802,6 +856,13 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		if !AssignVendor(&data) {
 			return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 		}
+	}
+
+	// Non-marketing WhatsApp also requires the channel input audit. RawCommData
+	// is a separate legacy source table and must not control this audit write.
+	dbMappedData["CommId"] = data.CommId
+	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting WhatsApp input audit: %v", data.Client, data.CommId, err))
 	}
 	var deleted bool
 	var delErr error
@@ -1085,14 +1146,19 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 }
 
 func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
-	// if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	// }
 	var deleted bool
 	var delErr error
 	if !AssignVendor(&data) {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
+
+	// RCS input audit belongs to the consumer path. RawCommData is unrelated;
+	// disabling that legacy source table must not disable channel-level RCS audit.
+	dbMappedData["CommId"] = data.CommId
+	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting RCS input audit: %v", data.Client, data.CommId, err))
+	}
+
 	rcsResult, err := rcs.SendRcsByProcess(data)
 	isMessageProcessed := rcsResult.Processed
 	if err != nil {
@@ -1489,6 +1555,10 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 
 	if data.Client == variables.CreditSea || data.Channel == variables.Email {
 		data.Vendor = variables.SINCH
+	} else if data.Channel == variables.PUSH {
+		// Channel-scoped empty-vendor default (Email→SINCH pattern). No IsVendorActive
+		// on this hardcode; ShouldHitVendor in push.Send is the kill switch.
+		data.Vendor = variables.FCM
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
 		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))

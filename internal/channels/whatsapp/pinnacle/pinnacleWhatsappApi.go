@@ -175,8 +175,22 @@ func formatPinnacleMessageAndDetails(message, details string) string {
 // (marketing / image-header templates). TemplateName substring matching is intentionally not used.
 // Exported for unit tests under test/pinnacleWhatsapp.
 func GetPinnaclePayload(pinnacleApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
-	if strings.Contains(strings.ToLower(pinnacleApiModel.Process), "utility") {
+	if isUtilityTemplate(pinnacleApiModel) {
 		return pinnaclepayloads.GetPinnacleUtilityPayload(pinnacleApiModel), nil
 	}
 	return pinnaclepayloads.GetPinnacleMediaPayload(pinnacleApiModel), nil
+}
+
+// isUtilityTemplate keeps the Hermis process-based routing for ordinary
+// clients, while preserving the ZapCash contract: ZapCash sends Process as
+// "ZAPCASH", but its approved utility templates are named *_utility_*.
+// Without this compatibility check they fall through to the media payload,
+// whose default language is en_US instead of the ZapCash utility language en.
+func isUtilityTemplate(model extapimodels.WhatsappRequestBody) bool {
+	if strings.Contains(strings.ToLower(strings.TrimSpace(model.Process)), "utility") {
+		return true
+	}
+
+	return strings.EqualFold(strings.TrimSpace(model.Client), variables.ZapCash) &&
+		strings.Contains(strings.ToLower(strings.TrimSpace(model.TemplateName)), "_utility_")
 }

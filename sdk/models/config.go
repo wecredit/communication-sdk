@@ -64,6 +64,10 @@ type Config struct {
 	ZapCashMonitorRecipients  string `envconfig:"ZAPCASH_MONITOR_RECIPIENTS"`
 	ZapCashMonitorProfileJSON string `envconfig:"ZAPCASH_MONITOR_PROFILE_JSON"`
 
+	// FCMClientConfigJSON maps each PUSH client to its Firebase project and
+	// secret-manager-mounted service-account credential file.
+	FCMClientConfigJSON string `envconfig:"FCM_CLIENT_CONFIG_JSON"`
+
 	// Redis Credentials
 	RedisAddress      string `envconfig:"REDIS_ADDRESS"`
 	RedisPassword     string `envconfig:"REDIS_PASSWORD"`
@@ -92,7 +96,7 @@ type Config struct {
 	SdkWhatsappInputTable string `envconfig:"SDK_WHATSAPP_INPUT_TABLE"`
 	WhatsappOutputTable   string `envconfig:"WHATSAPP_OUTPUT_TABLE"`
 
-	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE"`
+	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE" default:"RcsInputAuditTable"`
 	RcsOutputTable   string `envconfig:"RCS_OUTPUT_TABLE"`
 
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
@@ -100,6 +104,11 @@ type Config struct {
 
 	SdkEmailInputTable string `envconfig:"SDK_EMAIL_INPUT_TABLE"`
 	EmailOutputTable   string `envconfig:"EMAIL_OUTPUT_TABLE"`
+
+	// PUSH Redis (CommIdempotentKey) is the claim/dedupe authority.
+	// These tables are audit-only and must be provisioned before PUSH delivery is enabled.
+	PushInputAuditTable string `envconfig:"PUSH_INPUT_AUDIT_TABLE" default:"PushInputAuditTable"`
+	PushOutputTable     string `envconfig:"PUSH_OUTPUT_TABLE" default:"PushOutputTable"`
 
 	VendorTable          string `envconfig:"VENDORS_TABLE"`
 	ClientsTable         string `envconfig:"CLIENTS_TABLE"`

@@ -37,6 +37,29 @@ func TestGetPinnaclePayloadRoutesByProcessLikeHermis(t *testing.T) {
 	}
 }
 
+func TestGetPinnaclePayloadRoutesZapCashUtilityTemplateByName(t *testing.T) {
+	payload, err := pinnacleWhatsapp.GetPinnaclePayload(extapimodels.WhatsappRequestBody{
+		Client:       "zapcash",
+		Process:      "ZAPCASH",
+		TemplateName: "personal_details_done_but_banking_not_done_utility_01",
+		Mobile:       "7014850582",
+		ButtonLink:   "https://example.com/<mobile>",
+	})
+	if err != nil {
+		t.Fatalf("zapcash utility payload: %v", err)
+	}
+
+	template, _ := payload["template"].(map[string]interface{})
+	language, _ := template["language"].(map[string]interface{})
+	if language["code"] != "en" {
+		t.Fatalf("ZapCash utility language = %v, want en", language["code"])
+	}
+
+	if _, hasHeader := componentType(payload, "header"); hasHeader {
+		t.Fatal("ZapCash utility template must not attach IMAGE header")
+	}
+}
+
 func componentType(payload map[string]interface{}, want string) (map[string]interface{}, bool) {
 	tmpl, _ := payload["template"].(map[string]interface{})
 	comps, _ := tmpl["components"].([]map[string]interface{})
