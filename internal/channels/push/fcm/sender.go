@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/wecredit/communication-sdk/sdk/utils"
 )
 
 const (
@@ -31,6 +33,15 @@ type SendResponse struct {
 	MessageID   string
 	ErrorStatus string
 	ErrorCode   string
+}
+
+type providerErrorDetail struct {
+	Type            string `json:"@type"`
+	ErrorCode       string `json:"errorCode"`
+	FieldViolations []struct {
+		Field       string `json:"field"`
+		Description string `json:"description"`
+	} `json:"fieldViolations"`
 }
 
 type Sender struct {
@@ -118,15 +129,16 @@ func (s *Sender) Send(ctx context.Context, client string, payload SendRequest) (
 			return result, PermanentAttemptError("FCM_ACCEPTANCE_UNKNOWN", fmt.Errorf("FCM success response omitted message name for client %q", strings.ToLower(strings.TrimSpace(client))))
 		}
 
+		logProviderResponse(client, result, "")
+
 		return result, nil
 	}
 
 	var failure struct {
 		Error struct {
-			Status  string `json:"status"`
-			Details []struct {
-				ErrorCode string `json:"errorCode"`
-			} `json:"details"`
+			Message string                `json:"message"`
+			Status  string                `json:"status"`
+			Details []providerErrorDetail `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(limitedBody, &failure); err == nil {
@@ -138,7 +150,42 @@ func (s *Sender) Send(ctx context.Context, client string, payload SendRequest) (
 				break
 			}
 		}
+		logProviderResponse(client, result, providerErrorSummary(failure.Error.Message, failure.Error.Details))
+	} else {
+		logProviderResponse(client, result, "unparseable response body")
 	}
 
 	return result, nil
+}
+
+// logProviderResponse records FCM's response metadata and diagnostic details
+// without logging the device token or the outbound message payload.
+func logProviderResponse(client string, response SendResponse, details string) {
+	utils.Info(fmt.Sprintf(
+		"FCM provider response client=%s http_status=%d status=%s error_code=%s message_id=%s details=%s",
+		sanitizeLogText(client),
+		response.HTTPStatus,
+		sanitizeLogText(response.ErrorStatus),
+		sanitizeLogText(response.ErrorCode),
+		sanitizeLogText(response.MessageID),
+		sanitizeLogText(details),
+	))
+}
+
+func providerErrorSummary(message string, details []providerErrorDetail) string {
+	parts := []string{strings.TrimSpace(message)}
+	for _, detail := range details {
+		for _, violation := range detail.FieldViolations {
+			parts = append(parts, strings.TrimSpace(violation.Field)+": "+strings.TrimSpace(violation.Description))
+		}
+	}
+	return strings.Trim(strings.Join(parts, " | "), " |")
+}
+
+func sanitizeLogText(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ").Replace(strings.TrimSpace(value))
+	if len(value) > 512 {
+		return value[:512]
+	}
+	return value
 }
