@@ -45,6 +45,22 @@ func TestConsumerQueueURLs(t *testing.T) {
 	}
 }
 
+func TestValidateConsumerQueueURLsRejectsZapCashLegacyCollision(t *testing.T) {
+	prev := config.Configs
+	t.Cleanup(func() { config.Configs = prev })
+
+	config.Configs.AwsQueueUrl = " https://sqs.example/shared "
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/shared"
+	if err := services.ValidateConsumerQueueURLs(); err == nil {
+		t.Fatal("accepted shared legacy and ZapCash queue URL")
+	}
+
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
+	if err := services.ValidateConsumerQueueURLs(); err != nil {
+		t.Fatalf("rejected distinct queue URLs: %v", err)
+	}
+}
+
 func TestMessageWrapperRetainsItsSourceQueue(t *testing.T) {
 	legacyQueue := "https://sqs.example/legacy"
 	zapCashQueue := "https://sqs.example/zapcash"

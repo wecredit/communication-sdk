@@ -110,6 +110,17 @@ func ConsumerQueueURLs() []string {
 	return urls
 }
 
+// ValidateConsumerQueueURLs rejects queue configurations whose distinct
+// message contracts cannot be determined from the received queue URL.
+func ValidateConsumerQueueURLs() error {
+	legacyQueueURL := strings.TrimSpace(config.Configs.AwsQueueUrl)
+	zapCashQueueURL := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
+	if legacyQueueURL != "" && legacyQueueURL == zapCashQueueURL {
+		return fmt.Errorf("AWS_ZAPCASH_QUEUE_URL must differ from AWS_QUEUE_URL")
+	}
+	return nil
+}
+
 func LoadWhatsappRedriveMaxReceiveCount(client sqsQueueAttributesAPI, queueURL string) (int, error) {
 	if client == nil {
 		return 0, fmt.Errorf("SQS client is not initialized")
@@ -220,6 +231,11 @@ func PrepareConsumerQueues(client sqsQueueAttributesAPI, queueURLs []string, wha
 // DeleteMessage targets the queue the message was received from.
 // AWS_ZAPCASH_QUEUE_URL (ZapCash SMS direct) when set.
 func ConsumerService(_ string) {
+	if err := ValidateConsumerQueueURLs(); err != nil {
+		utils.Error(err)
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -784,6 +800,9 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
 			data.Client, data.CommId, data.EventId, err))
 	}
+	// PUSH has per-token idempotency of its own. Release the outer ZapCash
+	// claim when no token was submitted or the message needs another attempt.
+	releaseZapCashClaimIfUnsent(data, queueURL, result.AckSQS && result.Submitted > 0)
 
 	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
 	// terminal output audits from Redis claims without calling FCM again.
