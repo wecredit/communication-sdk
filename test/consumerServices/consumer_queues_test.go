@@ -45,6 +45,42 @@ func TestConsumerQueueURLs(t *testing.T) {
 	}
 }
 
+func TestValidateConsumerQueueURLsRejectsZapCashLegacyCollision(t *testing.T) {
+	prev := config.Configs
+	t.Cleanup(func() { config.Configs = prev })
+
+	config.Configs.AwsQueueUrl = " https://sqs.example/shared "
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/shared"
+	if err := services.ValidateConsumerQueueURLs(); err == nil {
+		t.Fatal("accepted shared legacy and ZapCash queue URL")
+	}
+
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
+	if err := services.ValidateConsumerQueueURLs(); err != nil {
+		t.Fatalf("rejected distinct queue URLs: %v", err)
+	}
+}
+
+func TestMessageWrapperRetainsItsSourceQueue(t *testing.T) {
+	legacyQueue := "https://sqs.example/legacy"
+	zapCashQueue := "https://sqs.example/zapcash"
+
+	// A client's shared worker pool can receive work from both queues. Queue
+	// identity must travel with each message rather than being captured when
+	// the pool's first worker starts.
+	work := []services.MessageWrapper{
+		{QueueURL: legacyQueue},
+		{QueueURL: zapCashQueue},
+	}
+
+	if work[0].QueueURL != legacyQueue {
+		t.Fatalf("legacy work queue = %q, want %q", work[0].QueueURL, legacyQueue)
+	}
+	if work[1].QueueURL != zapCashQueue {
+		t.Fatalf("ZapCash work queue = %q, want %q", work[1].QueueURL, zapCashQueue)
+	}
+}
+
 type queueAttributesStub struct {
 	output *sqs.GetQueueAttributesOutput
 	err    error
