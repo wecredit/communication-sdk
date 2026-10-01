@@ -88,8 +88,6 @@ type Config struct {
 	// The gateway has a fixed 50-second timeout. Keep this lower so a timed-out
 	// transaction can roll back and return a structured response in time.
 	TemplateBulkImportTimeoutSeconds string `envconfig:"TEMPLATE_BULK_IMPORT_TIMEOUT_SECONDS" default:"45"`
-	TemplateBulkImportLockBudget     string `envconfig:"TEMPLATE_BULK_IMPORT_LOCK_BUDGET_SECONDS" default:"10"`
-	TemplateBulkImportBenchmark      string `envconfig:"TEMPLATE_BULK_IMPORT_BENCHMARK_ENABLED" default:"false"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
