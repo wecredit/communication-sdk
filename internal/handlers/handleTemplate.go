@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/middleware"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/apiServices"
@@ -154,6 +157,107 @@ func (h *TemplateHandler) AddTemplate(c *gin.Context) {
 	}
 
 	writeTemplateSuccess(c, http.StatusCreated, gin.H{"id": template.Id}, "Template created successfully", nil)
+}
+
+// BulkImportTemplates imports create-only template rows from a multipart CSV.
+func (h *TemplateHandler) BulkImportTemplates(c *gin.Context) {
+	dryRun := false
+	if raw := strings.TrimSpace(c.PostForm("dryRun")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", "dryRun must be true or false")
+			return
+		}
+		dryRun = parsed
+	}
+	file, _, err := c.Request.FormFile("file")
+	if err != nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_CSV", "file is required")
+		return
+	}
+	defer file.Close()
+	maxRows, maxBytes := services.BulkTemplateImportLimits()
+	rows, err := services.ParseBulkTemplateCSV(file, maxRows, maxBytes)
+	if err != nil {
+		writeBulkImportParseError(c, err)
+		return
+	}
+
+	for _, row := range rows {
+		if err := middleware.EnforceClientAccess(c, row.Template.Client); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeTemplateError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unable to read import file")
+		return
+	}
+
+	// Do not bind the database transaction to the browser/Postman connection.
+	// A client disconnect must not interrupt an already-started all-or-nothing
+	// import. The Gateway uses the same timeout, so normal requests still get a
+	// completed response instead of a 504 while the transaction is running.
+	timeoutSeconds, timeoutErr := strconv.Atoi(strings.TrimSpace(config.Configs.TemplateBulkImportTimeoutSeconds))
+	if timeoutErr != nil || timeoutSeconds <= 0 {
+		// Leave time for the gateway to receive the rollback/result before its
+		// fixed 50-second request deadline.
+		timeoutSeconds = 45
+	}
+	if timeoutSeconds > 45 {
+		timeoutSeconds = 45
+	}
+	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+	result, err := h.Service.BulkImportTemplates(operationCtx, file, dryRun, middleware.CommAdminUsername(c))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeTemplateError(c, http.StatusGatewayTimeout, "TEMPLATE_IMPORT_TIMEOUT", "template import timed out and was rolled back")
+			return
+		}
+		if strings.Contains(err.Error(), "header") || strings.Contains(err.Error(), "headers") {
+			writeTemplateError(c, http.StatusBadRequest, "INVALID_HEADERS", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "no valid rows") {
+			writeTemplateError(c, http.StatusBadRequest, "TEMPLATE_VALIDATION_FAILED", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "exceeds") || strings.Contains(err.Error(), "limit") {
+			writeTemplateError(c, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "busy") || strings.Contains(err.Error(), "1205") || strings.Contains(err.Error(), "1213") {
+			writeTemplateError(c, http.StatusServiceUnavailable, "TEMPLATE_IMPORT_BUSY", "template import is busy; retry the request")
+			return
+		}
+		if strings.Contains(err.Error(), "CSV") || strings.Contains(err.Error(), "decimal") || strings.Contains(err.Error(), "integer") {
+			writeTemplateError(c, http.StatusBadRequest, "INVALID_CSV", err.Error())
+			return
+		}
+		writeTemplateError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+		return
+	}
+	status := http.StatusOK
+	if !dryRun && result.FailedRows == 0 && result.InsertedRows == result.TotalRows {
+		status = http.StatusCreated
+	}
+	writeTemplateSuccess(c, status, result, fmt.Sprintf("%d of %d rows imported, %d failed", result.InsertedRows, result.TotalRows, result.FailedRows), nil)
+}
+
+func writeBulkImportParseError(c *gin.Context, err error) {
+	if strings.Contains(err.Error(), "header") || strings.Contains(err.Error(), "headers") {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_HEADERS", err.Error())
+		return
+	}
+
+	if strings.Contains(err.Error(), "exceeds") || strings.Contains(err.Error(), "limit") {
+		writeTemplateError(c, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+		return
+	}
+	
+	writeTemplateError(c, http.StatusBadRequest, "INVALID_CSV", err.Error())
 }
 
 func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {

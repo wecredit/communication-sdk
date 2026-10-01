@@ -1,6 +1,7 @@
 package apiServices
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -86,7 +87,10 @@ func OrderedStageConfigurationLockIdentities(identities ...string) []string {
 func releaseStageConfigurationLocks(conn *gorm.DB, locks []string) {
 	for i := len(locks) - 1; i >= 0; i-- {
 		var released sql.NullInt64
-		err := conn.Raw("SELECT RELEASE_LOCK(?)", locks[i]).Scan(&released).Error
+		// Release on the same pinned connection even when the operation context
+		// has expired; otherwise an import can leave advisory locks behind until
+		// the database connection is recycled.
+		err := conn.Session(&gorm.Session{Context: context.Background()}).Raw("SELECT RELEASE_LOCK(?)", locks[i]).Scan(&released).Error
 		if err != nil || !released.Valid || released.Int64 != 1 {
 			utils.Error(fmt.Errorf("stage configuration lock release failed (lock=%s released=%v value=%d): %v", locks[i], released.Valid, released.Int64, err))
 		}
