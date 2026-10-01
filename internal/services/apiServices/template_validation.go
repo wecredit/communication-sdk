@@ -200,21 +200,21 @@ func validateWeCreditSMSTemplate(template apiModels.Templatedetails) error {
 	if format != templatevars.TemplateFormatNamed {
 		return validateTemplateVariablePlaceholders(template.TemplateText, template.TemplateVariables)
 	}
-	
+
 	if strings.TrimSpace(template.TemplateVariables) != "" {
 		log.Printf("named SMS template ignores legacy TemplateVariables metadata: client=%s process=%s dltTemplateId=%d", template.Client, template.Process, template.DltTemplateId)
 	}
-	
+
 	for _, placeholder := range placeholders {
 		if placeholder.Original != "#"+placeholder.Name+"#" {
 			log.Printf("named SMS template variable is not canonical uppercase: original=%q canonical=%q client=%s process=%s dltTemplateId=%d", placeholder.Original, placeholder.Name, template.Client, template.Process, template.DltTemplateId)
 		}
-	
+
 		if !templatevars.IsSupportedNamedVariable(placeholder.Name) {
 			return fmt.Errorf("unsupported named SMS template variable %q; if this was not intended as a variable, remove the surrounding \"#\"", placeholder.Name)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -338,24 +338,26 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 	case ResolutionModeStage:
 		query = query.Where("Stage IS NOT NULL").Where("Process = ? AND Stage = ?", template.Process, *template.Stage)
 	case ResolutionModeReference:
-		query = query.Where("Stage IS NULL").Where("Process = ?", template.Process)
+		query = query.Where("Stage IS NULL").Where("LOWER(TRIM(Process)) = LOWER(TRIM(?))", template.Process)
 		switch template.Channel {
 		case "SMS":
 			query = query.Where("DltTemplateId = ?", template.DltTemplateId)
 		case "WHATSAPP":
 			// Active uniqueness includes AppId so one TemplateName can have multiple
 			// WABA apps (equal-distribution / throughput). Empty AppId matches empty.
-			query = query.Where("TemplateName = ?", template.TemplateName)
+			// Match the cache identity: both fields are case-insensitive and
+			// whitespace-insensitive, even with a case-sensitive DB collation.
+			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 
 			appID := strings.TrimSpace(template.AppId)
 			if appID == "" {
-				query = query.Where("(AppId IS NULL OR AppId = '')")
+				query = query.Where("(AppId IS NULL OR TRIM(AppId) = '')")
 			} else {
-				query = query.Where("AppId = ?", appID)
+				query = query.Where("LOWER(TRIM(AppId)) = LOWER(TRIM(?))", appID)
 			}
-			
+
 		case "RCS", "EMAIL", "PUSH":
-			query = query.Where("TemplateName = ?", template.TemplateName)
+			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 		}
 	}
 

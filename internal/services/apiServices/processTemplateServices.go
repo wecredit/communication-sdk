@@ -178,20 +178,8 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails, actor
 		}
 
 		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
-			if err := validateStagePrerequisites(tx, *template); err != nil {
+			if err := validateAndInsertTemplate(tx, template); err != nil {
 				return err
-			}
-
-			if err := validateCreateDuplicate(tx, *template); err != nil {
-				return err
-			}
-
-			if err := validateActiveUniqueness(tx, *template); err != nil {
-				return err
-			}
-
-			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Create(template).Error; err != nil {
-				return fmt.Errorf("create template: %w", err)
 			}
 
 			if !template.IsActive {
