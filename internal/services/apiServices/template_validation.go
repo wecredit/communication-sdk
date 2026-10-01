@@ -1,6 +1,7 @@
 package apiServices
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -37,6 +38,8 @@ var (
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
 	ErrTemplateStale      = errors.New("template changed while acquiring locks")
 )
+
+const templateWriteLockName = "comm-template-write"
 
 // normalizeTemplate normalizes the template
 func normalizeTemplate(template *apiModels.Templatedetails) {
@@ -432,6 +435,24 @@ func acquireCreateResolutionLock(db *gorm.DB, template apiModels.Templatedetails
 	return acquireNamedResolutionLock(db, template)
 }
 
+// acquireTemplateWriteLock serializes template writes across create, update,
+// delete, and bulk import. A bulk import consequently needs one shared lock,
+// not one advisory lock for every CSV row.
+func acquireTemplateWriteLock(db *gorm.DB) (string, error) {
+	var acquired int
+	if err := db.Raw("SELECT GET_LOCK(?, 10)", templateWriteLockName).Scan(&acquired).Error; err != nil {
+		return "", fmt.Errorf("acquire template write lock: %w", err)
+	}
+	if acquired != 1 {
+		return "", fmt.Errorf("%w: timed out waiting for template write lock", ErrTemplateBusy)
+	}
+	return templateWriteLockName, nil
+}
+
+func releaseTemplateWriteLock(db *gorm.DB, name string) {
+	releaseResolutionLock(db, name)
+}
+
 func acquireNamedResolutionLock(db *gorm.DB, template apiModels.Templatedetails) (string, error) {
 	name := resolutionLockName(template)
 	var acquired int
@@ -471,6 +492,8 @@ func releaseTemplateMutationLock(db *gorm.DB, name string) {
 func releaseResolutionLock(db *gorm.DB, name string) {
 	if name != "" {
 		var released int
-		_ = db.Raw("SELECT RELEASE_LOCK(?)", name).Scan(&released).Error
+		// The operation context may already have expired. Preserve the pinned
+		// connection but detach cancellation so the named lock is released.
+		_ = db.Session(&gorm.Session{Context: context.Background()}).Raw("SELECT RELEASE_LOCK(?)", name).Scan(&released).Error
 	}
 }

@@ -68,6 +68,12 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 	var activeInserted int
 	var invalidationVersion int64
 	err = s.WriteDB.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		writeLockName, writeLockErr := acquireTemplateWriteLock(conn)
+		if writeLockErr != nil {
+			return writeLockErr
+		}
+		defer releaseTemplateWriteLock(conn, writeLockName)
+
 		stageIdentities := make([]string, 0, len(valid))
 		for _, row := range valid {
 			identity, lockErr := templateStageLockIdentity(row.Template)
@@ -81,12 +87,6 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 			return lockErr
 		}
 		defer releaseStageConfigurationLocks(conn, stageLocks)
-		resolutionLocks := make([]string, 0, len(valid))
-		defer func() {
-			for i := len(resolutionLocks) - 1; i >= 0; i-- {
-				releaseResolutionLock(conn, resolutionLocks[i])
-			}
-		}()
 		return conn.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			validationIndex, indexErr := buildBulkValidationIndex(tx, valid)
 			if indexErr != nil {
@@ -100,12 +100,7 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 				t.UpdatedOn = &now
 				t.CreatedBy = actor
 				t.UpdatedBy = actor
-				resolutionLock, lockErr := acquireCreateResolutionLock(conn, t)
-				if lockErr != nil {
-					return lockErr
-				}
 				if err := validateBulkTemplateFromIndex(validationIndex, t); err != nil {
-					releaseResolutionLock(conn, resolutionLock)
 					if isBulkRowError(err) {
 						result.Errors = append(result.Errors, bulkRowError(row.Row, err))
 						continue
@@ -113,7 +108,6 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 					return err
 				}
 				validated = append(validated, t)
-				resolutionLocks = append(resolutionLocks, resolutionLock)
 			}
 			if len(validated) == 0 {
 				return errors.New("bulk import contains no valid rows")
