@@ -1,6 +1,7 @@
 package apiServices
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -37,6 +38,8 @@ var (
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
 	ErrTemplateStale      = errors.New("template changed while acquiring locks")
 )
+
+const templateWriteLockName = "comm-template-write"
 
 // normalizeTemplate normalizes the template
 func normalizeTemplate(template *apiModels.Templatedetails) {
@@ -200,21 +203,21 @@ func validateWeCreditSMSTemplate(template apiModels.Templatedetails) error {
 	if format != templatevars.TemplateFormatNamed {
 		return validateTemplateVariablePlaceholders(template.TemplateText, template.TemplateVariables)
 	}
-	
+
 	if strings.TrimSpace(template.TemplateVariables) != "" {
 		log.Printf("named SMS template ignores legacy TemplateVariables metadata: client=%s process=%s dltTemplateId=%d", template.Client, template.Process, template.DltTemplateId)
 	}
-	
+
 	for _, placeholder := range placeholders {
 		if placeholder.Original != "#"+placeholder.Name+"#" {
 			log.Printf("named SMS template variable is not canonical uppercase: original=%q canonical=%q client=%s process=%s dltTemplateId=%d", placeholder.Original, placeholder.Name, template.Client, template.Process, template.DltTemplateId)
 		}
-	
+
 		if !templatevars.IsSupportedNamedVariable(placeholder.Name) {
 			return fmt.Errorf("unsupported named SMS template variable %q; if this was not intended as a variable, remove the surrounding \"#\"", placeholder.Name)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -338,24 +341,26 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 	case ResolutionModeStage:
 		query = query.Where("Stage IS NOT NULL").Where("Process = ? AND Stage = ?", template.Process, *template.Stage)
 	case ResolutionModeReference:
-		query = query.Where("Stage IS NULL").Where("Process = ?", template.Process)
+		query = query.Where("Stage IS NULL").Where("LOWER(TRIM(Process)) = LOWER(TRIM(?))", template.Process)
 		switch template.Channel {
 		case "SMS":
 			query = query.Where("DltTemplateId = ?", template.DltTemplateId)
 		case "WHATSAPP":
 			// Active uniqueness includes AppId so one TemplateName can have multiple
 			// WABA apps (equal-distribution / throughput). Empty AppId matches empty.
-			query = query.Where("TemplateName = ?", template.TemplateName)
+			// Match the cache identity: both fields are case-insensitive and
+			// whitespace-insensitive, even with a case-sensitive DB collation.
+			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 
 			appID := strings.TrimSpace(template.AppId)
 			if appID == "" {
-				query = query.Where("(AppId IS NULL OR AppId = '')")
+				query = query.Where("(AppId IS NULL OR TRIM(AppId) = '')")
 			} else {
-				query = query.Where("AppId = ?", appID)
+				query = query.Where("LOWER(TRIM(AppId)) = LOWER(TRIM(?))", appID)
 			}
-			
+
 		case "RCS", "EMAIL", "PUSH":
-			query = query.Where("TemplateName = ?", template.TemplateName)
+			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 		}
 	}
 
@@ -430,6 +435,24 @@ func acquireCreateResolutionLock(db *gorm.DB, template apiModels.Templatedetails
 	return acquireNamedResolutionLock(db, template)
 }
 
+// acquireTemplateWriteLock serializes template writes across create, update,
+// delete, and bulk import. A bulk import consequently needs one shared lock,
+// not one advisory lock for every CSV row.
+func acquireTemplateWriteLock(db *gorm.DB) (string, error) {
+	var acquired int
+	if err := db.Raw("SELECT GET_LOCK(?, 10)", templateWriteLockName).Scan(&acquired).Error; err != nil {
+		return "", fmt.Errorf("acquire template write lock: %w", err)
+	}
+	if acquired != 1 {
+		return "", fmt.Errorf("%w: timed out waiting for template write lock", ErrTemplateBusy)
+	}
+	return templateWriteLockName, nil
+}
+
+func releaseTemplateWriteLock(db *gorm.DB, name string) {
+	releaseResolutionLock(db, name)
+}
+
 func acquireNamedResolutionLock(db *gorm.DB, template apiModels.Templatedetails) (string, error) {
 	name := resolutionLockName(template)
 	var acquired int
@@ -469,6 +492,8 @@ func releaseTemplateMutationLock(db *gorm.DB, name string) {
 func releaseResolutionLock(db *gorm.DB, name string) {
 	if name != "" {
 		var released int
-		_ = db.Raw("SELECT RELEASE_LOCK(?)", name).Scan(&released).Error
+		// The operation context may already have expired. Preserve the pinned
+		// connection but detach cancellation so the named lock is released.
+		_ = db.Session(&gorm.Session{Context: context.Background()}).Raw("SELECT RELEASE_LOCK(?)", name).Scan(&released).Error
 	}
 }

@@ -73,6 +73,9 @@ type CommApiRequestBody struct {
 	// Monitoring metadata is omitted for ordinary production payloads so their wire shape is unchanged.
 	IsMonitorCopy    bool   `json:"isMonitorCopy,omitempty" gorm:"-"`
 	MonitorVariantId string `json:"monitorVariantId,omitempty" gorm:"-"`
+	// CollectionSlot is optional so existing producers and consumers keep their
+	// current wire shape. Only the SDK's ZapCash afternoon RCS path uses it.
+	CollectionSlot string `json:"collectionSlot,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {

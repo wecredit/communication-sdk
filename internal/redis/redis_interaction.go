@@ -14,6 +14,33 @@ import (
 	"gorm.io/gorm"
 )
 
+// ClaimCollectionAfternoonKey reserves one ZapCash afternoon collection RCS
+// dispatch. It is a standalone Redis string so it never shares lifecycle with
+// the legacy COMM_IDEMPOTENT_KEY hash.
+func ClaimCollectionAfternoonKey(rdb *redis.Client, key, claimToken string, ttl time.Duration) (bool, error) {
+	claimed, err := rdb.SetNX(context.Background(), key, claimToken, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("claim collection afternoon key %s: %w", key, err)
+	}
+	return claimed, nil
+}
+
+// ReleaseCollectionAfternoonKey removes a claim only when it is still owned
+// by claimToken. This avoids deleting a later claimant after an expiry race.
+func ReleaseCollectionAfternoonKey(rdb *redis.Client, key, claimToken string) (bool, error) {
+	const script = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`
+	released, err := rdb.Eval(context.Background(), script, []string{key}, claimToken).Int()
+	if err != nil {
+		return false, fmt.Errorf("release collection afternoon key %s: %w", key, err)
+	}
+	return released == 1, nil
+}
+
 func GetPushClaimedAt(commIdempotentKey, redisKey string, rdb *redis.Client) (time.Time, bool, error) {
 	value, err := rdb.HGet(context.Background(), commIdempotentKey, redisKey).Result()
 	if err == redis.Nil {

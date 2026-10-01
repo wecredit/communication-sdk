@@ -98,6 +98,7 @@ func StartConsumer(port string) {
 		templates.GET("/", templateHandler.GetTemplates)
 		templates.GET("/processes", templateHandler.ListTemplateProcesses)
 		templates.POST("/add-template", templateHandler.AddTemplate)
+		templates.POST("/bulk-import", templateHandler.BulkImportTemplates)
 		templates.PUT("/id/:id", templateHandler.UpdateTemplateById)
 		templates.GET("/id/:id", templateHandler.GetTemplateByID)
 		templates.DELETE("/id/:id", templateHandler.DeleteTemplate)

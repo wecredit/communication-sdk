@@ -157,11 +157,18 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails, actor
 	var invalidationVersion int64
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
+		var writeLockName string
 		var stageLocks []string
 		defer func() {
 			releaseResolutionLock(conn, lockName)
 			releaseStageConfigurationLocks(conn, stageLocks)
+			releaseTemplateWriteLock(conn, writeLockName)
 		}()
+		var err error
+		writeLockName, err = acquireTemplateWriteLock(conn)
+		if err != nil {
+			return err
+		}
 
 		stageIdentity, err := templateStageLockIdentity(*template)
 		if err != nil {
@@ -178,20 +185,8 @@ func (s *TemplateService) AddTemplate(template *apiModels.Templatedetails, actor
 		}
 
 		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
-			if err := validateStagePrerequisites(tx, *template); err != nil {
+			if err := validateAndInsertTemplate(tx, template); err != nil {
 				return err
-			}
-
-			if err := validateCreateDuplicate(tx, *template); err != nil {
-				return err
-			}
-
-			if err := validateActiveUniqueness(tx, *template); err != nil {
-				return err
-			}
-
-			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Create(template).Error; err != nil {
-				return fmt.Errorf("create template: %w", err)
 			}
 
 			if !template.IsActive {
@@ -226,14 +221,20 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
 		var mutationLockName string
+		var writeLockName string
 		var stageLocks []string
 		defer func() {
 			releaseResolutionLock(conn, lockName)
 			releaseStageConfigurationLocks(conn, stageLocks)
 			releaseTemplateMutationLock(conn, mutationLockName)
+			releaseTemplateWriteLock(conn, writeLockName)
 		}()
 
 		var err error
+		writeLockName, err = acquireTemplateWriteLock(conn)
+		if err != nil {
+			return err
+		}
 		mutationLockName, err = acquireTemplateMutationLock(conn, id)
 		if err != nil {
 			return err
@@ -333,12 +334,18 @@ func (s *TemplateService) DeleteTemplate(id int) error {
 	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
 		var lockName string
 		var mutationLockName string
+		var writeLockName string
 		defer func() {
 			releaseResolutionLock(conn, lockName)
 			releaseTemplateMutationLock(conn, mutationLockName)
+			releaseTemplateWriteLock(conn, writeLockName)
 		}()
 
 		var err error
+		writeLockName, err = acquireTemplateWriteLock(conn)
+		if err != nil {
+			return err
+		}
 		mutationLockName, err = acquireTemplateMutationLock(conn, id)
 		if err != nil {
 			return err
