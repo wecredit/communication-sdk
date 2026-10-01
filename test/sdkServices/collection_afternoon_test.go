@@ -73,6 +73,22 @@ func TestCollectionAfternoonClaimRejectsDuplicateAndChecksReleaseToken(t *testin
 	}
 }
 
+func TestCollectionAfternoonClaimCanBeReclaimedAfterTTL(t *testing.T) {
+	redisClient, mini := testRedis(t)
+	defer mini.Close()
+	key := "zapcash:collection:rcs:afternoon:2026-10-01:9999999999:12"
+	const claimTTL = 36 * time.Hour
+	claimed, err := redisInteraction.ClaimCollectionAfternoonKey(redisClient, key, "owner-a", claimTTL)
+	if err != nil || !claimed {
+		t.Fatalf("first claim = (%t, %v), want (true, nil)", claimed, err)
+	}
+	mini.Advance(claimTTL + time.Second)
+	claimed, err = redisInteraction.ClaimCollectionAfternoonKey(redisClient, key, "owner-b", claimTTL)
+	if err != nil || !claimed {
+		t.Fatalf("claim after TTL = (%t, %v), want (true, nil)", claimed, err)
+	}
+}
+
 func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 	t.Run("claim retained after accepted enqueue and duplicate is rejected", func(t *testing.T) {
 		redisClient, mini := testRedis(t)
@@ -173,7 +189,9 @@ type testRedisServer struct {
 	listener net.Listener
 	mu       sync.Mutex
 	strings  map[string]string
+	expires  map[string]time.Time
 	hashes   map[string]map[string]string
+	now      time.Time
 }
 
 func newTestRedisServer(t *testing.T) *testRedisServer {
@@ -182,7 +200,7 @@ func newTestRedisServer(t *testing.T) *testRedisServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &testRedisServer{listener: listener, strings: make(map[string]string), hashes: make(map[string]map[string]string)}
+	s := &testRedisServer{listener: listener, strings: make(map[string]string), expires: make(map[string]time.Time), hashes: make(map[string]map[string]string), now: time.Now()}
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -201,8 +219,22 @@ func (s *testRedisServer) Close() { _ = s.listener.Close() }
 func (s *testRedisServer) Exists(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.expireIfNeeded(key)
 	_, ok := s.strings[key]
 	return ok
+}
+
+func (s *testRedisServer) Advance(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = s.now.Add(d)
+}
+
+func (s *testRedisServer) expireIfNeeded(key string) {
+	if expiration, ok := s.expires[key]; ok && !s.now.Before(expiration) {
+		delete(s.strings, key)
+		delete(s.expires, key)
+	}
 }
 
 func (s *testRedisServer) HKeys(key string) ([]string, error) {
@@ -227,16 +259,29 @@ func (s *testRedisServer) serve(conn net.Conn) {
 		s.mu.Lock()
 		switch strings.ToUpper(args[0]) {
 		case "SET":
+			s.expireIfNeeded(args[1])
 			if _, exists := s.strings[args[1]]; exists {
 				_, _ = w.WriteString("$-1\r\n")
 			} else {
 				s.strings[args[1]] = args[2]
+				for i := 3; i+1 < len(args); i += 2 {
+					switch strings.ToUpper(args[i]) {
+					case "EX":
+						seconds, _ := time.ParseDuration(args[i+1] + "s")
+						s.expires[args[1]] = s.now.Add(seconds)
+					case "PX":
+						milliseconds, _ := time.ParseDuration(args[i+1] + "ms")
+						s.expires[args[1]] = s.now.Add(milliseconds)
+					}
+				}
 				_, _ = w.WriteString("+OK\r\n")
 			}
 		case "EVAL":
 			key, token := args[3], args[4]
+			s.expireIfNeeded(key)
 			if s.strings[key] == token {
 				delete(s.strings, key)
+				delete(s.expires, key)
 				_, _ = w.WriteString(":1\r\n")
 			} else {
 				_, _ = w.WriteString(":0\r\n")
