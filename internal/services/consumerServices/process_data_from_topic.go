@@ -321,6 +321,11 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 			wg:      &sync.WaitGroup{},
 			workers: workerCount,
 		}
+		// Workers call receive immediately. Ensure their first select includes
+		// this channel; otherwise a worker scheduled before buffer creation can
+		// block forever on ctx.Done() and leave the queue poller back-pressured.
+		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
+		handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
 		clientHandlers[poolKey] = handler
 
 		for i := 0; i < handler.workers; i++ {
