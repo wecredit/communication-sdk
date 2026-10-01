@@ -43,6 +43,36 @@ func ResolveCommID(existing, clientName string) string {
 	return GenerateCommID(clientName)
 }
 
+const collectionAfternoonClaimTTL = 36 * time.Hour
+
+// ValidateCollectionAfternoonRequest validates the only tagged request shape
+// that may bypass the legacy SDK idempotency hash.
+func ValidateCollectionAfternoonRequest(data sdkModels.CommApiRequestBody) (bool, int, error) {
+	slot := strings.TrimSpace(data.CollectionSlot)
+	if slot == "" {
+		return false, 0, nil
+	}
+
+	wholeStage := int(data.Stage)
+	if slot != "afternoon" || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") ||
+		!strings.EqualFold(strings.TrimSpace(data.Channel), variables.RCS) ||
+		(wholeStage != 11 && wholeStage != 12) {
+		return false, 0, fmt.Errorf("invalid collectionSlot request")
+	}
+
+	return true, wholeStage, nil
+}
+
+// CollectionAfternoonClaimKey returns the standalone IST-date claim key.
+func CollectionAfternoonClaimKey(now time.Time, mobile string, wholeStage int) string {
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		ist = time.FixedZone("IST", 5*60*60+30*60)
+	}
+
+	return fmt.Sprintf("zapcash:collection:rcs:afternoon:%s:%s:%d", now.In(ist).Format("2006-01-02"), strings.TrimSpace(mobile), wholeStage)
+}
+
 func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn, queueURL string, redisClient *redis.Client) (sdkModels.CommApiResponseBody, error) {
 	isValidate, message := sdkHelper.ValidateCommRequest(*data)
 
@@ -55,6 +85,10 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	data.Mobile = strings.TrimSpace(data.Mobile)
 	data.Email = strings.TrimSpace(data.Email)
 	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
+
+	if strings.TrimSpace(data.CollectionSlot) != "" {
+		return processCollectionAfternoon(data, snsClient, topicArn, queueURL, redisClient)
+	}
 
 	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)
 	exists, transactionId, errorMessage, err := redisInteraction.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redisClient)
@@ -273,6 +307,109 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 
 func shouldWriteInputAudit() bool {
 	return database.DBtechWrite != nil
+}
+
+func processCollectionAfternoon(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn, queueURL string, redisClient *redis.Client) (response sdkModels.CommApiResponseBody, returnErr error) {
+	valid, wholeStage, err := ValidateCollectionAfternoonRequest(*data)
+	if err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, err
+	}
+	if !valid {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("collectionSlot is required")
+	}
+
+	claimKey := CollectionAfternoonClaimKey(time.Now(), data.Mobile, wholeStage)
+	claimToken := uuid.NewString()
+	claimed, err := redisInteraction.ClaimCollectionAfternoonKey(redisClient, claimKey, claimToken, collectionAfternoonClaimTTL)
+	if err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, err
+	}
+	if !claimed {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("data already exists in output table for mobile: %s and channel: %s, redisKey: %s", data.Mobile, data.Channel, claimKey)
+	}
+
+	campaignClaimed := false
+	accepted := false
+	defer func() {
+		if returnErr == nil || accepted {
+			return
+		}
+		if campaignClaimed {
+			if releaseErr := redisInteraction.ReleaseMarketingCampaignDedupKey(redisClient, channelHelper.GenerateMarketingCampaignDedupKey(*data)); releaseErr != nil {
+				utils.Error(fmt.Errorf("failed to rollback campaign dedup key event_id=%s: %v", strings.TrimSpace(data.EventId), releaseErr))
+			}
+		}
+		if released, releaseErr := redisInteraction.ReleaseCollectionAfternoonKey(redisClient, claimKey, claimToken); releaseErr != nil {
+			utils.Error(fmt.Errorf("failed to rollback collection afternoon claim redisKey=%s: %v", claimKey, releaseErr))
+		} else if !released {
+			utils.Error(fmt.Errorf("collection afternoon claim was not released redisKey=%s", claimKey))
+		}
+	}()
+
+	if channelHelper.IsMarketingCampaignRequest(*data) {
+		campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(*data)
+		claimed, claimErr := redisInteraction.ClaimMarketingCampaignDedupKey(redisClient, campaignKey, strings.TrimSpace(data.EventId))
+		if claimErr != nil {
+			return sdkModels.CommApiResponseBody{Success: false}, claimErr
+		}
+		if !claimed {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("campaign duplicate: channel %s process %s event_id %s already sent today", data.Channel, strings.ToLower(strings.TrimSpace(data.ProcessName)), strings.TrimSpace(data.EventId))
+		}
+		campaignClaimed = true
+	}
+
+	data.CommId = ResolveCommID(data.CommId, data.Client)
+	subject := variables.NonPriority
+	if data.IsPriority {
+		subject = variables.Priority
+	}
+	data.AzureIdempotencyKey = fmt.Sprintf("%s_%s", strings.ToLower(data.ProcessName), strings.ToLower(data.Description))
+
+	dbMappedData, err := dbservices.MapIntoDbModel(data)
+	if err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, err
+	}
+	if data.Channel == variables.Email {
+		delete(dbMappedData, "Mobile")
+		dbMappedData["Email"] = data.Email
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to serialize data for mobile %s: %w", data.Mobile, err)
+	}
+	var dataMap map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &dataMap); err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("failed to convert data to map for mobile %s: %w", data.Mobile, err)
+	}
+
+	genericAuditChannel := strings.EqualFold(data.Channel, variables.SMS) || strings.EqualFold(data.Channel, variables.RCS) || strings.EqualFold(data.Channel, variables.Email)
+	inputTableName := strings.TrimSpace(data.InputTableName)
+	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
+	}
+
+	queueURL = strings.TrimSpace(queueURL)
+	topicArn = strings.TrimSpace(topicArn)
+	if queueURL != "" {
+		if queue.SQSClient == nil {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("SQS client is not initialized for direct enqueue")
+		}
+		if err := queue.SendMessageToSqsQueue(queue.SQSClient, dataMap, queueURL, subject); err != nil {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to SQS for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
+		}
+	} else if err := queue.SendMessageToAwsQueue(snsClient, dataMap, topicArn, subject); err != nil {
+		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error occurred while sending data to queue for mobile %s and channel %s: %w", data.Mobile, data.Channel, err)
+	}
+	accepted = true
+
+	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel {
+		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
+			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s after publish: %w", inputTableName, err)
+		}
+	}
+
+	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
 }
 
 func isConfiguredInputTable(channel, tableName string) bool {
