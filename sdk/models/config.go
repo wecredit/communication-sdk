@@ -83,6 +83,11 @@ type Config struct {
 	CommSuperAdminRoles             string `envconfig:"COMM_SUPER_ADMIN_ROLES" default:"marketing"`
 	CommClientRolePrefix            string `envconfig:"COMM_CLIENT_ROLE_PREFIX" default:"marketing_"`
 	CommIdentitySecret              string `envconfig:"COMM_IDENTITY_SECRET"`
+	TemplateBulkImportMaxRows       string `envconfig:"TEMPLATE_BULK_IMPORT_MAX_ROWS" default:"2000"`
+	TemplateBulkImportMaxBytes      string `envconfig:"TEMPLATE_BULK_IMPORT_MAX_BYTES" default:"5242880"`
+	// The gateway has a fixed 50-second timeout. Keep this lower so a timed-out
+	// transaction can roll back and return a structured response in time.
+	TemplateBulkImportTimeoutSeconds string `envconfig:"TEMPLATE_BULK_IMPORT_TIMEOUT_SECONDS" default:"45"`
 
 	CreditSeaWhatsappCurrentCount string `envconfig:"CREDITSEA_WHATSAPP_CURRENT_COUNT"`
 	CreditSeaWhatsappMaxCount     string `envconfig:"CREDITSEA_WHATSAPP_MAX_COUNT"`
