@@ -103,6 +103,11 @@ func ParseBulkTemplateCSV(r io.Reader, maxRows int, maxBytes int64) ([]BulkTempl
 		if len(record) > 0 {
 			physicalRow, _ = cr.FieldPos(0)
 		}
+
+		if len(record) > len(headers) {
+			return nil, fmt.Errorf("row %d: expected at most %d columns, got %d", physicalRow, len(headers), len(record))
+		}
+
 		if len(record) < len(headers) {
 			record = append(record, make([]string, len(headers)-len(record))...)
 		}

@@ -49,3 +49,10 @@ func TestParseBulkTemplateCSVDefaultsIsActiveToTrue(t *testing.T) {
 		t.Fatal("expected Is Active to default to true")
 	}
 }
+
+func TestParseBulkTemplateCSVRejectsExtraFields(t *testing.T) {
+	_, err := services.ParseBulkTemplateCSV(strings.NewReader("Client,Channel,Process,Vendor\na,SMS,p,v,unexpected\n"), 2000, 5*1024*1024)
+	if err == nil || !strings.Contains(err.Error(), "expected at most 4 columns, got 5") {
+		t.Fatalf("expected extra-field error, got %v", err)
+	}
+}
