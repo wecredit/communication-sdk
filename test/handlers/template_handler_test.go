@@ -1,7 +1,9 @@
 package handlers_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,6 +155,34 @@ func TestAddTemplateRejectsMultipleJSONValues(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 	}
+}
+
+func TestBulkImportTemplatesRejectsRowsOutsideAdminScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("file", "templates.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = file.Write([]byte("Client,Channel,Process,Vendor\nzapcash,SMS,MARKETING,PINNACLE\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/templates/bulk-import", &body)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	middleware.SetCommAdminScope(context, middleware.CommAdminScope{AllowedClients: []string{"wecredit"}})
+
+	handler := handlers.NewTemplateHandler(nil)
+	handler.BulkImportTemplates(context)
+
+	assertTemplateError(t, recorder, http.StatusForbidden, "FORBIDDEN")
 }
 
 func newTemplateContext(target string) (*gin.Context, *httptest.ResponseRecorder) {

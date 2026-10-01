@@ -16,14 +16,7 @@ import (
 )
 
 func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, dryRun bool, actor string) (*BulkTemplateImportResult, error) {
-	maxRows, _ := strconv.Atoi(config.Configs.TemplateBulkImportMaxRows)
-	if maxRows <= 0 {
-		maxRows = 2000
-	}
-	maxBytes, _ := strconv.ParseInt(config.Configs.TemplateBulkImportMaxBytes, 10, 64)
-	if maxBytes <= 0 {
-		maxBytes = 5 * 1024 * 1024
-	}
+	maxRows, maxBytes := BulkTemplateImportLimits()
 	rows, err := ParseBulkTemplateCSV(r, maxRows, maxBytes)
 	if err != nil {
 		return nil, err
@@ -142,6 +135,22 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 		publishTemplateInvalidation(invalidationVersion)
 	}
 	return result, nil
+}
+
+// BulkTemplateImportLimits returns the parser limits shared by import preflight
+// validation and the database import.
+func BulkTemplateImportLimits() (int, int64) {
+	maxRows, _ := strconv.Atoi(config.Configs.TemplateBulkImportMaxRows)
+	if maxRows <= 0 {
+		maxRows = 2000
+	}
+
+	maxBytes, _ := strconv.ParseInt(config.Configs.TemplateBulkImportMaxBytes, 10, 64)
+	if maxBytes <= 0 {
+		maxBytes = 5 * 1024 * 1024
+	}
+	
+	return maxRows, maxBytes
 }
 
 // bulkValidationIndex keeps the expensive duplicate, active-conflict, and

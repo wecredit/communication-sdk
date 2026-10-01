@@ -176,6 +176,25 @@ func (h *TemplateHandler) BulkImportTemplates(c *gin.Context) {
 		return
 	}
 	defer file.Close()
+	maxRows, maxBytes := services.BulkTemplateImportLimits()
+	rows, err := services.ParseBulkTemplateCSV(file, maxRows, maxBytes)
+	if err != nil {
+		writeBulkImportParseError(c, err)
+		return
+	}
+
+	for _, row := range rows {
+		if err := middleware.EnforceClientAccess(c, row.Template.Client); err != nil {
+			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+			return
+		}
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeTemplateError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "unable to read import file")
+		return
+	}
+
 	// Do not bind the database transaction to the browser/Postman connection.
 	// A client disconnect must not interrupt an already-started all-or-nothing
 	// import. The Gateway uses the same timeout, so normal requests still get a
@@ -225,6 +244,20 @@ func (h *TemplateHandler) BulkImportTemplates(c *gin.Context) {
 		status = http.StatusCreated
 	}
 	writeTemplateSuccess(c, status, result, fmt.Sprintf("%d of %d rows imported, %d failed", result.InsertedRows, result.TotalRows, result.FailedRows), nil)
+}
+
+func writeBulkImportParseError(c *gin.Context, err error) {
+	if strings.Contains(err.Error(), "header") || strings.Contains(err.Error(), "headers") {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_HEADERS", err.Error())
+		return
+	}
+
+	if strings.Contains(err.Error(), "exceeds") || strings.Contains(err.Error(), "limit") {
+		writeTemplateError(c, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
+		return
+	}
+	
+	writeTemplateError(c, http.StatusBadRequest, "INVALID_CSV", err.Error())
 }
 
 func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
