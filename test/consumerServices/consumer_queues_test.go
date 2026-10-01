@@ -45,6 +45,26 @@ func TestConsumerQueueURLs(t *testing.T) {
 	}
 }
 
+func TestMessageWrapperRetainsItsSourceQueue(t *testing.T) {
+	legacyQueue := "https://sqs.example/legacy"
+	zapCashQueue := "https://sqs.example/zapcash"
+
+	// A client's shared worker pool can receive work from both queues. Queue
+	// identity must travel with each message rather than being captured when
+	// the pool's first worker starts.
+	work := []services.MessageWrapper{
+		{QueueURL: legacyQueue},
+		{QueueURL: zapCashQueue},
+	}
+
+	if work[0].QueueURL != legacyQueue {
+		t.Fatalf("legacy work queue = %q, want %q", work[0].QueueURL, legacyQueue)
+	}
+	if work[1].QueueURL != zapCashQueue {
+		t.Fatalf("ZapCash work queue = %q, want %q", work[1].QueueURL, zapCashQueue)
+	}
+}
+
 type queueAttributesStub struct {
 	output *sqs.GetQueueAttributesOutput
 	err    error
