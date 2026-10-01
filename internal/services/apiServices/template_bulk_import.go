@@ -52,6 +52,18 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 	result.ValidRows = len(valid)
 	result.FailedRows = len(result.Errors)
 	if dryRun {
+		validationIndex, indexErr := buildBulkValidationIndex(s.WriteDB.WithContext(ctx), valid)
+		if indexErr != nil {
+			return nil, indexErr
+		}
+
+		validated, validationErr := validateBulkRows(validationIndex, valid, result)
+		if validationErr != nil {
+			return nil, validationErr
+		}
+
+		result.ValidRows = len(validated)
+		result.FailedRows = len(result.Errors)
 		return result, nil
 	}
 	if len(valid) == 0 {
@@ -85,21 +97,20 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 			if indexErr != nil {
 				return indexErr
 			}
-			validated := make([]apiModels.Templatedetails, 0, len(valid))
-			for _, row := range valid {
+
+			validatedRows, validationErr := validateBulkRows(validationIndex, valid, result)
+			if validationErr != nil {
+				return validationErr
+			}
+
+			validated := make([]apiModels.Templatedetails, 0, len(validatedRows))
+			for _, row := range validatedRows {
 				t := row.Template
 				now := adminNow()
 				t.CreatedOn = now
 				t.UpdatedOn = &now
 				t.CreatedBy = actor
 				t.UpdatedBy = actor
-				if err := validateBulkTemplateFromIndex(validationIndex, t); err != nil {
-					if isBulkRowError(err) {
-						result.Errors = append(result.Errors, bulkRowError(row.Row, err))
-						continue
-					}
-					return err
-				}
 				validated = append(validated, t)
 			}
 			if len(validated) == 0 {
@@ -149,7 +160,7 @@ func BulkTemplateImportLimits() (int, int64) {
 	if maxBytes <= 0 {
 		maxBytes = 5 * 1024 * 1024
 	}
-	
+
 	return maxRows, maxBytes
 }
 
@@ -268,6 +279,24 @@ func validateBulkTemplateFromIndex(index *bulkValidationIndex, template apiModel
 		}
 	}
 	return nil
+}
+
+func validateBulkRows(index *bulkValidationIndex, rows []BulkTemplateRow, result *BulkTemplateImportResult) ([]BulkTemplateRow, error) {
+	validated := make([]BulkTemplateRow, 0, len(rows))
+	for _, row := range rows {
+		if err := validateBulkTemplateFromIndex(index, row.Template); err != nil {
+			if isBulkRowError(err) {
+				result.Errors = append(result.Errors, bulkRowError(row.Row, err))
+				continue
+			}
+
+			return nil, err
+		}
+
+		validated = append(validated, row)
+	}
+
+	return validated, nil
 }
 
 func validateAndInsertTemplate(tx *gorm.DB, template *apiModels.Templatedetails) error {
