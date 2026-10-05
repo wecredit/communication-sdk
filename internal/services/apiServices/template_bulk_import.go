@@ -34,11 +34,11 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 		}
 		identity := bulkTemplateIdentity(t)
 		if prior, ok := identities[identity]; ok {
-			result.Errors = append(result.Errors, BulkTemplateError{Row: row.Row, Code: "TEMPLATE_DUPLICATE", Message: fmt.Sprintf("duplicates row %d", prior), Field: "Template Name"})
+			result.Errors = append(result.Errors, BulkTemplateError{Row: row.Row, Code: "TEMPLATE_DUPLICATE", Message: fmt.Sprintf("duplicates row %d", prior)})
 			continue
 		}
 		if t.IsActive {
-			activeIdentity := bulkActiveIdentity(t)
+			activeIdentity := BulkActiveIdentity(t)
 			if prior, ok := activeIdentities[activeIdentity]; ok {
 				result.Errors = append(result.Errors, BulkTemplateError{Row: row.Row, Code: "TEMPLATE_CONFLICT", Message: fmt.Sprintf("active template conflicts with row %d", prior)})
 				continue
@@ -226,7 +226,7 @@ func buildBulkValidationIndex(tx *gorm.DB, rows []BulkTemplateRow) (*bulkValidat
 			normalizeTemplate(&template)
 			index.duplicates[bulkTemplateIdentity(template)] = template.Id
 			if template.IsActive {
-				index.active[bulkActiveIdentity(template)] = struct{}{}
+				index.active[BulkActiveIdentity(template)] = struct{}{}
 			}
 		}
 	}
@@ -274,7 +274,7 @@ func validateBulkTemplateFromIndex(index *bulkValidationIndex, template apiModel
 		return fmt.Errorf("%w: template id %d", ErrTemplateDuplicate, existingID)
 	}
 	if template.IsActive {
-		if _, ok := index.active[bulkActiveIdentity(template)]; ok {
+		if _, ok := index.active[BulkActiveIdentity(template)]; ok {
 			return ErrTemplateConflict
 		}
 	}
@@ -350,7 +350,9 @@ func bulkTemplateIdentity(t apiModels.Templatedetails) string {
 	}, "\x00")
 }
 
-func bulkActiveIdentity(t apiModels.Templatedetails) string {
+// BulkActiveIdentity mirrors validateActiveUniqueness resolution keys so bulk
+// prefetch/in-file conflict checks stay aligned with single-template create.
+func BulkActiveIdentity(t apiModels.Templatedetails) string {
 	key := fmt.Sprintf("%s|%s|%s|%s|",
 		strings.ToLower(strings.TrimSpace(t.Client)),
 		strings.ToUpper(strings.TrimSpace(t.Channel)),
@@ -362,5 +364,10 @@ func bulkActiveIdentity(t apiModels.Templatedetails) string {
 	if t.Channel == "SMS" {
 		return key + "reference|" + strconv.FormatInt(t.DltTemplateId, 10)
 	}
-	return key + "reference|" + strings.ToLower(strings.TrimSpace(t.TemplateName)) + "|" + strings.ToLower(strings.TrimSpace(t.AppId))
+	// WhatsApp active uniqueness includes AppId so one TemplateName can span WABA apps.
+	if t.Channel == "WHATSAPP" {
+		return key + "reference|" + strings.ToLower(strings.TrimSpace(t.TemplateName)) + "|" + strings.ToLower(strings.TrimSpace(t.AppId))
+	}
+	// RCS, EMAIL, and PUSH resolve active uniqueness on TemplateName only.
+	return key + "reference|" + strings.ToLower(strings.TrimSpace(t.TemplateName))
 }

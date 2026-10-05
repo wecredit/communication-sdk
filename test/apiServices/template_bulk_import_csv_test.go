@@ -56,3 +56,28 @@ func TestParseBulkTemplateCSVRejectsExtraFields(t *testing.T) {
 		t.Fatalf("expected extra-field error, got %v", err)
 	}
 }
+
+func TestParseBulkTemplateCSVNormalizesWhatsAppProviderCategory(t *testing.T) {
+	for _, input := range []string{"MARKETING", "marketing", "Marketing", "UTILITY", "utility", "Utility"} {
+		csv := "Client,Channel,Process,Vendor,Template Name,Provider Template Category\n" +
+			"wecredit,WHATSAPP,MARKETING,TIMES,tpl_a," + input + "\n"
+		rows, err := services.ParseBulkTemplateCSV(strings.NewReader(csv), 2000, 5*1024*1024)
+		if err != nil {
+			t.Fatalf("category %q: %v", input, err)
+		}
+		want := strings.ToUpper(input)
+		if rows[0].Template.ProviderTemplateCategory != want {
+			t.Fatalf("category %q stored as %q, want %q", input, rows[0].Template.ProviderTemplateCategory, want)
+		}
+	}
+}
+
+func TestParseBulkTemplateCSVRejectsInvalidWhatsAppProviderCategory(t *testing.T) {
+	csv := "Client,Channel,Process,Vendor,Template Name,Provider Template Category\n" +
+		"wecredit,WHATSAPP,MARKETING,TIMES,tpl_a,SERVICE\n"
+	_, err := services.ParseBulkTemplateCSV(strings.NewReader(csv), 2000, 5*1024*1024)
+	if err == nil || !strings.Contains(err.Error(), "MARKETING or UTILITY") {
+		t.Fatalf("expected provider category error, got %v", err)
+	}
+}
+
