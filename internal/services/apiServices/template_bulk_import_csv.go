@@ -136,9 +136,11 @@ func ParseBulkTemplateCSV(r io.Reader, maxRows int, maxBytes int64) ([]BulkTempl
 		if _, hasActive := seen["IsActive"]; !hasActive {
 			t.IsActive = true
 		}
-		if t.Channel == "WHATSAPP" && t.ProviderTemplateCategory != "" && t.ProviderTemplateCategory != "Marketing" && t.ProviderTemplateCategory != "Utility" {
-			return nil, fmt.Errorf("row %d: Provider Template Category must be Marketing or Utility for WhatsApp", physicalRow)
+		category, categoryErr := normalizeWhatsAppProviderTemplateCategory(t.Channel, t.ProviderTemplateCategory)
+		if categoryErr != nil {
+			return nil, fmt.Errorf("row %d: %w", physicalRow, categoryErr)
 		}
+		t.ProviderTemplateCategory = category
 		if t.Channel == "WHATSAPP" && t.LanguageCode != "" && t.LanguageCode != "en" && t.LanguageCode != "en_US" {
 			return nil, fmt.Errorf("row %d: Language Code must be en or en_US for WhatsApp", physicalRow)
 		}
@@ -243,6 +245,26 @@ func parseBulkBool(v string) (bool, error) {
 		return false, fmt.Errorf("Is Active must be true or false")
 	}
 }
+
+// normalizeWhatsAppProviderTemplateCategory accepts the create-form values
+// MARKETING/UTILITY (case-insensitive) and stores the uppercase form used by
+// the WhatsApp dashboard handoff and category sync.
+func normalizeWhatsAppProviderTemplateCategory(channel, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || channel != "WHATSAPP" {
+		return value, nil
+	}
+	switch strings.ToUpper(value) {
+	case "MARKETING":
+		return "MARKETING", nil
+	case "UTILITY":
+		return "UTILITY", nil
+	default:
+		return "", fmt.Errorf("Provider Template Category must be MARKETING or UTILITY for WhatsApp")
+	}
+}
+
+
 func parseBulkStage(v string) (float64, error) {
 	v = strings.TrimSpace(v)
 	if strings.HasPrefix(v, "-") {
