@@ -812,17 +812,22 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
 			data.Client, data.CommId, data.EventId, err))
 	}
-	// PUSH has per-token idempotency of its own. Release the outer ZapCash
-	// claim when no token was submitted or the message needs another attempt.
-	releaseZapCashClaimIfUnsent(data, queueURL, result.AckSQS && result.Submitted > 0)
 
 	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
 	// terminal output audits from Redis claims without calling FCM again.
+	// Keep the outer ZapCash claim only after audits succeed; otherwise a retry
+	// would see the EventId claim, treat the message as a duplicate, and drop
+	// it before audits can be repaired.
 	if auditErr := writePushAudits(result); auditErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
 			data.Client, data.CommId, data.EventId, auditErr))
+		releaseZapCashClaimIfUnsent(data, queueURL, false)
 		return false, false
 	}
+
+	// PUSH has per-token idempotency of its own. Release the outer ZapCash
+	// claim when no token was submitted or the message needs another attempt.
+	releaseZapCashClaimIfUnsent(data, queueURL, result.AckSQS && result.Submitted > 0)
 
 	if !result.AckSQS {
 		return result.Processed, false
