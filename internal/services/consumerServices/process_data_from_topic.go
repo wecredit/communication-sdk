@@ -113,10 +113,22 @@ func ConsumerQueueURLs() []string {
 // ValidateConsumerQueueURLs rejects queue configurations whose distinct
 // message contracts cannot be determined from the received queue URL.
 func ValidateConsumerQueueURLs() error {
-	legacyQueueURL := strings.TrimSpace(config.Configs.AwsQueueUrl)
 	zapCashQueueURL := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
-	if legacyQueueURL != "" && legacyQueueURL == zapCashQueueURL {
-		return fmt.Errorf("AWS_ZAPCASH_QUEUE_URL must differ from AWS_QUEUE_URL")
+	if zapCashQueueURL == "" {
+		return nil
+	}
+	for _, collision := range []struct {
+		envName string
+		url     string
+	}{
+		{"AWS_QUEUE_URL", config.Configs.AwsQueueUrl},
+		{"AWS_WECREDIT_SMS_QUEUE_URL", config.Configs.AwsWeCreditSmsQueueUrl},
+		{"AWS_WECREDIT_WHATSAPP_QUEUE_URL", config.Configs.AwsWeCreditWhatsappQueueUrl},
+	} {
+		other := strings.TrimSpace(collision.url)
+		if other != "" && other == zapCashQueueURL {
+			return fmt.Errorf("AWS_ZAPCASH_QUEUE_URL must differ from %s", collision.envName)
+		}
 	}
 	return nil
 }

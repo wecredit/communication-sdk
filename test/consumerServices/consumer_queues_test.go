@@ -49,12 +49,48 @@ func TestValidateConsumerQueueURLsRejectsZapCashLegacyCollision(t *testing.T) {
 	prev := config.Configs
 	t.Cleanup(func() { config.Configs = prev })
 
-	config.Configs.AwsQueueUrl = " https://sqs.example/shared "
-	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/shared"
-	if err := services.ValidateConsumerQueueURLs(); err == nil {
-		t.Fatal("accepted shared legacy and ZapCash queue URL")
+	shared := "https://sqs.example/shared"
+	for _, tc := range []struct {
+		name string
+		set  func()
+	}{
+		{
+			name: "legacy queue",
+			set: func() {
+				config.Configs.AwsQueueUrl = " " + shared + " "
+				config.Configs.AwsWeCreditSmsQueueUrl = ""
+				config.Configs.AwsWeCreditWhatsappQueueUrl = ""
+			},
+		},
+		{
+			name: "WeCredit SMS queue",
+			set: func() {
+				config.Configs.AwsQueueUrl = ""
+				config.Configs.AwsWeCreditSmsQueueUrl = shared
+				config.Configs.AwsWeCreditWhatsappQueueUrl = ""
+			},
+		},
+		{
+			name: "WeCredit WhatsApp queue",
+			set: func() {
+				config.Configs.AwsQueueUrl = ""
+				config.Configs.AwsWeCreditSmsQueueUrl = ""
+				config.Configs.AwsWeCreditWhatsappQueueUrl = shared
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config.Configs.AwsZapCashQueueUrl = shared
+			tc.set()
+			if err := services.ValidateConsumerQueueURLs(); err == nil {
+				t.Fatal("accepted shared consumer and ZapCash queue URL")
+			}
+		})
 	}
 
+	config.Configs.AwsQueueUrl = "https://sqs.example/legacy"
+	config.Configs.AwsWeCreditSmsQueueUrl = "https://sqs.example/sms"
+	config.Configs.AwsWeCreditWhatsappQueueUrl = "https://sqs.example/whatsapp"
 	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
 	if err := services.ValidateConsumerQueueURLs(); err != nil {
 		t.Fatalf("rejected distinct queue URLs: %v", err)
