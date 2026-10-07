@@ -53,6 +53,7 @@ func TestNonMarketingSMSIsUnaffected(t *testing.T) {
 }
 
 func TestRateLimitCrossingCutoffRequiresSecondDecision(t *testing.T) {
+	smspolicy.ConfigureCutoffBypass(false, "dev")
 	early := smspolicy.Evaluate("marketing", 42, "SMS", "2026-08-23", istTime(t, "2026-08-23 19:59:59"))
 	if !early.Allowed() {
 		t.Fatalf("early decision = %s, want allowed", early.Code)
@@ -60,5 +61,23 @@ func TestRateLimitCrossingCutoffRequiresSecondDecision(t *testing.T) {
 	final := smspolicy.Evaluate("marketing", 42, "SMS", "2026-08-23", istTime(t, "2026-08-23 20:00:01"))
 	if final.Code != smspolicy.DecisionCutoff {
 		t.Fatalf("final decision = %s, want cutoff", final.Code)
+	}
+}
+
+func TestCutoffBypassStagingOnly(t *testing.T) {
+	t.Cleanup(func() {
+		smspolicy.ConfigureCutoffBypass(false, "dev")
+	})
+
+	smspolicy.ConfigureCutoffBypass(true, "staging")
+	got := smspolicy.Evaluate("marketing", 42, "SMS", "2026-08-23", istTime(t, "2026-08-23 20:00:01"))
+	if !got.Allowed() {
+		t.Fatalf("staging bypass decision = %s, want allowed", got.Code)
+	}
+
+	smspolicy.ConfigureCutoffBypass(true, "production")
+	got = smspolicy.Evaluate("marketing", 42, "SMS", "2026-08-23", istTime(t, "2026-08-23 20:00:01"))
+	if got.Code != smspolicy.DecisionCutoff {
+		t.Fatalf("prod refused bypass decision = %s, want cutoff", got.Code)
 	}
 }

@@ -76,7 +76,24 @@ type clientRoutine struct {
 var (
 	clientHandlers = make(map[string]*clientRoutine)
 	clientMux      sync.Mutex
+
+	// workerForceCtx cancels stuck workers after drain timeout. Polling uses a
+	// separate context so SIGTERM stops SQS receive before interrupting in-flight work.
+	workerForceMu  sync.RWMutex
+	workerForceCtx = context.Background()
 )
+
+func setWorkerForceCtx(ctx context.Context) {
+	workerForceMu.Lock()
+	workerForceCtx = ctx
+	workerForceMu.Unlock()
+}
+
+func getWorkerForceCtx() context.Context {
+	workerForceMu.RLock()
+	defer workerForceMu.RUnlock()
+	return workerForceCtx
+}
 
 const (
 	defaultClientWorkers = 5
@@ -216,11 +233,20 @@ func PrepareConsumerQueues(client sqsQueueAttributesAPI, queueURLs []string, wha
 // ConsumerService long-polls every configured SDK work queue and routes into shared
 // per-client worker pools. Each work item carries its originating queue URL so
 // DeleteMessage targets the queue the message was received from.
+//
+// SIGTERM / SIGINT: stop SQS polling first, close per-client buffers so workers
+// finish in-flight and drain buffered work, then force-cancel after
+// CONSUMER_DRAIN_TIMEOUT_SECONDS (capped at 120s for Fargate stopTimeout).
 func ConsumerService(_ string) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	pollCtx, pollCancel := context.WithCancel(context.Background())
+	forceCtx, forceCancel := context.WithCancel(context.Background())
+	defer forceCancel()
+	setWorkerForceCtx(forceCtx)
 
-	go handleShutdown(cancel)
+	go handleShutdown(func() {
+		utils.Warn("SIGTERM/SIGINT: stopping SQS pollers (workers continue draining)")
+		pollCancel()
+	})
 
 	queueURLs := ConsumerQueueURLs()
 	if len(queueURLs) == 0 {
@@ -230,11 +256,11 @@ func ConsumerService(_ string) {
 	for _, runtime := range PrepareConsumerQueues(queue.SQSClient, queueURLs, config.Configs.AwsWeCreditWhatsappQueueUrl) {
 		url := runtime.URL
 		utils.Info(fmt.Sprintf("starting communication SQS consumer for queue: %s", url))
-		go pollCommunicationQueue(ctx, url, runtime.RedriveMaxReceiveCount)
+		go pollCommunicationQueue(pollCtx, url, runtime.RedriveMaxReceiveCount)
 	}
 
-	<-ctx.Done()
-	utils.Warn("Context cancelled. Shutting down all client handlers.")
+	<-pollCtx.Done()
+	utils.Warn("SQS polling stopped. Closing client buffers and draining in-flight workers.")
 	clientMux.Lock()
 	handlers := make([]*clientRoutine, 0, len(clientHandlers))
 	clients := make([]string, 0, len(clientHandlers))
@@ -245,10 +271,30 @@ func ConsumerService(_ string) {
 		clients = append(clients, client)
 	}
 	clientMux.Unlock()
-	for i, handler := range handlers {
-		handler.wg.Wait()
-		utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", clients[i]))
+
+	drainTimeout := consumerDrainTimeout()
+	done := make(chan struct{})
+	go func() {
+		for i, handler := range handlers {
+			handler.wg.Wait()
+			utils.Info(fmt.Sprintf("Gracefully shut down handler for client: %s", clients[i]))
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		utils.Info("All client workers drained before timeout")
+	case <-time.After(drainTimeout):
+		utils.Warn(fmt.Sprintf("Drain timeout %s reached; force-cancelling remaining workers", drainTimeout))
+		forceCancel()
+		<-done
 	}
+}
+
+func consumerDrainTimeout() time.Duration {
+	seconds := boundedConsumerConfigInt(config.Configs.ConsumerDrainTimeoutSeconds, 90, 120)
+	return time.Duration(seconds) * time.Second
 }
 
 func pollCommunicationQueue(ctx context.Context, queueURL string, redriveMaxReceiveCount int) {
@@ -330,7 +376,7 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 		for i := 0; i < handler.workers; i++ {
 			handler.wg.Add(1)
-			go startClientWorker(ctx, poolKey, handler, queue.SQSClient, handler.wg)
+			go startClientWorker(poolKey, handler, queue.SQSClient, handler.wg)
 		}
 		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
@@ -559,11 +605,17 @@ func (handler *clientRoutine) buffersSnapshot() []*clientBuffer {
 	return buffers
 }
 
-func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool) {
+func (handler *clientRoutine) receive() (MessageWrapper, bool) {
+	forceCtx := getWorkerForceCtx()
 	for {
 		buffers := handler.buffersSnapshot()
+		if len(buffers) == 0 {
+			return MessageWrapper{}, false
+		}
+
 		cases := make([]reflect.SelectCase, 0, len(buffers)+1)
-		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		// forceCtx fires only after drain timeout — normal SIGTERM drains via closed buffers.
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(forceCtx.Done())})
 		for _, buffer := range buffers {
 			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(buffer.ch)})
 		}
@@ -575,12 +627,25 @@ func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool
 		if ok {
 			return value.Interface().(MessageWrapper), true
 		}
-		// A closed buffer is expected during shutdown. Rebuild the select set
-		// so other buffers can still be drained if shutdown is extended.
+
+		// Channel closed and drained. Exit when every buffer is closed and empty.
+		allDrained := true
+		for _, buffer := range handler.buffersSnapshot() {
+			buffer.sendMu.Lock()
+			closed := buffer.closed
+			buffer.sendMu.Unlock()
+			if !closed || len(buffer.ch) > 0 {
+				allDrained = false
+				break
+			}
+		}
+		if allDrained {
+			return MessageWrapper{}, false
+		}
 	}
 }
 
-func startClientWorker(ctx context.Context, poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+func startClientWorker(poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
@@ -589,12 +654,12 @@ func startClientWorker(ctx context.Context, poolKey string, handler *clientRouti
 	}()
 
 	for {
-		msgWrapper, ok := handler.receive(ctx)
+		msgWrapper, ok := handler.receive()
 		if !ok {
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
 		}
-		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		isMessageProcessed, deleted := processMessage(getWorkerForceCtx(), sqsClient, msgWrapper.QueueURL, msgWrapper)
 		// Note: Message deletion is handled inside processMessage and channel handlers
 		// Only delete here if processMessage explicitly indicates it should be deleted
 		// but wasn't already deleted (e.g., on fatal errors)
@@ -605,7 +670,7 @@ func startClientWorker(ctx context.Context, poolKey string, handler *clientRouti
 			// For now, we let SQS handle retries via visibility timeout
 			utils.Debug(fmt.Sprintf("[Pool:%s] Message processing returned false, will retry after visibility timeout", poolKey))
 		} else if isMessageProcessed && !deleted {
-			deleted, err := deleteMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
+			deleted, err := deleteMessage(getWorkerForceCtx(), sqsClient, msgWrapper.QueueURL, msgWrapper.Message, msgWrapper.Payload)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after processing failed: %v", err))
 			}
@@ -613,12 +678,12 @@ func startClientWorker(ctx context.Context, poolKey string, handler *clientRouti
 	}
 }
 
-func handleShutdown(cancelFunc context.CancelFunc) {
+func handleShutdown(onSignal func()) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigChan
 	utils.Warn(fmt.Sprintf("Received shutdown signal: %v", sig))
-	cancelFunc()
+	onSignal()
 }
 
 func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msgWrapper MessageWrapper) (bool, bool) {

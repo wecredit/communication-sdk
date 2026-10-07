@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/models"
+	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 )
@@ -53,6 +55,15 @@ func LoadConfigs() error {
 
 	if err := ratelimit.InitFromConfig(Configs.ProviderRPSOverrides, Configs.ProviderRPSApprovedCaps, Configs.ProviderRPSDefault); err != nil {
 		return fmt.Errorf("invalid PROVIDER_RPS_OVERRIDES vs PROVIDER_RPS_APPROVED_CAPS: %w", err)
+	}
+
+	bypass := strings.EqualFold(strings.TrimSpace(Configs.WeCreditSMSCutoffBypass), "true") ||
+		strings.TrimSpace(Configs.WeCreditSMSCutoffBypass) == "1"
+	smspolicy.ConfigureCutoffBypass(bypass, Configs.Environment)
+	if bypass && (strings.EqualFold(Configs.Environment, "prod") || strings.EqualFold(Configs.Environment, "production")) {
+		utils.Warn("WECREDIT_SMS_CUTOFF_BYPASS ignored because ENVIRONMENT is production")
+	} else if bypass {
+		utils.Warn("WECREDIT_SMS_CUTOFF_BYPASS enabled (staging/dev only) — 20:00 IST marketing SMS cutoff skipped")
 	}
 
 	// Initialize Redis Connection

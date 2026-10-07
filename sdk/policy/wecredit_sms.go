@@ -43,7 +43,29 @@ var (
 	istLocation = mustLoadIST()
 	clockMu     sync.RWMutex
 	nowFunc     = time.Now
+
+	bypassMu            sync.RWMutex
+	cutoffBypassEnabled bool
 )
+
+// ConfigureCutoffBypass enables skipping the 20:00 IST marketing SMS cutoff.
+// Staging/dev/uat only — production environments refuse the bypass.
+func ConfigureCutoffBypass(enabled bool, environment string) {
+	env := strings.ToLower(strings.TrimSpace(environment))
+	bypassMu.Lock()
+	defer bypassMu.Unlock()
+	if enabled && (env == "prod" || env == "production") {
+		cutoffBypassEnabled = false
+		return
+	}
+	cutoffBypassEnabled = enabled
+}
+
+func cutoffBypassActive() bool {
+	bypassMu.RLock()
+	defer bypassMu.RUnlock()
+	return cutoffBypassEnabled
+}
 
 func mustLoadIST() *time.Location {
 	loc, err := time.LoadLocation("Asia/Kolkata")
@@ -109,6 +131,9 @@ func Evaluate(source string, sourceRowID int64, channel, campaignDate string, no
 		return Decision{Code: DecisionCampaignDateInvalid, Message: InvalidCampaignDateMessage, CampaignDate: parsedDate, CurrentIST: currentIST}
 
 	case currentIST.Hour() >= CutoffHour:
+		if cutoffBypassActive() {
+			return Decision{Code: DecisionAllowed, CampaignDate: parsedDate, CurrentIST: currentIST}
+		}
 		return Decision{Code: DecisionCutoff, Message: CutoffMessage, CampaignDate: parsedDate, CurrentIST: currentIST}
 
 	default:

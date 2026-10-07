@@ -187,8 +187,15 @@ type Config struct {
 	ConsumerClientWorkerOverrides  string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
 	ConsumerChannelWorkerOverrides string `envconfig:"CONSUMER_CHANNEL_WORKER_OVERRIDES"`
 	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"100"`
-	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
-	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
+	// ConsumerDrainTimeoutSeconds: after SIGTERM, stop SQS polling then wait this
+	// long for in-flight workers (Fargate stopTimeout max is 120s).
+	ConsumerDrainTimeoutSeconds string `envconfig:"CONSUMER_DRAIN_TIMEOUT_SECONDS" default:"90"`
+	SMSWorkers                  string `envconfig:"SMS_WORKERS"`
+	WhatsAppWorkers             string `envconfig:"WHATSAPP_WORKERS"`
+
+	// WeCreditSMSCutoffBypass skips the 20:00 IST marketing SMS gate when true.
+	// Ignored when ENVIRONMENT is prod/production (staging-only).
+	WeCreditSMSCutoffBypass string `envconfig:"WECREDIT_SMS_CUTOFF_BYPASS" default:"false"`
 
 	// Per-provider SMS and WhatsApp outbound rate limits (in-process token bucket
 	// per ECS task — N tasks ≈ N × configured RPS). Overrides format:
