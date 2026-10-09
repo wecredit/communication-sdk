@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 const (
 	timesTemplateListPathDefault       = "/wa/v1/templates/get-list"
 	AppConfigKeyWhatsappVendorBaseURLs = "WHATSAPP_VENDOR_BASE_URLS"
+	defaultTimesTemplateListTimeoutSec = 60
 )
 
 // vendorPanel is one Times/Pinnacle entry from AppConfig WHATSAPP_VENDOR_BASE_URLS.
@@ -145,6 +148,21 @@ func syncTimes() (int, error) {
 	return total, nil
 }
 
+// TimesTemplateListHTTPTimeout reads TIMES_WP_TEMPLATE_LIST_TIMEOUT_SECONDS.
+// Blank or non-positive values use 60 seconds. Values that cannot fit in a
+// time.Duration are capped so the result stays positive.
+func TimesTemplateListHTTPTimeout(raw string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || seconds <= 0 {
+		seconds = defaultTimesTemplateListTimeoutSec
+	}
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	if int64(seconds) > maxSeconds {
+		return time.Duration(maxSeconds) * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func fetchTimesPanelTemplates(listURL, apiID string) ([]TemplateCategoryRow, error) {
 	headers := map[string]string{
 		"Authorization": apiID,
@@ -156,7 +174,7 @@ func fetchTimesPanelTemplates(listURL, apiID string) ([]TemplateCategoryRow, err
 		"page_size":   "",
 	}
 
-	apiResponse, err := utils.ApiHit("POST", listURL, headers, "", "", payload, variables.ContentTypeJSON)
+	apiResponse, err := utils.ApiHitWithTimeout("POST", listURL, headers, "", "", payload, variables.ContentTypeJSON, TimesTemplateListHTTPTimeout(config.Configs.TimesWpTemplateListTimeoutSeconds))
 	if err != nil {
 		return nil, err
 	}
