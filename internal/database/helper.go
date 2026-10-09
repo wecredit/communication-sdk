@@ -1,12 +1,21 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
+	"gorm.io/gorm"
 )
+
+const auditInsertTimeout = 2 * time.Second
+
+// auditInsertSlots caps in-flight audit inserts at the Core pool size so a
+// slow database cannot pile up goroutines or extra connections.
+var auditInsertSlots = make(chan struct{}, zapCashV1MaxOpenConns)
 
 var (
 	commInputOutputWriteWeCredit string
@@ -68,9 +77,10 @@ func RunChannelAuditInsert(client, table string, insert func() error) {
 }
 
 // InsertRow writes one channel Input/Output row to each enabled destination.
-// A disabled toggle or a nil pool is a silent skip. Callers that run inside
-// nurture must still require DBtechWrite != nil before calling this, so that
-// process does not insert.
+// The insert runs in the background, so a slow or unreachable audit database
+// does not hold the API response or the SQS acknowledgement. A disabled toggle
+// or a nil pool is a silent skip. Callers that run inside nurture must still
+// require DBtechWrite != nil before calling this, so that process does not insert.
 func InsertRow(client, table string, row map[string]interface{}) {
 	writeComm, writeCore := ChannelAuditDestinations(
 		client,
@@ -78,16 +88,66 @@ func InsertRow(client, table string, row map[string]interface{}) {
 		commInputOutputWriteZapCash,
 		zapCashV1InputOutputWrite,
 	)
-	if writeComm && DBtechWrite != nil {
-		RunChannelAuditInsert(client, table, func() error {
-			return InsertData(table, DBtechWrite, row)
-		})
+	commDB := DBtechWrite
+	coreDB := DBZapCashV1
+	if (!writeComm || commDB == nil) && (!writeCore || coreDB == nil) {
+		return
 	}
-	if writeCore && DBZapCashV1 != nil {
-		RunChannelAuditInsert(client, table, func() error {
-			return InsertData(table, DBZapCashV1, row)
-		})
+	copied := copyAuditRow(row)
+	if !enqueueAuditInsert(func() {
+		if writeComm && commDB != nil {
+			RunChannelAuditInsert(client, table, func() error {
+				return insertAuditWithTimeout(table, commDB, copied)
+			})
+		}
+		if writeCore && coreDB != nil {
+			RunChannelAuditInsert(client, table, func() error {
+				return insertAuditWithTimeout(table, coreDB, copied)
+			})
+		}
+	}) {
+		utils.Error(fmt.Errorf("audit_insert_failed client=%s table=%s: audit insert busy", strings.TrimSpace(client), strings.TrimSpace(table)))
 	}
+}
+
+func insertAuditWithTimeout(table string, db *gorm.DB, row map[string]interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), auditInsertTimeout)
+	defer cancel()
+	return InsertData(table, db.WithContext(ctx), row)
+}
+
+func copyAuditRow(row map[string]interface{}) map[string]interface{} {
+	if row == nil {
+		return nil
+	}
+	copied := make(map[string]interface{}, len(row))
+	for key, value := range row {
+		copied[key] = value
+	}
+	return copied
+}
+
+// enqueueAuditInsert starts write without waiting. It returns false when every
+// slot is already in use.
+func enqueueAuditInsert(write func()) bool {
+	if write == nil {
+		return false
+	}
+	select {
+	case auditInsertSlots <- struct{}{}:
+	default:
+		return false
+	}
+	go func() {
+		defer func() { <-auditInsertSlots }()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				utils.Error(fmt.Errorf("audit_insert_failed: %v", recovered))
+			}
+		}()
+		write()
+	}()
+	return true
 }
 
 // WillWrite reports whether InsertRow would attempt at least one insert for

@@ -799,6 +799,8 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 		if count > maxCountInt {
 			utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
+			dbMappedData["CommId"] = data.CommId
+			database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
 			database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, map[string]interface{}{
 				"CommId":          data.CommId,
 				"Vendor":          data.Vendor,
