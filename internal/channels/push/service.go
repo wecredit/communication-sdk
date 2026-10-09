@@ -230,10 +230,21 @@ func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiReq
 		if claimErr != nil {
 			return nil, 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
 		}
-		if !skip {
-			if err := claims.SetErrorMessage(field, claimID, outcomeSkipped, skipMsg); err != nil {
-				return nil, 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
+		if skip {
+			// A prior submitted or failed claim must keep that outcome. A blank
+			// in-flight claim has no terminal row yet, so do not invent one.
+			output, terminal, replayErr := terminalReplayOutput(claims, request, field, fp)
+			if replayErr != nil {
+				return nil, 0, fmt.Errorf("replay ShouldHitVendor-off PUSH token: %w", replayErr)
 			}
+			if terminal && output != nil {
+				outputs = append(outputs, output)
+			}
+			skipped++
+			continue
+		}
+		if err := claims.SetErrorMessage(field, claimID, outcomeSkipped, skipMsg); err != nil {
+			return nil, 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
 		}
 		outputs = append(outputs, buildOutputAudit(request, fp, outcomeSkipped, fcm.ExecutionResult{
 			Code: skipMsg,

@@ -804,13 +804,13 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 				"Vendor":          data.Vendor,
 				"MobileNumber":    data.Mobile,
 				"IsSent":          false,
-				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeeded. Message not sent for commid: %s", data.CommId),
+				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeded. Message not sent for commid: %s", data.CommId),
 			})
 			deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after CreditSea limit exceeded: %v", err))
 			}
-			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeeded
+			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeded
 		}
 	} else {
 		if !AssignVendor(&data) {
