@@ -1,6 +1,7 @@
 package templateCategorySync_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -19,5 +20,10 @@ func TestTimesTemplateListHTTPTimeout(t *testing.T) {
 	}
 	if got := templateCategorySync.TimesTemplateListHTTPTimeout("90"); got != 90*time.Second {
 		t.Fatalf("override = %s, want 90s", got)
+	}
+	max := time.Duration(math.MaxInt64/int64(time.Second)) * time.Second
+	got := templateCategorySync.TimesTemplateListHTTPTimeout("9223372036854775807")
+	if got != max || got <= 0 {
+		t.Fatalf("overflow input = %s, want %s", got, max)
 	}
 }

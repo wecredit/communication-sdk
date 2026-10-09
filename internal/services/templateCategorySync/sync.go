@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -148,11 +149,16 @@ func syncTimes() (int, error) {
 }
 
 // TimesTemplateListHTTPTimeout reads TIMES_WP_TEMPLATE_LIST_TIMEOUT_SECONDS.
-// Blank or non-positive values use 60 seconds.
+// Blank or non-positive values use 60 seconds. Values that cannot fit in a
+// time.Duration are capped so the result stays positive.
 func TimesTemplateListHTTPTimeout(raw string) time.Duration {
 	seconds, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || seconds <= 0 {
 		seconds = defaultTimesTemplateListTimeoutSec
+	}
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	if int64(seconds) > maxSeconds {
+		return time.Duration(maxSeconds) * time.Second
 	}
 	return time.Duration(seconds) * time.Second
 }
