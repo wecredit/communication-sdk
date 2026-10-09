@@ -414,6 +414,17 @@ func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
 	if len(executor.payloads) != 0 {
 		t.Fatalf("FCM was called despite ShouldHitVendor off: %d payloads", len(executor.payloads))
 	}
+	if result.InputAudit == nil || result.InputAudit["EventId"] != "event-1" || result.InputAudit["DeviceCount"] != 2 {
+		t.Fatalf("InputAudit = %#v, want EventId event-1 and DeviceCount 2", result.InputAudit)
+	}
+	if len(result.OutputAudits) != 2 {
+		t.Fatalf("OutputAudits = %d, want 2", len(result.OutputAudits))
+	}
+	for _, output := range result.OutputAudits {
+		if output["Outcome"] != "skipped" || output["ErrorCode"] != "shouldHitVendor is off for mobile" {
+			t.Fatalf("output = %#v, want skipped vendor-off audit", output)
+		}
+	}
 }
 
 func TestPushDoesNotReclaimInFlightEventClaim(t *testing.T) {

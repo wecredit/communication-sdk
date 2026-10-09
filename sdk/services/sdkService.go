@@ -262,7 +262,7 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	// handle is intentionally not initialized; nurture owns the communication
 	// audit and only uses this package to enqueue the provider request. Do not
 	// validate or write SDK input-audit tables in that mode.
-	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
+	if shouldWriteInputAudit() && database.WillWrite(data.Client) && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
 		rollbackSendClaims()
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
 	}
@@ -292,14 +292,11 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 		utils.Info(fmt.Sprintf("Message sent to AWS SNS for mobile %s and channel %s for stage %f", data.Mobile, data.Channel, data.Stage))
 	}
 
-	// Write the input audit only after the queue accepts the message. If the
-	// audit write fails now, retain the Redis claim because the message is already
-	// published and must not be republished on retry.
+	// Write the input audit only after the queue accepts the message. A failed
+	// audit insert is logged and does not fail the API response, so the caller
+	// does not republish the message.
 	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel {
-		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
-			utils.Error(fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err))
-			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s for mobile %s and channel %s after publish: %v", inputTableName, data.Mobile, data.Channel, err)
-		}
+		database.InsertRow(data.Client, inputTableName, dbMappedData)
 	}
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil
@@ -385,7 +382,7 @@ func processCollectionAfternoon(data *sdkModels.CommApiRequestBody, snsClient *s
 
 	genericAuditChannel := strings.EqualFold(data.Channel, variables.SMS) || strings.EqualFold(data.Channel, variables.RCS) || strings.EqualFold(data.Channel, variables.Email)
 	inputTableName := strings.TrimSpace(data.InputTableName)
-	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
+	if shouldWriteInputAudit() && database.WillWrite(data.Client) && inputTableName != "" && genericAuditChannel && !isConfiguredInputTable(data.Channel, inputTableName) {
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("invalid input table %q for channel %s", inputTableName, data.Channel)
 	}
 
@@ -404,9 +401,7 @@ func processCollectionAfternoon(data *sdkModels.CommApiRequestBody, snsClient *s
 	accepted = true
 
 	if shouldWriteInputAudit() && inputTableName != "" && genericAuditChannel {
-		if err := database.InsertData(inputTableName, data.DbClient, dbMappedData); err != nil {
-			return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("error inserting data into input table %s after publish: %w", inputTableName, err)
-		}
+		database.InsertRow(data.Client, inputTableName, dbMappedData)
 	}
 
 	return sdkModels.CommApiResponseBody{Success: true, CommId: data.CommId}, nil

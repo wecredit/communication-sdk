@@ -18,6 +18,14 @@ var (
 	DBtechRead  *gorm.DB
 	DBtechWrite *gorm.DB
 	DBMarketing *gorm.DB
+	// DBZapCashV1 is the Core pool for ZapCash channel Input/Output audit rows.
+	// It stays nil when the toggle is off or the connection cannot be opened.
+	DBZapCashV1 *gorm.DB
+)
+
+const (
+	zapCashV1MaxOpenConns = 5
+	zapCashV1MaxIdleConns = 2
 )
 
 const (
@@ -272,5 +280,66 @@ func applyPoolConfig(db *gorm.DB, config models.Config, dbName string) error {
 	sqlDB.SetConnMaxLifetime(maxLifetime)
 	utils.Debug(fmt.Sprintf("DB pool configured for %s: max_open=%d max_idle=%d max_lifetime=%s", dbName, maxOpen, maxIdle, maxLifetime))
 
+	return nil
+}
+
+// ConnectZapCashV1IfEnabled opens the Core audit pool when the ZapCash v1
+// toggle is on. An incomplete DSN or a connection failure returns an error
+// and leaves DBZapCashV1 nil. The caller logs that error once and continues.
+// The toggle off path returns nil and does not connect.
+func ConnectZapCashV1IfEnabled(config models.Config) error {
+	if !strings.EqualFold(strings.TrimSpace(config.ZapCashV1InputOutputWrite), "true") {
+		return nil
+	}
+	if DBZapCashV1 != nil {
+		utils.Info("ZapCash v1 audit DB already connected, skipping initialization.")
+		return nil
+	}
+
+	host := strings.TrimSpace(config.DbServerZapCashV1)
+	user := strings.TrimSpace(config.DbUserZapCashV1)
+	password := strings.TrimSpace(config.DbPasswordZapCashV1)
+	name := strings.TrimSpace(config.DbNameZapCashV1)
+	if name == "" {
+		name = "Core"
+	}
+	if host == "" || user == "" || password == "" {
+		return fmt.Errorf("incomplete zapcash v1 DSN: host, user, and password are required")
+	}
+
+	db, err := gorm.Open(mysql.Open(GetMySQLDSN(user, password, host, name)), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to ZapCash v1 audit DB: %w", err)
+	}
+	if err := applyZapCashV1Pool(db, config); err != nil {
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		return err
+	}
+	DBZapCashV1 = db
+	utils.Info("Database connection established for ZapCash v1 audit DB.")
+	return nil
+}
+
+func applyZapCashV1Pool(db *gorm.DB, config models.Config) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get sql.DB for ZapCash v1 audit DB: %w", err)
+	}
+
+	maxLifetime := 15 * time.Minute
+	if config.DbConnMaxLifetime != "" {
+		parsed, parseErr := strconv.Atoi(config.DbConnMaxLifetime)
+		if parseErr != nil {
+			utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for ZapCash v1 audit DB, using default %s", maxLifetime))
+		} else {
+			maxLifetime = time.Duration(parsed) * time.Minute
+		}
+	}
+	sqlDB.SetMaxOpenConns(zapCashV1MaxOpenConns)
+	sqlDB.SetMaxIdleConns(zapCashV1MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(maxLifetime)
+	utils.Debug(fmt.Sprintf("DB pool configured for ZapCash v1 audit DB: max_open=%d max_idle=%d max_lifetime=%s", zapCashV1MaxOpenConns, zapCashV1MaxIdleConns, maxLifetime))
 	return nil
 }
