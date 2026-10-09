@@ -753,7 +753,7 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 
 	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
 	// terminal output audits from Redis claims without calling FCM again.
-	if auditErr := writePushAudits(result); auditErr != nil {
+	if auditErr := writePushAudits(data.Client, result); auditErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
 			data.Client, data.CommId, data.EventId, auditErr))
 		return false, false
@@ -771,22 +771,14 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 	return result.Processed, deleted
 }
 
-func writePushAudits(result push.Result) error {
+func writePushAudits(client string, result push.Result) error {
 	if result.InputAudit != nil {
-		if err := database.InsertData(config.Configs.PushInputAuditTable, database.DBtechWrite, result.InputAudit); err != nil && !isDuplicateKeyError(err) {
-			return fmt.Errorf("insert input audit: %w", err)
-		}
+		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
 	}
 	for _, output := range result.OutputAudits {
-		if err := database.InsertData(config.Configs.PushOutputTable, database.DBtechWrite, output); err != nil && !isDuplicateKeyError(err) {
-			return fmt.Errorf("insert output audit: %w", err)
-		}
+		database.InsertRow(client, config.Configs.PushOutputTable, output)
 	}
 	return nil
-}
-
-func isDuplicateKeyError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate entry")
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
@@ -807,20 +799,20 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 		if count > maxCountInt {
 			utils.Error(fmt.Errorf("CreditSea Whatsapp count exceeded: current count:%d, maxCount:%d", count, maxCountInt))
-			if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, map[string]interface{}{
+			dbMappedData["CommId"] = data.CommId
+			database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
+			database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, map[string]interface{}{
 				"CommId":          data.CommId,
 				"Vendor":          data.Vendor,
 				"MobileNumber":    data.Mobile,
 				"IsSent":          false,
-				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeeded. Message not sent for commid: %s", data.CommId),
-			}); err != nil {
-				utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
-			}
+				"ResponseMessage": fmt.Sprintf("CreditSea whatsapp limit exceeded. Message not sent for commid: %s", data.CommId),
+			})
 			deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after CreditSea limit exceeded: %v", err))
 			}
-			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeeded
+			return true, deleted // message processed but not sent as CreditSea whatsapp limit exceeded
 		}
 	} else {
 		if !AssignVendor(&data) {
@@ -831,9 +823,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	// Non-marketing WhatsApp also requires the channel input audit. RawCommData
 	// is a separate legacy source table and must not control this audit write.
 	dbMappedData["CommId"] = data.CommId
-	if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting WhatsApp input audit: %v", data.Client, data.CommId, err))
-	}
+	database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
 	var deleted bool
 	var delErr error
 
@@ -875,17 +865,15 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 	}
 
-	if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtechWrite, MapWhatsappMysqlOutput(dbMappedData)); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into wp output table for mobile %s: %v", data.Mobile, err))
-	}
+	database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, MapWhatsappMysqlOutput(dbMappedData))
 
 	return isMessageProcessed, deleted
 
 }
 
 // MarketingWhatsappDependencies defines the dependencies for marketing WhatsApp dispatch.
-// Terminal outcomes write MySQL WhatsappOutputTable + Marketing CommWhatsappMarketingOutput
-// (SMS parity: SmsOutputTable + CommDispatchTracking). Not CommDispatchTracking.
+// Terminal outcomes write Marketing CommWhatsappMarketingOutput, which gates ACK.
+// MySQL WhatsappOutputTable is a log-only audit insert.
 type MarketingWhatsappDependencies struct {
 	Claim       func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error)
 	Assign      func(*sdkModels.CommApiRequestBody) bool
@@ -913,23 +901,19 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 		},
 		UpdateError: channelHelper.UpdateRedisErrorMessage,
 		WriteInputAudit: func(payload sdkModels.CommApiRequestBody, audit map[string]interface{}) error {
-			// SMS marketing inserts SdkSmsInputTable before send; same for WA.
-			if err := database.InsertData(config.Configs.SdkWhatsappInputTable, database.DBtechWrite, audit); err != nil {
-				utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting whatsapp input audit: %v", payload.Client, payload.CommId, err))
-			}
-			return nil // best-effort; never block the send (SMS parity)
+			database.InsertRow(payload.Client, config.Configs.SdkWhatsappInputTable, audit)
+			return nil
 		},
 		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
-			// Dual sink (SMS parity): MySQL WhatsappOutputTable + Marketing Output.
-			// Both must succeed before SQS ACK. Lender-only WA still uses MySQL alone
-			// in handleWhatsapp.
-			mysqlErr, marketingErr := RunParallelSMSPostSendWrites(
+			// Marketing SQL Server output still gates ACK. The MySQL audit insert is log-only.
+			_, marketingErr := RunParallelSMSPostSendWrites(
 				func() error {
-					return database.InsertData(
+					database.InsertRow(
+						payload.Client,
 						config.Configs.WhatsappOutputTable,
-						database.DBtechWrite,
 						MapMarketingWhatsappMysqlOutput(payload, output),
 					)
+					return nil
 				},
 				func() error {
 					return database.InsertData(
@@ -939,11 +923,8 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 					)
 				},
 			)
-			if mysqlErr != nil || marketingErr != nil {
-				logWhatsappPostSendPersistenceFailure(payload, mysqlErr, marketingErr)
-				if mysqlErr != nil {
-					return mysqlErr
-				}
+			if marketingErr != nil {
+				logWhatsappPostSendPersistenceFailure(payload, nil, marketingErr)
 				return marketingErr
 			}
 			return nil
@@ -1119,9 +1100,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// RCS input audit belongs to the consumer path. RawCommData is unrelated;
 	// disabling that legacy source table must not disable channel-level RCS audit.
 	dbMappedData["CommId"] = data.CommId
-	if err := database.InsertData(config.Configs.SdkRcsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting RCS input audit: %v", data.Client, data.CommId, err))
-	}
+	database.InsertRow(data.Client, config.Configs.SdkRcsInputTable, dbMappedData)
 
 	rcsResult, err := rcs.SendRcsByProcess(data)
 	isMessageProcessed := rcsResult.Processed
@@ -1181,16 +1160,17 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			// Redis state is a redelivery and must repair both audit sinks before ACK.
 			if strings.TrimSpace(redisTxn) != "" || strings.TrimSpace(redisErr) != "" {
 				replayResult := sms.TerminalReplayResult(data, redisTxn, redisErr)
-				outputErr, trackingErr := RunParallelSMSPostSendWrites(
+				_, trackingErr := RunParallelSMSPostSendWrites(
 					func() error {
-						return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, replayResult.DBData)
+						database.InsertRow(data.Client, config.Configs.SmsOutputTable, replayResult.DBData)
+						return nil
 					},
 					func() error {
 						return recordMarketingSMSTrackingFromRedisSkip(data, redisTxn, redisErr)
 					},
 				)
-				if outputErr != nil || trackingErr != nil {
-					logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+				if trackingErr != nil {
+					logSMSPostSendPersistenceFailure(data, nil, trackingErr)
 					return false, false
 				}
 			}
@@ -1233,9 +1213,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	if marketing {
 		dbMappedData["CommId"] = data.CommId
-		if err := database.InsertData(config.Configs.SdkSmsInputTable, database.DBtechWrite, dbMappedData); err != nil {
-			utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting sms input audit: %v", data.Client, data.CommId, err))
-		}
+		database.InsertRow(data.Client, config.Configs.SdkSmsInputTable, dbMappedData)
 	}
 
 	result, err := sms.SendSmsByProcessWithContext(ctx, data)
@@ -1274,21 +1252,21 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 	}
 
-	// Compliance failures are terminal only after both independent databases
-	// confirm persistence. The independent idempotent writes run concurrently;
-	// SQS acknowledgement still waits for both of them to complete successfully.
+	// Compliance failures stay terminal only after Marketing SQL Server tracking
+	// is stored. The MySQL audit insert is log-only and does not gate ACK.
 	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
-		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+		_, trackingErr := RunParallelSMSPostSendWrites(
 			func() error {
-				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+				database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+				return nil
 			},
 			func() error {
 				return recordMarketingSMSTrackingFromSend(data, result, nil)
 			},
 		)
 
-		if outputErr != nil || trackingErr != nil {
-			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+		if trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, nil, trackingErr)
 			releaseMarketingDispatchClaims(data)
 			return false, false
 		}
@@ -1307,17 +1285,18 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	outputWritten := false
 	if marketing && result.AckSQS {
-		outputErr, trackingErr := RunParallelSMSPostSendWrites(
+		_, trackingErr := RunParallelSMSPostSendWrites(
 			func() error {
-				return database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData)
+				database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+				return nil
 			},
 			func() error {
 				return recordMarketingSMSTrackingFromSend(data, result, nil)
 			},
 		)
 		outputWritten = true
-		if outputErr != nil || trackingErr != nil {
-			logSMSPostSendPersistenceFailure(data, outputErr, trackingErr)
+		if trackingErr != nil {
+			logSMSPostSendPersistenceFailure(data, nil, trackingErr)
 			return false, false
 		}
 	} else if marketing && !result.AckSQS {
@@ -1334,9 +1313,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if !outputWritten {
-		if err := database.InsertData(config.Configs.SmsOutputTable, database.DBtechWrite, result.DBData); err != nil {
-			utils.Error(fmt.Errorf("error inserting data into sms output table for mobile %s: %v", data.Mobile, err))
-		}
+		database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
 	}
 
 	return result.Processed, deleted
@@ -1441,9 +1418,7 @@ func handleEmail(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappe
 	delete(dbMappedData, "MobileNumber")
 	dbMappedData["Email"] = data.Email
 
-	if err := database.InsertData(config.Configs.EmailOutputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting data into table: %v", err))
-	}
+	database.InsertRow(data.Client, config.Configs.EmailOutputTable, dbMappedData)
 
 	return isMessageProcessed, deleted
 }

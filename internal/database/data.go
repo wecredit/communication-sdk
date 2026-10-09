@@ -165,7 +165,7 @@ func GetWhatsappProcessData(db *gorm.DB, process, vendor string) ([]map[string]i
 
 // InsertData inserts data into the given table name using a transaction
 func InsertData(tableName string, db *gorm.DB, data map[string]interface{}) error {
-	session := db.Session(&gorm.Session{NewDB: true})
+	session := db.Session(&gorm.Session{NewDB: true, Context: db.Statement.Context})
 
 	if tableName == "" {
 		return fmt.Errorf("table name cannot be empty")
