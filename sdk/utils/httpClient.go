@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+const defaultHTTPTimeout = 30 * time.Second
+
 var (
 	sharedHTTPOnce sync.Once
 	sharedHTTP     *retryablehttp.Client
@@ -32,7 +34,7 @@ func SharedHTTPClient(retryMax int, retryWaitMin, retryWaitMax time.Duration) *r
 		}
 		client := retryablehttp.NewClient()
 		client.HTTPClient = &http.Client{
-			Timeout:   30 * time.Second,
+			Timeout:   defaultHTTPTimeout,
 			Transport: transport,
 		}
 		client.Logger = nil
@@ -46,4 +48,18 @@ func SharedHTTPClient(retryMax int, retryWaitMin, retryWaitMax time.Duration) *r
 	client.RetryWaitMax = retryWaitMax
 	client.HTTPClient = sharedHTTP.HTTPClient
 	return &client
+}
+
+// HTTPClientWithTimeout clones the shared retry client and sets http.Client.Timeout.
+// The pooled Transport stays shared. A non-positive timeout keeps the shared 30s client.
+// Callers must not mutate the returned client's Transport.
+func HTTPClientWithTimeout(retryMax int, retryWaitMin, retryWaitMax, timeout time.Duration) *retryablehttp.Client {
+	client := SharedHTTPClient(retryMax, retryWaitMin, retryWaitMax)
+	if timeout <= 0 || client.HTTPClient == nil {
+		return client
+	}
+	httpClone := *client.HTTPClient
+	httpClone.Timeout = timeout
+	client.HTTPClient = &httpClone
+	return client
 }

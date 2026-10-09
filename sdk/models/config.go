@@ -157,6 +157,8 @@ type Config struct {
 	TimesWpTemplateListBaseUrl string `envconfig:"TIMES_WP_TEMPLATE_LIST_BASE_URL"`
 	// TimesWpTemplateListEndpoint path appended to base (default /wa/v1/templates/get-list).
 	TimesWpTemplateListEndpoint string `envconfig:"TIMES_WP_TEMPLATE_LIST_ENDPOINT" default:"/wa/v1/templates/get-list"`
+	// TimesWpTemplateListTimeoutSeconds is the Times get-list HTTP timeout. Raise it when a panel is slow.
+	TimesWpTemplateListTimeoutSeconds string `envconfig:"TIMES_WP_TEMPLATE_LIST_TIMEOUT_SECONDS" default:"60"`
 	// PinnacleWhatsappTemplateListBaseUrl is the Graph-style base for GET {base}/{appId}/message_templates
 	// and preferred send path {base}/{appId}/messages when AppId is set.
 	PinnacleWhatsappTemplateListBaseUrl string `envconfig:"PINNACLE_WP_TEMPLATE_LIST_BASE_URL"`
