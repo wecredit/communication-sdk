@@ -25,7 +25,21 @@ func RetryApiCall(
 	retryMax int,
 	retryWaitMin, retryWaitMax time.Duration,
 ) (map[string]interface{}, error) {
-	statusCode, body, err := doAPIRequest(method, apiURL, headers, username, password, data, reqType, retryMax, retryWaitMin, retryWaitMax)
+	return decodeAPIResponse(doAPIRequest(method, apiURL, headers, username, password, data, reqType, retryMax, retryWaitMin, retryWaitMax, 0))
+}
+
+// ApiHit makes an API call using the shared HTTP client (no per-call goroutine/client).
+func ApiHit(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int) (map[string]interface{}, error) {
+	return RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0, 0)
+}
+
+// ApiHitWithTimeout is ApiHit with a per-call http.Client timeout. The shared client stays at 30s.
+// timeout <= 0 uses that shared client.
+func ApiHitWithTimeout(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int, timeout time.Duration) (map[string]interface{}, error) {
+	return decodeAPIResponse(doAPIRequest(method, apiURL, headers, username, password, data, reqType, 0, 0, 0, timeout))
+}
+
+func decodeAPIResponse(statusCode int, body []byte, err error) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -38,11 +52,6 @@ func RetryApiCall(
 	Info(fmt.Sprintf("API_RESPONSE status=%d keys=%d", statusCode, len(result)))
 	result["ApistatusCode"] = statusCode
 	return result, nil
-}
-
-// ApiHit makes an API call using the shared HTTP client (no per-call goroutine/client).
-func ApiHit(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int) (map[string]interface{}, error) {
-	return RetryApiCall(method, apiURL, headers, username, password, data, reqType, 0, 0, 0)
 }
 
 // HTTPStatusFromResponse reads ApistatusCode set by RetryApiCall/ApiHit.
@@ -72,7 +81,7 @@ func ErrIfHTTPNotOK(result map[string]interface{}) error {
 // ApiHitJSON POSTs/GETs like ApiHit but unmarshals the body into dest (typed struct).
 // Returns HTTP status and raw body for audit/logging. Dest may be nil to skip unmarshal.
 func ApiHitJSON(method, apiURL string, headers map[string]string, username, password string, data interface{}, reqType int, dest interface{}) (statusCode int, rawBody string, err error) {
-	statusCode, body, err := doAPIRequest(method, apiURL, headers, username, password, data, reqType, 0, 0, 0)
+	statusCode, body, err := doAPIRequest(method, apiURL, headers, username, password, data, reqType, 0, 0, 0, 0)
 	if err != nil {
 		return 0, "", err
 	}
@@ -96,8 +105,9 @@ func doAPIRequest(
 	reqType int,
 	retryMax int,
 	retryWaitMin, retryWaitMax time.Duration,
+	timeout time.Duration,
 ) (statusCode int, body []byte, err error) {
-	client := SharedHTTPClient(retryMax, retryWaitMin, retryWaitMax)
+	client := HTTPClientWithTimeout(retryMax, retryWaitMin, retryWaitMax, timeout)
 
 	var bodyReader io.Reader
 	if method != "GET" && method != "get" {

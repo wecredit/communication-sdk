@@ -15,6 +15,7 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 var Configs models.Config
@@ -55,6 +56,8 @@ func LoadConfigs() error {
 		return fmt.Errorf("invalid PROVIDER_RPS_OVERRIDES vs PROVIDER_RPS_APPROVED_CAPS: %w", err)
 	}
 
+	logChannelAuditToggles()
+
 	// Initialize Redis Connection
 	_, err := redis.GetRedisClient(Configs.RedisAddress, Configs.RedisPassword)
 	if err != nil {
@@ -85,6 +88,10 @@ func LoadConfigs() error {
 		return fmt.Errorf("failed to initialize Marketing database: %v", err)
 	}
 
+	if err := database.ConnectZapCashV1IfEnabled(Configs); err != nil {
+		utils.Error(fmt.Errorf("zapcash v1 audit database unavailable: %v", err))
+	}
+
 	// Configure Queue client
 	if err := queue.InitAWSClients(Configs.AWSRegion); err != nil {
 		return fmt.Errorf("failed to initialize AWS clients: %v", err)
@@ -101,4 +108,15 @@ func LoadConfigs() error {
 	*/
 
 	return nil
+}
+
+// logChannelAuditToggles records the resolved WeCredit, ZapCash, and Core write flags.
+func logChannelAuditToggles() {
+	database.SetChannelAuditFlags(Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash, Configs.ZapCashV1InputOutputWrite)
+	
+	utils.Info(fmt.Sprintf("channel audit toggles: comm_wecredit=%t comm_zapcash=%t zapcash_v1=%t",
+		database.CommWriteEnabled(variables.WeCredit, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
+		database.CommWriteEnabled(variables.ZapCash, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
+		database.ZapCashV1WriteEnabled(Configs.ZapCashV1InputOutputWrite),
+	))
 }
