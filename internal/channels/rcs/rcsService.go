@@ -113,10 +113,7 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 		utils.Error(fmt.Errorf("mapping error: %v", err))
 	}
 
-	if err := database.InsertData(config.Configs.RcsOutputTable, database.DBtechWrite, dbMappedData); err != nil {
-		utils.Error(fmt.Errorf("error inserting RCS output for CommId %s: %v", msg.CommId, err))
-		return SendRcsResult{Processed: false}, fmt.Errorf("error inserting RCS output for CommId %s: %w", msg.CommId, err)
-	}
+	database.InsertRow(msg.Client, config.Configs.RcsOutputTable, dbMappedData)
 
 	jsonBytes, _ := json.Marshal(response)
 	utils.Debug(fmt.Sprintf("RCS Response: %s", string(jsonBytes)))

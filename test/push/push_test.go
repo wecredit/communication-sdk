@@ -414,6 +414,59 @@ func TestPushShouldHitVendorOffSkipsFCM(t *testing.T) {
 	if len(executor.payloads) != 0 {
 		t.Fatalf("FCM was called despite ShouldHitVendor off: %d payloads", len(executor.payloads))
 	}
+	if result.InputAudit == nil || result.InputAudit["EventId"] != "event-1" || result.InputAudit["DeviceCount"] != 2 {
+		t.Fatalf("InputAudit = %#v, want EventId event-1 and DeviceCount 2", result.InputAudit)
+	}
+	if len(result.OutputAudits) != 2 {
+		t.Fatalf("OutputAudits = %d, want 2", len(result.OutputAudits))
+	}
+	for _, output := range result.OutputAudits {
+		if output["Outcome"] != "skipped" || output["ErrorCode"] != "shouldHitVendor is off for mobile" {
+			t.Fatalf("output = %#v, want skipped vendor-off audit", output)
+		}
+	}
+}
+
+func TestPushShouldHitVendorOffReplaysPriorSubmittedClaim(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, false)
+
+	claims := newFakeClaims()
+	request := sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"token-a"},
+	}
+	fingerprint, err := push.FingerprintToken("token-a")
+	if err != nil {
+		t.Fatalf("fingerprint token: %v", err)
+	}
+	field := push.TokenRedisField(request, fingerprint)
+	claimID, err := claims.Claim(field)
+	if err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	if err := claims.SetTransactionID(field, claimID, "message-prior"); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+	if err := claims.SetAttemptCount(field, claimID, 1); err != nil {
+		t.Fatalf("seed attempt count: %v", err)
+	}
+
+	executor := &fakeExecutor{}
+	service, err := push.NewService(claims, executor)
+	if err != nil {
+		t.Fatalf("new PUSH service: %v", err)
+	}
+	result, err := service.Send(context.Background(), request)
+	if err != nil {
+		t.Fatalf("send PUSH: %v", err)
+	}
+	if len(executor.payloads) != 0 {
+		t.Fatalf("FCM was called despite ShouldHitVendor off: %d payloads", len(executor.payloads))
+	}
+	if len(result.OutputAudits) != 1 || result.OutputAudits[0]["Outcome"] != "submitted" || result.OutputAudits[0]["ProviderMessageId"] != "message-prior" {
+		t.Fatalf("OutputAudits = %#v, want the prior submitted claim", result.OutputAudits)
+	}
 }
 
 func TestPushDoesNotReclaimInFlightEventClaim(t *testing.T) {

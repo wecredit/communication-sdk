@@ -24,6 +24,18 @@ type Config struct {
 	DbMaxIdleConns    string `envconfig:"DB_MAX_IDLE_CONNS"`
 	DbConnMaxLifetime string `envconfig:"DB_CONN_MAX_LIFETIME_MINUTES"`
 
+	// Channel Input/Output audit writes. WeCredit and ZapCash stay on unless
+	// the value is "false". ZapCash Core writes stay off unless the value is "true".
+	CommInputOutputWriteWeCredit string `envconfig:"COMM_INPUT_OUTPUT_WRITE_WECREDIT" default:"true"`
+	CommInputOutputWriteZapCash  string `envconfig:"COMM_INPUT_OUTPUT_WRITE_ZAPCASH" default:"true"`
+	ZapCashV1InputOutputWrite    string `envconfig:"ZAPCASH_V1_INPUT_OUTPUT_WRITE" default:"false"`
+
+	// ZapCash v1 Core pool for channel Input/Output audit rows.
+	DbServerZapCashV1   string `envconfig:"DB_SERVER_ZAPCASH_V1"`
+	DbUserZapCashV1     string `envconfig:"DB_USER_ZAPCASH_V1"`
+	DbPasswordZapCashV1 string `envconfig:"DB_PASSWORD_ZAPCASH_V1"`
+	DbNameZapCashV1     string `envconfig:"DB_NAME_ZAPCASH_V1" default:"Core"`
+
 	// Marketing SQL Server (same DB as CommMarketingInput / dbo.CommDispatchTracking).
 	DbServerMarketing         string `envconfig:"DB_SERVER_MARKETING"`
 	DbPortMarketing           string `envconfig:"DB_PORT_MARKETING"`

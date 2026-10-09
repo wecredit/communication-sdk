@@ -23,6 +23,7 @@ const (
 	outcomeSubmitted      = "submitted"
 	outcomeFailedFinal    = "failed_final"
 	outcomeCancelledStale = "cancelled_stale"
+	outcomeSkipped        = "skipped"
 )
 
 type retryExecutor interface {
@@ -37,9 +38,11 @@ type Result struct {
 	FailedFinal    int
 	CancelledStale int
 	Skipped        int
-	// InputAudit is one PushInputAuditTable row (nil when ShouldHitVendor off / no send).
+	// InputAudit is one PushInputAuditTable row. It is set for a vendor send and
+	// for a ShouldHitVendor-off skip, matching SMS, WhatsApp, and RCS.
 	InputAudit map[string]interface{}
-	// OutputAudits are PushOutputTable rows (one per token that reached a terminal FCM outcome).
+	// OutputAudits are PushOutputTable rows: one per token that reached a
+	// terminal FCM outcome, or one per token skipped because ShouldHitVendor is off.
 	OutputAudits []map[string]interface{}
 }
 
@@ -72,15 +75,25 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	tokens := uniqueTokens(request.DeviceTokens)
 
 	if !channelHelper.ShouldHitVendor(request.Client, request.Channel) {
-		skipMsg := fmt.Sprintf(
-			"shouldHitVendor is off for client=%s channel=%s eventId=%s",
-			request.Client, request.Channel, request.EventId,
-		)
-		skipped, err := markShouldHitVendorOff(s.claims, request, tokens, skipMsg)
+		outputs, skipped, err := markShouldHitVendorOff(s.claims, request, tokens)
 		if err != nil {
 			return Result{Processed: false, AckSQS: false}, err
 		}
-		return Result{Processed: true, AckSQS: true, Skipped: skipped}, nil
+		templateName := ""
+		vendor := strings.TrimSpace(request.Vendor)
+		if _, _, resolvedName, resolvedVendor, resolveErr := resolveContent(request); resolveErr == nil {
+			templateName = resolvedName
+			if strings.TrimSpace(resolvedVendor) != "" {
+				vendor = resolvedVendor
+			}
+		}
+		return Result{
+			Processed:    true,
+			AckSQS:       true,
+			Skipped:      skipped,
+			InputAudit:   buildInputAudit(request, vendor, templateName, len(tokens)),
+			OutputAudits: outputs,
+		}, nil
 	}
 
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
@@ -197,37 +210,58 @@ func buildOutputAudit(
 	}
 }
 
-func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) (int, error) {
+func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string) ([]map[string]interface{}, int, error) {
+	skipMsg := vendorOffMessage(request.Mobile)
 	if len(tokens) == 0 {
 		if err := channelHelper.UpdateRedisErrorMessage(request, skipMsg); err != nil {
-			return 0, fmt.Errorf("record ShouldHitVendor-off PUSH skip: %w", err)
+			return nil, 0, fmt.Errorf("record ShouldHitVendor-off PUSH skip: %w", err)
 		}
-		return 1, nil
+		return nil, 1, nil
 	}
+	outputs := make([]map[string]interface{}, 0, len(tokens))
 	skipped := 0
 	for _, token := range tokens {
 		fp, err := FingerprintToken(token)
 		if err != nil {
-			return 0, fmt.Errorf("fingerprint ShouldHitVendor-off PUSH token: %w", err)
+			return nil, 0, fmt.Errorf("fingerprint ShouldHitVendor-off PUSH token: %w", err)
 		}
 		field := TokenRedisField(request, fp)
 		skip, claimID, claimErr := claimTokenField(claims, request, field)
 		if claimErr != nil {
-			return 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
+			return nil, 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
 		}
 		if skip {
+			// A prior submitted or failed claim must keep that outcome. A blank
+			// in-flight claim has no terminal row yet, so do not invent one.
+			output, terminal, replayErr := terminalReplayOutput(claims, request, field, fp)
+			if replayErr != nil {
+				return nil, 0, fmt.Errorf("replay ShouldHitVendor-off PUSH token: %w", replayErr)
+			}
+			if terminal && output != nil {
+				outputs = append(outputs, output)
+			}
 			skipped++
 			continue
 		}
-		if err := claims.SetErrorMessage(field, claimID, outcomeFailedFinal, skipMsg); err != nil {
-			return 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
+		if err := claims.SetErrorMessage(field, claimID, outcomeSkipped, skipMsg); err != nil {
+			return nil, 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
 		}
+		outputs = append(outputs, buildOutputAudit(request, fp, outcomeSkipped, fcm.ExecutionResult{
+			Code: skipMsg,
+		}))
 		skipped++
 	}
-	if skipped == 0 {
-		return 1, nil
+	return outputs, skipped, nil
+}
+
+// vendorOffMessage matches the SMS, WhatsApp, and RCS skip text. PushOutputTable.ErrorCode
+// is varchar(64), so the value is capped at that length.
+func vendorOffMessage(mobile string) string {
+	message := strings.TrimSpace("shouldHitVendor is off for mobile " + strings.TrimSpace(mobile))
+	if len(message) > 64 {
+		return message[:64]
 	}
-	return skipped, nil
+	return message
 }
 
 func (s *Service) sendTokenSafely(
