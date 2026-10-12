@@ -767,10 +767,10 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			delete(dbMappedData, "Mobile")
 			dbMappedData["Email"] = data.Email
 		}
-		if table := lenderInputAuditTable(data.Channel); table != "" {
-			if insErr := database.InsertData(table, database.DBtechWrite, dbMappedData); insErr != nil {
-				utils.Error(fmt.Errorf("[Client:%s CommId:%s] error inserting input audit: %v", data.Client, data.CommId, insErr))
-			}
+		// sdk.Send used to write SMS and email input audits. WhatsApp and RCS
+		// handlers still write those input rows, so this block must not insert them.
+		if table := ZapCashDirectInputAuditTable(data.Channel); table != "" {
+			database.InsertRow(data.Client, table, dbMappedData)
 		}
 	}
 
@@ -1647,14 +1647,13 @@ func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, er
 	return false, nil
 }
 
-func lenderInputAuditTable(channel string) string {
+// ZapCashDirectInputAuditTable is the input audit written on AWS_ZAPCASH_QUEUE_URL
+// before the channel handler runs. WhatsApp and RCS already insert their input
+// rows in the handler, so they are omitted here.
+func ZapCashDirectInputAuditTable(channel string) string {
 	switch channel {
 	case variables.SMS:
 		return config.Configs.SdkSmsInputTable
-	case variables.WhatsApp:
-		return config.Configs.SdkWhatsappInputTable
-	case variables.RCS:
-		return config.Configs.SdkRcsInputTable
 	case variables.Email:
 		return config.Configs.SdkEmailInputTable
 	default:

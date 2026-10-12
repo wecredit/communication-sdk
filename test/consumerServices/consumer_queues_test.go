@@ -9,6 +9,7 @@ import (
 	"github.com/wecredit/communication-sdk/config"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/models"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 func TestConsumerQueueURLs(t *testing.T) {
@@ -193,5 +194,27 @@ func TestPrepareConsumerQueuesInvalidWhatsappPolicyIsIsolated(t *testing.T) {
 	}
 	if runtimes[0].URL != urls[0] || runtimes[1].URL != urls[2] {
 		t.Fatalf("invalid WhatsApp policy affected other queues: %#v", runtimes)
+	}
+}
+
+func TestZapCashDirectInputAuditTableLeavesHandlerChannelsAlone(t *testing.T) {
+	prev := config.Configs
+	t.Cleanup(func() { config.Configs = prev })
+	config.Configs.SdkSmsInputTable = "SmsInputAuditTable"
+	config.Configs.SdkEmailInputTable = "EmailInputAuditTable"
+	config.Configs.SdkWhatsappInputTable = "WhatsappInputAuditTable"
+	config.Configs.SdkRcsInputTable = "RcsInputAuditTable"
+
+	if got := services.ZapCashDirectInputAuditTable(variables.SMS); got != "SmsInputAuditTable" {
+		t.Fatalf("SMS input table = %q", got)
+	}
+	if got := services.ZapCashDirectInputAuditTable(variables.Email); got != "EmailInputAuditTable" {
+		t.Fatalf("email input table = %q", got)
+	}
+	if got := services.ZapCashDirectInputAuditTable(variables.WhatsApp); got != "" {
+		t.Fatalf("WhatsApp input table = %q, want handler-owned", got)
+	}
+	if got := services.ZapCashDirectInputAuditTable(variables.RCS); got != "" {
+		t.Fatalf("RCS input table = %q, want handler-owned", got)
 	}
 }
