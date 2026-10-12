@@ -1,7 +1,6 @@
 package timesWhatsappPayload
 
 import (
-	"fmt"
 	"strings"
 
 	whatsappPayload "github.com/wecredit/communication-sdk/internal/channels/whatsapp/whatsappPayload"
@@ -11,8 +10,6 @@ import (
 func GetTimesUtilityPayload(timesApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	buttonURL := timesApiModel.ButtonLink
 	mobileSub := whatsappPayload.ButtonMobileSubstitute(timesApiModel)
-
-	fmt.Println("Process: ", timesApiModel.Process)
 
 	components := []map[string]interface{}{}
 	if bodyParams := whatsappPayload.BodyParams(timesApiModel); len(bodyParams) > 0 {

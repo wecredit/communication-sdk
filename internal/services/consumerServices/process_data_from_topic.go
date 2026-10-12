@@ -690,8 +690,6 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	if strings.EqualFold(data.Channel, variables.PUSH) {
 		utils.Debug(fmt.Sprintf("PUSH payload received client=%s commId=%s eventId=%s deviceCount=%d",
 			data.Client, data.CommId, data.EventId, len(data.DeviceTokens)))
-	} else {
-		utils.Debug(fmt.Sprintf("Payload: %+v", data))
 	}
 
 	data.Client = strings.ToLower(strings.TrimSpace(data.Client))

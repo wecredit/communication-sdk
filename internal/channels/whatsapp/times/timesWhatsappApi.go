@@ -60,8 +60,6 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 		responseBody.RawPayload = string(raw)
 	}
 
-	fmt.Println("Times Whatsapp payload:", apiPayload)
-
 	var apiResponse timesAPIResponse
 	_, rawBody, err := utils.ApiHitJSON("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
 	if rawBody != "" {
@@ -76,7 +74,6 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 		return responseBody
 	}
 
-	fmt.Println("ApiResponse Times:", rawBody)
 	if apiResponse.Status {
 		responseBody.IsSent = true
 		messageID := strings.TrimSpace(apiResponse.MessageID)

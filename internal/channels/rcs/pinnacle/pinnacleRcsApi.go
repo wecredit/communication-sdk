@@ -3,7 +3,6 @@ package pinnacleRcs
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -42,8 +41,6 @@ func HitPinnacleRcsApi(data extapimodels.RcsRequestBody) extapimodels.RcsRespons
 		ttl = "10"
 	}
 	apiPayload := buildPinnacleRcsSendPayload(data, ttl)
-	jsonBytes, _ := json.Marshal(apiPayload)
-	utils.Debug(fmt.Sprintf("Pinnacle RCS payload for mobile: %s templateId: %s: %s", data.Mobile, data.TemplateName, string(jsonBytes)))
 	apiHeader := map[string]string{
 		"Content-Type": "application/json",
 		"apikey":       apiKey,

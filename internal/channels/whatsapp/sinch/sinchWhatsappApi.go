@@ -86,7 +86,6 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (e
 
 	jsonBytes, _ := json.Marshal(apiPayload)
 	responseBody.RawPayload = string(jsonBytes)
-	utils.Debug(fmt.Sprintf("Sinch Whatsapp payload for mobile: %s and templateName: %s is: %s", sinchApiModel.Mobile, sinchApiModel.TemplateName, string(jsonBytes)))
 
 	var apiResponse sinchAPIResponse
 	statusCode, rawBody, err := utils.ApiHitJSON("POST", sendMessageURL, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
@@ -128,13 +127,11 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (e
 		}
 	}
 
-	fmt.Println("SINCH FINAL WHATSAPP RESPONSE:", responseBody)
 	return responseBody, false
 }
 
 func getPayload(sinchApiModel extapimodels.WhatsappRequestBody) (map[string]interface{}, error) {
 	if strings.Contains(sinchApiModel.TemplateName, "utility") {
-		fmt.Println("Generating Utility Payload for Sinch WhatsApp API")
 		return sinchpayloads.GetSinchUtilityPayload(sinchApiModel), nil
 	}
 	return sinchpayloads.GetSinchMediaPayload(sinchApiModel), nil

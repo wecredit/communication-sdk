@@ -59,7 +59,5 @@ func HitSinchEmailApi(data extapimodels.EmailRequestBody) extapimodels.EmailResp
 		sinchEmailResponse.ResponseMessage = apiResponse["errors"].(string)
 	}
 
-	fmt.Println("Sinch Email Final response:", sinchEmailResponse)
-
 	return sinchEmailResponse
 }
