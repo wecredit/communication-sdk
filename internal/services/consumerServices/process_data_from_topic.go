@@ -746,10 +746,24 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	// Only run this on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through sdk.Send;
 	// claiming here would see that key and skip the vendor send. WeCredit SMS claims in handleSMS.
 	if !isMarketingSMSDispatch(data) && isZapCashDirectQueue(queueURL) {
-		skipSend, claimErr := claimOrSkipLenderSend(data)
+		skipSend, redisTxn, redisErr, claimErr := claimOrSkipLenderSend(data)
 		if claimErr != nil {
 			utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed: %v", data.Client, data.Channel, claimErr))
 			return false, false
+		}
+		// A blank claim on the first receive is still in flight. A later
+		// receive means that worker is gone, so the blank field can be claimed again.
+		if ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, approximateReceiveCount(msg)) {
+			redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+			if _, relErr := redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); relErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash blank redis reclaim failed: %v", data.Client, data.Channel, relErr))
+				return false, false
+			}
+			skipSend, redisTxn, redisErr, claimErr = claimOrSkipLenderSend(data)
+			if claimErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed after reclaim: %v", data.Client, data.Channel, claimErr))
+				return false, false
+			}
 		}
 		if skipSend {
 			deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
@@ -1643,22 +1657,33 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 	}
 }
 
-func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, err error) {
+// ZapCashBlankClaimShouldReclaim is true when a redelivery finds a claim that
+// never recorded a transaction id or an error. The first receive keeps that
+// blank field so a live worker is not interrupted.
+func ZapCashBlankClaimShouldReclaim(redisTxn, redisErr string, receiveCount int) bool {
+	return marketingRedisClaimBlank(redisTxn, redisErr) && receiveCount > 1
+}
+
+func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, redisTxn, redisErr string, err error) {
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
-	exists, _, _, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+	exists, txn, errMsg, err := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
 	if err != nil {
-		return false, err
+		return false, "", "", err
 	}
 	if exists {
-		return true, nil
+		return true, txn, errMsg, nil
 	}
 	if setErr := redis.SetMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); setErr != nil {
 		if strings.Contains(setErr.Error(), "already exists") {
-			return true, nil
+			_, txn, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+			if getErr != nil {
+				return false, "", "", getErr
+			}
+			return true, txn, errMsg, nil
 		}
-		return false, setErr
+		return false, "", "", setErr
 	}
-	return false, nil
+	return false, "", "", nil
 }
 
 // ZapCashDirectInputAuditTable is the input audit written on AWS_ZAPCASH_QUEUE_URL

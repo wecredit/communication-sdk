@@ -218,3 +218,15 @@ func TestZapCashDirectInputAuditTableLeavesHandlerChannelsAlone(t *testing.T) {
 		t.Fatalf("RCS input table = %q, want handler-owned", got)
 	}
 }
+
+func TestZapCashBlankClaimShouldReclaim(t *testing.T) {
+	if services.ZapCashBlankClaimShouldReclaim("", "", 1) {
+		t.Fatal("first receive must keep a blank in-flight claim")
+	}
+	if !services.ZapCashBlankClaimShouldReclaim("", "", 2) {
+		t.Fatal("redelivery must reclaim a blank claim")
+	}
+	if services.ZapCashBlankClaimShouldReclaim("txn-1", "", 2) || services.ZapCashBlankClaimShouldReclaim("", "vendor off", 2) {
+		t.Fatal("a recorded outcome must stay")
+	}
+}

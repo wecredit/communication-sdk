@@ -40,9 +40,6 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		keys := strings.Split(pinnacleApiModel.TemplateVariables, ",")
 		for _, key := range keys {
 			key = strings.TrimSpace(key)
-			if key == "" {
-				continue
-			}
 			var textValue string
 
 			switch key {

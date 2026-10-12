@@ -67,4 +67,10 @@ func TestNamedBodyParamsKeepsBlankSlots(t *testing.T) {
 	if len(got) != 3 || got[0]["text"] != "Asha" || got[1]["text"] != "" || got[2]["text"] != "2026-10-12" {
 		t.Fatalf("blank slot shifted later placeholders: %#v", got)
 	}
+
+	req.TemplateVariables = "CustomerName,,DueDate"
+	got = whatsappPayload.NamedBodyParams(req)
+	if len(got) != 3 || got[0]["text"] != "Asha" || got[1]["text"] != "" || got[2]["text"] != "2026-10-12" {
+		t.Fatalf("empty CSV segment shifted DueDate: %#v", got)
+	}
 }

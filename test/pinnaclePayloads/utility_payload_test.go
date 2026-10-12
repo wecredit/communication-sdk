@@ -39,4 +39,24 @@ func TestGetPinnacleUtilityPayloadKeepsBlankBodySlots(t *testing.T) {
 	if len(params) != 3 || params[0]["text"] != "Asha" || params[1]["text"] != "2026-10-12" || params[2]["text"] != "" {
 		t.Fatalf("blank total payable shifted later placeholders: %#v", params)
 	}
+
+	payload = pinnacleWhatsappPayload.GetPinnacleUtilityPayload(extapimodels.WhatsappRequestBody{
+		Mobile:            "9876543210",
+		TemplateName:      "due_date_d_0_utility_01",
+		TemplateVariables: "CustomerName,,DueDate",
+		CustomerName:      "Asha",
+		DueDate:           "2026-10-12",
+		ButtonLink:        "https://pay.example",
+	})
+	template = payload["template"].(map[string]interface{})
+	components = template["components"].([]map[string]interface{})
+	params = nil
+	for _, component := range components {
+		if component["type"] == "body" {
+			params = component["parameters"].([]map[string]interface{})
+		}
+	}
+	if len(params) != 3 || params[0]["text"] != "Asha" || params[1]["text"] != "" || params[2]["text"] != "2026-10-12" {
+		t.Fatalf("empty CSV segment shifted DueDate: %#v", params)
+	}
 }

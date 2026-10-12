@@ -56,9 +56,6 @@ func NamedBodyParams(req extapimodels.WhatsappRequestBody) []map[string]interfac
 	out := make([]map[string]interface{}, 0, len(keys))
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
 		textValue := namedTemplateVarValue(req, key)
 		out = append(out, map[string]interface{}{
 			"type": "text",
