@@ -1,7 +1,6 @@
 package rcs
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -114,9 +113,6 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 	}
 
 	database.InsertRow(msg.Client, config.Configs.RcsOutputTable, dbMappedData)
-
-	jsonBytes, _ := json.Marshal(response)
-	utils.Debug(fmt.Sprintf("RCS Response: %s", string(jsonBytes)))
 
 	result := SendRcsResult{
 		Processed:            true,

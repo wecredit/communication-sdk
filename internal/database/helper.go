@@ -15,7 +15,17 @@ const auditInsertTimeout = 2 * time.Second
 
 // auditInsertSlots caps in-flight audit inserts at the Core pool size so a
 // slow database cannot pile up goroutines or extra connections.
-var auditInsertSlots = make(chan struct{}, zapCashV1MaxOpenConns)
+// ConfigureAuditInsertSlots replaces this during ZapCash v1 pool setup.
+var auditInsertSlots = make(chan struct{}, defaultZapCashV1MaxOpenConns)
+
+// ConfigureAuditInsertSlots sizes the in-flight audit cap to the Core pool.
+// Call it once at startup, before InsertRow.
+func ConfigureAuditInsertSlots(maxOpen int) {
+	if maxOpen < 1 {
+		maxOpen = defaultZapCashV1MaxOpenConns
+	}
+	auditInsertSlots = make(chan struct{}, maxOpen)
+}
 
 var (
 	commInputOutputWriteWeCredit string

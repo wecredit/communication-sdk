@@ -60,11 +60,8 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		return responseBody
 	}
 
-	fmt.Println("Pinnacle Whatsapp payload:", apiPayload)
-
 	jsonBytes, _ := json.Marshal(apiPayload)
 	responseBody.RawPayload = string(jsonBytes)
-	utils.Debug(fmt.Sprintf("Pinnacle Whatsapp payload for mobile: %s and templateName: %s is: %s", pinnacleApiModel.Mobile, pinnacleApiModel.TemplateName, string(jsonBytes)))
 
 	var apiResponse pinnacleAPIResponse
 	statusCode, rawBody, err := utils.ApiHitJSON("POST", apiUrl, apiHeader, "", "", apiPayload, variables.ContentTypeJSON, &apiResponse)
@@ -91,7 +88,6 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 		responseBody.ResponseMessage = pinnacleWhatsappErrorBodyMessage(apiResponse)
 	}
 
-	fmt.Println("PINNACLE FINAL WHATSAPP RESPONSE:", responseBody)
 	// lead_id is our CommId — we set it on the outbound payload.
 	if leadID := strings.TrimSpace(pinnacleApiModel.CommId); leadID != "" {
 		responseBody.ResponseMessage = responseBody.ResponseMessage + " | " + leadID

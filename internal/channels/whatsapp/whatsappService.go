@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -147,8 +146,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 		DBData:            dbMappedData,
 	}
 
-	jsonBytes, _ := json.Marshal(response)
-	utils.Debug(fmt.Sprintf("Whatsapp Response: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
 		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 		if msg.Client == variables.CreditSea {

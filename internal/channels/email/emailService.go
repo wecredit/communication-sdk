@@ -1,7 +1,6 @@
 package email
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -76,8 +75,6 @@ func SendEmailByProcess(msg sdkModels.CommApiRequestBody) (bool, map[string]inte
 	// 	utils.Error(fmt.Errorf("error inserting data into table: %v", err))
 	// }
 
-	jsonBytes, _ := json.Marshal(response)
-	utils.Debug(fmt.Sprintf("EmailResponse: %s", string(jsonBytes)))
 	if shouldHitVendor && response.IsSent {
 		utils.Info(fmt.Sprintf("Email sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Email, msg.Vendor))
 		return true, dbMappedData, nil

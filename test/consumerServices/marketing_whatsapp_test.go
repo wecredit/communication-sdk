@@ -232,8 +232,33 @@ func TestMarketingWhatsappRetryBlankAndOutputFailureDoNotAcknowledge(t *testing.
 			return true, false, "", "", nil
 		}
 		processed, deleted := services.HandleMarketingWhatsappWithDependencies(marketingWhatsappTestData(), nil, nil, 5, deps)
-		if processed || deleted || state.blankCalls != 1 || state.sendCalls != 0 || state.outputCalls != 0 || state.deleteCalls != 0 {
+		if processed || deleted || state.blankCalls != 1 || state.releaseCalls != 0 || state.sendCalls != 0 || state.outputCalls != 0 || state.deleteCalls != 0 {
 			t.Fatalf("unexpected blank state: %+v, result=(%t,%t)", state, processed, deleted)
+		}
+	})
+
+	t.Run("redelivered blank Redis claim is reclaimed and sent", func(t *testing.T) {
+		state := &whatsappTestState{}
+		deps := marketingWhatsappTestDependencies(state)
+		claims := 0
+		deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
+			claims++
+			if claims == 1 {
+				return true, false, "", "", nil
+			}
+			return false, false, "", "", nil
+		}
+		configuredSend := deps.Send
+		deps.Send = func(data sdkModels.CommApiRequestBody) (bool, map[string]interface{}, error) {
+			state.sendCalls++
+			return configuredSend(data)
+		}
+		msg := &sqs.Message{Attributes: map[string]*string{
+			"ApproximateReceiveCount": aws.String("3"),
+		}}
+		processed, deleted := services.HandleMarketingWhatsappWithDependencies(marketingWhatsappTestData(), nil, msg, 10, deps)
+		if !processed || !deleted || state.releaseCalls != 1 || state.sendCalls != 1 || state.blankCalls != 0 || state.deleteCalls != 1 {
+			t.Fatalf("unexpected redelivered blank state: %+v, result=(%t,%t)", state, processed, deleted)
 		}
 	})
 
