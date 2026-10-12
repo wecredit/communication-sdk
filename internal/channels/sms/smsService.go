@@ -2,7 +2,6 @@ package sms
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -283,9 +282,6 @@ func buildSmsResult(msg sdkModels.CommApiRequestBody, req extapimodels.SmsReques
 	if dbMappedData == nil {
 		dbMappedData = map[string]interface{}{}
 	}
-
-	raw, _ := json.Marshal(response)
-	utils.Debug(fmt.Sprintf("SMS Response: %s", string(raw)))
 
 	return SendSmsResult{
 		Processed:         true,
