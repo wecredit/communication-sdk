@@ -40,6 +40,9 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		keys := strings.Split(pinnacleApiModel.TemplateVariables, ",")
 		for _, key := range keys {
 			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
 			var textValue string
 
 			switch key {
@@ -100,15 +103,14 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 				textValue = "ZapCash App"
 
 			default:
-				textValue = "" // ignore unknown fields
+				textValue = ""
 			}
 
-			if textValue != "" {
-				bodyParams = append(bodyParams, map[string]interface{}{
-					"type": "text",
-					"text": textValue,
-				})
-			}
+			// Keep a slot for every CSV key so a blank value cannot shift later {{n}}.
+			bodyParams = append(bodyParams, map[string]interface{}{
+				"type": "text",
+				"text": textValue,
+			})
 		}
 	}
 

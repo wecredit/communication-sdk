@@ -55,3 +55,16 @@ func TestBodyParamsFallsBackToNamed(t *testing.T) {
 		t.Fatalf("positional preferred got %#v", got)
 	}
 }
+
+func TestNamedBodyParamsKeepsBlankSlots(t *testing.T) {
+	req := extapimodels.WhatsappRequestBody{
+		TemplateVariables:  "CustomerName,TodayPayableAmount,DueDate",
+		CustomerName:       "Asha",
+		TodayPayableAmount: "",
+		DueDate:            "2026-10-12",
+	}
+	got := whatsappPayload.NamedBodyParams(req)
+	if len(got) != 3 || got[0]["text"] != "Asha" || got[1]["text"] != "" || got[2]["text"] != "2026-10-12" {
+		t.Fatalf("blank slot shifted later placeholders: %#v", got)
+	}
+}
