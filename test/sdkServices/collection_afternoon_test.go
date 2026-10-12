@@ -37,6 +37,7 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 		{CollectionSlot: "afternoon", Client: "other", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "SMS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 10.01},
+		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 13.01},
 	} {
 		if _, _, err := sdkServices.ValidateCollectionAfternoonRequest(request); err == nil {
 			t.Fatalf("expected invalid request to fail: %+v", request)

@@ -24,6 +24,7 @@ import (
 var paymentLinkStages = map[int]bool{
 	11: true,
 	12: true,
+	13: true,
 	// 6: true,
 	// Add more stages here in the future
 	// 7: true,
