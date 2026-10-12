@@ -968,8 +968,20 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		return false, false
 	}
 
+	// A blank claim on the first receive means another worker still holds it.
+	// A redelivery means that visibility window expired. Drop the orphan blank
+	// field and claim again so the vendor send can proceed.
+	if skipSend && marketingRedisClaimBlank(redisTxn, redisErr) && approximateReceiveCount(msg) > 1 && deps.Release != nil {
+		deps.Release(data)
+		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr = deps.Claim(data)
+		if claimErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s EventId:%s] marketing WhatsApp redis reclaim failed: %v", data.Client, data.EventId, claimErr))
+			return false, false
+		}
+	}
+
 	if skipSend {
-		if strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == "" {
+		if marketingRedisClaimBlank(redisTxn, redisErr) {
 			deps.Blank(data, msg, redriveMaxReceiveCount)
 			return false, false
 		}
@@ -1518,6 +1530,10 @@ func ShouldSubmitZapCashMonitoring(data sdkModels.CommApiRequestBody, providerAc
 	default:
 		return false
 	}
+}
+
+func marketingRedisClaimBlank(redisTxn, redisErr string) bool {
+	return strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == ""
 }
 
 func isMarketingSMSDispatch(data sdkModels.CommApiRequestBody) bool {
