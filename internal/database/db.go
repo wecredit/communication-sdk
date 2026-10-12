@@ -24,8 +24,10 @@ var (
 )
 
 const (
-	zapCashV1MaxOpenConns = 5
-	zapCashV1MaxIdleConns = 2
+	defaultZapCashV1MaxOpenConns = 30
+	defaultZapCashV1MaxIdleConns = 15
+	defaultMarketingMaxOpenConns = 50
+	defaultMarketingMaxIdleConns = 25
 )
 
 const (
@@ -165,7 +167,7 @@ func connectMarketingDB(config models.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to Marketing DB: %w", err)
 	}
-	if err := applyPoolConfig(db, config, "Marketing DB"); err != nil {
+	if err := applyPoolLimits(db, config.DbMaxOpenConnsMarketing, config.DbMaxIdleConnsMarketing, config.DbConnMaxLifetime, "Marketing DB", "DB_MAX_OPEN_CONNS_MARKETING", "DB_MAX_IDLE_CONNS_MARKETING", defaultMarketingMaxOpenConns, defaultMarketingMaxIdleConns); err != nil {
 		return err
 	}
 	DBMarketing = db
@@ -235,52 +237,49 @@ func PingAnalyticsDB() error {
 }
 
 func applyPoolConfig(db *gorm.DB, config models.Config, dbName string) error {
+	return applyPoolLimits(db, config.DbMaxOpenConns, config.DbMaxIdleConns, config.DbConnMaxLifetime, dbName, "DB_MAX_OPEN_CONNS", "DB_MAX_IDLE_CONNS", 15, 5)
+}
+
+func applyPoolLimits(db *gorm.DB, openRaw, idleRaw, lifetimeRaw, dbName, openName, idleName string, defaultOpen, defaultIdle int) error {
 	sqlDB, err := db.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get sql.DB for %s: %w", dbName, err)
 	}
 
-	maxOpen := 15
-	if config.DbMaxOpenConns != "" {
-		parsed, err := strconv.Atoi(config.DbMaxOpenConns)
-		if err != nil {
-			utils.Info(fmt.Sprintf("Invalid DB_MAX_OPEN_CONNS for %s, using default %d", dbName, maxOpen))
-		} else {
-			maxOpen = parsed
-		}
-	} else {
-		utils.Info(fmt.Sprintf("DB_MAX_OPEN_CONNS not set for %s, using default %d", dbName, maxOpen))
+	maxOpen := poolLimit(openRaw, openName, dbName, defaultOpen)
+	maxIdle := poolLimit(idleRaw, idleName, dbName, defaultIdle)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
 	}
 	sqlDB.SetMaxOpenConns(maxOpen)
-
-	maxIdle := 5
-	if config.DbMaxIdleConns != "" {
-		parsed, err := strconv.Atoi(config.DbMaxIdleConns)
-		if err != nil {
-			utils.Info(fmt.Sprintf("Invalid DB_MAX_IDLE_CONNS for %s, using default %d", dbName, maxIdle))
-		} else {
-			maxIdle = parsed
-		}
-	} else {
-		utils.Info(fmt.Sprintf("DB_MAX_IDLE_CONNS not set for %s, using default %d", dbName, maxIdle))
-	}
 	sqlDB.SetMaxIdleConns(maxIdle)
 
 	maxLifetime := 15 * time.Minute
-	if config.DbConnMaxLifetime != "" {
-		parsed, err := strconv.Atoi(config.DbConnMaxLifetime)
-		if err != nil {
-			utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for %s, using default %s", dbName, maxLifetime))
-		} else {
-			maxLifetime = time.Duration(parsed) * time.Minute
-		}
-	} else {
+	lifetimeRaw = strings.TrimSpace(lifetimeRaw)
+	if lifetimeRaw == "" {
 		utils.Info(fmt.Sprintf("DB_CONN_MAX_LIFETIME_MINUTES not set for %s, using default %s", dbName, maxLifetime))
+	} else if parsed, parseErr := strconv.Atoi(lifetimeRaw); parseErr != nil || parsed < 1 {
+		utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for %s, using default %s", dbName, maxLifetime))
+	} else {
+		maxLifetime = time.Duration(parsed) * time.Minute
 	}
 	sqlDB.SetConnMaxLifetime(maxLifetime)
 	utils.Debug(fmt.Sprintf("DB pool configured for %s: max_open=%d max_idle=%d max_lifetime=%s", dbName, maxOpen, maxIdle, maxLifetime))
-
 	return nil
+}
+
+func poolLimit(raw, name, dbName string, fallback int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		utils.Info(fmt.Sprintf("%s not set for %s, using default %d", name, dbName, fallback))
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		utils.Info(fmt.Sprintf("Invalid %s for %s, using default %d", name, dbName, fallback))
+		return fallback
+	}
+	return parsed
 }
 
 // ConnectZapCashV1IfEnabled opens the Core audit pool when the ZapCash v1
@@ -328,18 +327,25 @@ func applyZapCashV1Pool(db *gorm.DB, config models.Config) error {
 		return fmt.Errorf("failed to get sql.DB for ZapCash v1 audit DB: %w", err)
 	}
 
-	maxLifetime := 15 * time.Minute
-	if config.DbConnMaxLifetime != "" {
-		parsed, parseErr := strconv.Atoi(config.DbConnMaxLifetime)
-		if parseErr != nil {
-			utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for ZapCash v1 audit DB, using default %s", maxLifetime))
-		} else {
-			maxLifetime = time.Duration(parsed) * time.Minute
-		}
+	maxOpen := poolLimit(config.DbMaxOpenConnsZapCashV1, "DB_MAX_OPEN_CONNS_ZAPCASH_V1", "ZapCash v1 audit DB", defaultZapCashV1MaxOpenConns)
+	maxIdle := poolLimit(config.DbMaxIdleConnsZapCashV1, "DB_MAX_IDLE_CONNS_ZAPCASH_V1", "ZapCash v1 audit DB", defaultZapCashV1MaxIdleConns)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
 	}
-	sqlDB.SetMaxOpenConns(zapCashV1MaxOpenConns)
-	sqlDB.SetMaxIdleConns(zapCashV1MaxIdleConns)
+	ConfigureAuditInsertSlots(maxOpen)
+
+	maxLifetime := 15 * time.Minute
+	lifetimeRaw := strings.TrimSpace(config.DbConnMaxLifetime)
+	if lifetimeRaw == "" {
+		utils.Info(fmt.Sprintf("DB_CONN_MAX_LIFETIME_MINUTES not set for ZapCash v1 audit DB, using default %s", maxLifetime))
+	} else if parsed, parseErr := strconv.Atoi(lifetimeRaw); parseErr != nil || parsed < 1 {
+		utils.Info(fmt.Sprintf("Invalid DB_CONN_MAX_LIFETIME_MINUTES for ZapCash v1 audit DB, using default %s", maxLifetime))
+	} else {
+		maxLifetime = time.Duration(parsed) * time.Minute
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(maxLifetime)
-	utils.Debug(fmt.Sprintf("DB pool configured for ZapCash v1 audit DB: max_open=%d max_idle=%d max_lifetime=%s", zapCashV1MaxOpenConns, zapCashV1MaxIdleConns, maxLifetime))
+	utils.Debug(fmt.Sprintf("DB pool configured for ZapCash v1 audit DB: max_open=%d max_idle=%d max_lifetime=%s", maxOpen, maxIdle, maxLifetime))
 	return nil
 }
