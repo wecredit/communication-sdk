@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+func TestPoolLimitUsesFallbackForBlankAndInvalid(t *testing.T) {
+	if got := poolLimit("", "DB_MAX_OPEN_CONNS_MARKETING", "Marketing DB", 50); got != 50 {
+		t.Fatalf("blank = %d, want 50", got)
+	}
+	if got := poolLimit("0", "DB_MAX_OPEN_CONNS_ZAPCASH_V1", "ZapCash v1 audit DB", 30); got != 30 {
+		t.Fatalf("zero = %d, want 30", got)
+	}
+	if got := poolLimit("40", "DB_MAX_OPEN_CONNS_MARKETING", "Marketing DB", 50); got != 40 {
+		t.Fatalf("parsed = %d, want 40", got)
+	}
+}
+
 func TestEnqueueAuditInsertReturnsWhileWorkRuns(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
