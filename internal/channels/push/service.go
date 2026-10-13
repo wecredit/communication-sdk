@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
@@ -16,9 +15,7 @@ import (
 )
 
 const (
-	providerName          = "FCM"
-	maxParallelTokenSends = 10
-	pushClaimLease        = 5 * time.Minute
+	providerName = "FCM"
 
 	outcomeSubmitted      = "submitted"
 	outcomeFailedFinal    = "failed_final"
@@ -43,34 +40,28 @@ type Result struct {
 	InputAudit map[string]interface{}
 	// OutputAudits are PushOutputTable rows: one per token that reached a
 	// terminal FCM outcome, or one per token skipped because ShouldHitVendor is off.
-	// FreshOutputAudits excludes rows rebuilt from an existing Redis claim.
-	// Replayed counts those rebuilt rows.
+	// FreshOutputAudits is the same set. The consumer inserts those rows once.
 	OutputAudits      []map[string]interface{}
 	FreshOutputAudits []map[string]interface{}
 	Replayed          int
 }
 
 type Service struct {
-	claims   tokenClaimStore
 	executor retryExecutor
 }
 
-func NewService(claims tokenClaimStore, executor retryExecutor) (*Service, error) {
-	if claims == nil {
-		return nil, errors.New("PUSH token claim store is required")
-	}
+func NewService(executor retryExecutor) (*Service, error) {
 	if executor == nil {
 		return nil, errors.New("PUSH retry executor is required")
 	}
-	return &Service{claims: claims, executor: executor}, nil
+	return &Service{executor: executor}, nil
 }
 
-// Send resolves one template and fans out independently to each unique device
-// token. Per-token Redis claims (EventId:fingerprint) are the dedupe authority.
-// Audit maps are returned for the consumer to InsertData (SMS-style).
+// Send resolves one template and sends each unique device token once.
+// The EventId claim in front of the queue handler is the same gate WhatsApp
+// and RCS use. This path does not take another Redis claim per token.
 //
-// ShouldHitVendor lives here (SMS-style inside the channel Send). AssignVendor
-// lives in handlePush — do not duplicate it here.
+// ShouldHitVendor lives here. AssignVendor lives in handlePush.
 func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody) (Result, error) {
 	if strings.TrimSpace(request.Vendor) == "" {
 		request.Vendor = providerName
@@ -79,27 +70,7 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	tokens := uniqueTokens(request.DeviceTokens)
 
 	if !channelHelper.ShouldHitVendor(request.Client, request.Channel) {
-		outputs, fresh, skipped, replayed, err := markShouldHitVendorOff(s.claims, request, tokens)
-		if err != nil {
-			return Result{Processed: false, AckSQS: false}, err
-		}
-		templateName := ""
-		vendor := strings.TrimSpace(request.Vendor)
-		if _, _, resolvedName, resolvedVendor, resolveErr := resolveContent(request); resolveErr == nil {
-			templateName = resolvedName
-			if strings.TrimSpace(resolvedVendor) != "" {
-				vendor = resolvedVendor
-			}
-		}
-		return Result{
-			Processed:         true,
-			AckSQS:            true,
-			Skipped:           skipped,
-			Replayed:          replayed,
-			InputAudit:        buildInputAudit(request, vendor, templateName, len(tokens)),
-			OutputAudits:      outputs,
-			FreshOutputAudits: fresh,
-		}, nil
+		return skippedVendorOff(request, tokens), nil
 	}
 
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
@@ -111,67 +82,27 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 		return Result{}, errors.New("PUSH request contains no usable device tokens")
 	}
 
-	type tokenResult struct {
-		outcome string
-		skipped bool
-		replay  bool
-		err     error
-		output  map[string]interface{}
-	}
-	results := make(chan tokenResult, len(tokens))
-	var workers sync.WaitGroup
-
-	tokenJobs := make(chan string)
-	workerCount := len(tokens)
-	if workerCount > maxParallelTokenSends {
-		workerCount = maxParallelTokenSends
-	}
-	for worker := 0; worker < workerCount; worker++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			for deviceToken := range tokenJobs {
-				outcome, skipped, replay, output, sendErr := s.sendTokenSafely(ctx, request, title, body, deviceToken)
-				results <- tokenResult{outcome: outcome, skipped: skipped, replay: replay, output: output, err: sendErr}
-			}
-		}()
-	}
-	for _, token := range tokens {
-		tokenJobs <- token
-	}
-	close(tokenJobs)
-
-	workers.Wait()
-	close(results)
-
 	result := Result{
 		Processed:         true,
 		AckSQS:            true,
 		InputAudit:        buildInputAudit(request, resolvedVendor, templateName, len(tokens)),
+		OutputAudits:      make([]map[string]interface{}, 0, len(tokens)),
 		FreshOutputAudits: make([]map[string]interface{}, 0, len(tokens)),
 	}
 	var failures []error
-	for tokenResult := range results {
-		if tokenResult.err != nil {
+	for _, deviceToken := range tokens {
+		output, outcome, sendErr := s.sendToken(ctx, request, title, body, deviceToken)
+		if sendErr != nil {
 			result.Processed = false
 			result.AckSQS = false
-			failures = append(failures, tokenResult.err)
+			failures = append(failures, sendErr)
 			continue
 		}
-		if tokenResult.replay {
-			result.Replayed++
+		if output != nil {
+			result.OutputAudits = append(result.OutputAudits, output)
+			result.FreshOutputAudits = append(result.FreshOutputAudits, output)
 		}
-		if tokenResult.output != nil {
-			result.OutputAudits = append(result.OutputAudits, tokenResult.output)
-			if !tokenResult.replay {
-				result.FreshOutputAudits = append(result.FreshOutputAudits, tokenResult.output)
-			}
-		}
-		if tokenResult.skipped {
-			result.Skipped++
-			continue
-		}
-		switch tokenResult.outcome {
+		switch outcome {
 		case outcomeSubmitted:
 			result.Submitted++
 		case outcomeFailedFinal:
@@ -181,11 +112,49 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 		default:
 			result.Processed = false
 			result.AckSQS = false
-			failures = append(failures, fmt.Errorf("PUSH token ended in non-terminal status %q", tokenResult.outcome))
+			failures = append(failures, fmt.Errorf("PUSH token ended in non-terminal status %q", outcome))
 		}
 	}
 
 	return result, errors.Join(failures...)
+}
+
+func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Result {
+	templateName := ""
+	vendor := strings.TrimSpace(request.Vendor)
+	if _, _, resolvedName, resolvedVendor, resolveErr := resolveContent(request); resolveErr == nil {
+		templateName = resolvedName
+		if strings.TrimSpace(resolvedVendor) != "" {
+			vendor = resolvedVendor
+		}
+	}
+
+	skipped := len(tokens)
+	if skipped == 0 {
+		skipped = 1
+	}
+
+	result := Result{
+		Processed:         true,
+		AckSQS:            true,
+		Skipped:           skipped,
+		InputAudit:        buildInputAudit(request, vendor, templateName, len(tokens)),
+		OutputAudits:      make([]map[string]interface{}, 0, len(tokens)),
+		FreshOutputAudits: make([]map[string]interface{}, 0, len(tokens)),
+	}
+
+	skipMsg := vendorOffMessage(request.Mobile)
+	for _, token := range tokens {
+		fingerprint, err := FingerprintToken(token)
+		if err != nil {
+			continue
+		}
+		output := buildOutputAudit(request, fingerprint, outcomeSkipped, fcm.ExecutionResult{Code: skipMsg})
+		result.OutputAudits = append(result.OutputAudits, output)
+		result.FreshOutputAudits = append(result.FreshOutputAudits, output)
+	}
+
+	return result
 }
 
 func buildInputAudit(
@@ -224,51 +193,35 @@ func buildOutputAudit(
 	}
 }
 
-func markShouldHitVendorOff(claims tokenClaimStore, request sdkModels.CommApiRequestBody, tokens []string) (outputs, fresh []map[string]interface{}, skipped, replayed int, err error) {
-	skipMsg := vendorOffMessage(request.Mobile)
-	if len(tokens) == 0 {
-		if err := channelHelper.UpdateRedisErrorMessage(request, skipMsg); err != nil {
-			return nil, nil, 0, 0, fmt.Errorf("record ShouldHitVendor-off PUSH skip: %w", err)
-		}
-		return nil, nil, 1, 0, nil
+func (s *Service) sendToken(
+	ctx context.Context,
+	request sdkModels.CommApiRequestBody,
+	title, body, deviceToken string,
+) (map[string]interface{}, string, error) {
+	fingerprint, err := FingerprintToken(deviceToken)
+	if err != nil {
+		return nil, "", err
 	}
-	outputs = make([]map[string]interface{}, 0, len(tokens))
-	fresh = make([]map[string]interface{}, 0, len(tokens))
-	for _, token := range tokens {
-		fp, fpErr := FingerprintToken(token)
-		if fpErr != nil {
-			return nil, nil, 0, 0, fmt.Errorf("fingerprint ShouldHitVendor-off PUSH token: %w", fpErr)
-		}
-		field := TokenRedisField(request, fp)
-		skip, claimID, claimErr := claimTokenField(claims, request, field)
-		if claimErr != nil {
-			return nil, nil, 0, 0, fmt.Errorf("claim ShouldHitVendor-off PUSH token: %w", claimErr)
-		}
-		if skip {
-			// A prior submitted or failed claim must keep that outcome. A blank
-			// in-flight claim has no terminal row yet, so do not invent one.
-			output, terminal, replayErr := terminalReplayOutput(claims, request, field, fp)
-			if replayErr != nil {
-				return nil, nil, 0, 0, fmt.Errorf("replay ShouldHitVendor-off PUSH token: %w", replayErr)
-			}
-			if terminal && output != nil {
-				outputs = append(outputs, output)
-				replayed++
-			}
-			skipped++
-			continue
-		}
-		if err := claims.SetErrorMessage(field, claimID, outcomeSkipped, skipMsg); err != nil {
-			return nil, nil, 0, 0, fmt.Errorf("record ShouldHitVendor-off PUSH token skip: %w", err)
-		}
-		output := buildOutputAudit(request, fp, outcomeSkipped, fcm.ExecutionResult{
-			Code: skipMsg,
-		})
-		outputs = append(outputs, output)
-		fresh = append(fresh, output)
-		skipped++
+
+	payload, err := fcm.BuildSendRequest(deviceToken, title, body, request)
+	if err != nil {
+		execution := fcm.ExecutionResult{Outcome: fcm.OutcomeFailedFinal, Code: "FCM_PAYLOAD_INVALID"}
+		return buildOutputAudit(request, fingerprint, outcomeFailedFinal, execution), outcomeFailedFinal, nil
 	}
-	return outputs, fresh, skipped, replayed, nil
+
+	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, nil, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	outcome, err := mapOutcome(execution.Outcome)
+	if err != nil {
+		return nil, "", err
+	}
+
+	metrics.Count("PushProviderAttempts", providerName, request.Client, execution.AttemptCount)
+	metrics.Count("PushProviderOutcome_"+outcome, providerName, request.Client, 1)
+	return buildOutputAudit(request, fingerprint, outcome, execution), outcome, nil
 }
 
 // vendorOffMessage matches the SMS, WhatsApp, and RCS skip text. PushOutputTable.ErrorCode
@@ -279,236 +232,6 @@ func vendorOffMessage(mobile string) string {
 		return message[:64]
 	}
 	return message
-}
-
-func (s *Service) sendTokenSafely(
-	ctx context.Context,
-	request sdkModels.CommApiRequestBody,
-	title, body, deviceToken string,
-) (outcome string, skipped, replay bool, output map[string]interface{}, err error) {
-	defer func() {
-		if recover() != nil {
-			outcome = ""
-			skipped = false
-			replay = false
-			output = nil
-			err = errors.New("PUSH token worker panic recovered")
-		}
-	}()
-	return s.sendToken(ctx, request, title, body, deviceToken)
-}
-
-func (s *Service) sendToken(
-	ctx context.Context,
-	request sdkModels.CommApiRequestBody,
-	title, body, deviceToken string,
-) (string, bool, bool, map[string]interface{}, error) {
-	fingerprint, err := FingerprintToken(deviceToken)
-	if err != nil {
-		return "", false, false, nil, err
-	}
-
-	field := TokenRedisField(request, fingerprint)
-	if replayOutput, terminal, replayErr := terminalReplayOutput(s.claims, request, field, fingerprint); replayErr != nil {
-		return "", false, false, nil, replayErr
-	} else if terminal {
-		return "", true, true, replayOutput, nil
-	}
-
-	skip, claimID, err := claimTokenField(s.claims, request, field)
-	if err != nil {
-		return "", false, false, nil, err
-	}
-	if skip {
-		return "", true, false, nil, nil
-	}
-
-	payload, err := fcm.BuildSendRequest(deviceToken, title, body, request)
-	if err != nil {
-		outcome, skipped, output, finalizeErr := s.finalizeToken(request, field, fingerprint, claimID, fcm.ExecutionResult{
-			Outcome: fcm.OutcomeFailedFinal,
-			Code:    "FCM_PAYLOAD_INVALID",
-		})
-		return outcome, skipped, false, output, finalizeErr
-	}
-
-	observer := func(_ context.Context, attempt int) error {
-		if err := s.claims.SetAttemptCount(field, claimID, attempt); err != nil {
-			return err
-		}
-		metrics.Count("PushProviderAttempts", providerName, request.Client, 1)
-		return nil
-	}
-
-	// Before a second FCM attempt, confirm our blank claim was not reclaimed or finalized.
-	guard := func(context.Context) (bool, error) {
-		exists, txn, errMsg, getErr := s.claims.Get(field)
-		if getErr != nil {
-			return false, getErr
-		}
-		currentClaimID, claimExists, claimErr := s.claims.ClaimID(field)
-		if claimErr != nil {
-			return false, claimErr
-		}
-		if !claimExists || currentClaimID != claimID {
-			return false, nil
-		}
-		if !exists {
-			return false, nil
-		}
-		if strings.TrimSpace(txn) != "" || strings.TrimSpace(errMsg) != "" {
-			return false, nil
-		}
-		return true, nil
-	}
-
-	executionCtx, stopHeartbeat := context.WithCancel(ctx)
-	heartbeatDone := make(chan struct{})
-	go func() {
-		defer close(heartbeatDone)
-		ticker := time.NewTicker(pushClaimLease / 3)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-executionCtx.Done():
-				return
-			case <-ticker.C:
-				if err := s.claims.RefreshClaim(field, claimID); err != nil {
-					return
-				}
-			}
-		}
-	}()
-	execution, err := s.executor.ExecuteWithObserver(executionCtx, request.Client, payload, guard, observer)
-	stopHeartbeat()
-	<-heartbeatDone
-	if err != nil {
-		return "", false, false, nil, err
-	}
-	outcome, skipped, output, finalizeErr := s.finalizeToken(request, field, fingerprint, claimID, execution)
-	return outcome, skipped, false, output, finalizeErr
-}
-
-// terminalReplayOutput rebuilds the prior token outcome from Redis. FCM is not
-// called. The consumer does not insert that rebuilt row again.
-func terminalReplayOutput(
-	claims tokenClaimStore,
-	request sdkModels.CommApiRequestBody,
-	field, fingerprint string,
-) (map[string]interface{}, bool, error) {
-	exists, transactionID, errorMessage, err := claims.Get(field)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if !exists {
-		return nil, false, nil
-	}
-
-	if transactionID = strings.TrimSpace(transactionID); transactionID != "" {
-		attemptCount, _, err := claims.AttemptCount(field)
-		if err != nil {
-			return nil, false, err
-		}
-		return buildOutputAudit(request, fingerprint, outcomeSubmitted, fcm.ExecutionResult{
-			Outcome:      fcm.OutcomeSubmitted,
-			MessageID:    transactionID,
-			AttemptCount: attemptCount,
-		}), true, nil
-	}
-
-	if errorMessage = strings.TrimSpace(errorMessage); errorMessage != "" {
-		outcome, _, err := claims.Outcome(field)
-		if err != nil {
-			return nil, false, err
-		}
-		if strings.TrimSpace(outcome) == "" {
-			outcome = outcomeFailedFinal
-		}
-		attemptCount, _, err := claims.AttemptCount(field)
-		if err != nil {
-			return nil, false, err
-		}
-		executionOutcome := fcm.Outcome(outcome)
-		return buildOutputAudit(request, fingerprint, outcome, fcm.ExecutionResult{
-			Outcome:      executionOutcome,
-			Code:         errorMessage,
-			AttemptCount: attemptCount,
-		}), true, nil
-	}
-
-	return nil, false, nil
-}
-
-func claimTokenField(claims tokenClaimStore, request sdkModels.CommApiRequestBody, field string) (skip bool, claimID string, err error) {
-	exists, txn, errMsg, err := claims.Get(field)
-	if err != nil {
-		return false, "", err
-	}
-	if exists {
-		if strings.TrimSpace(txn) != "" || strings.TrimSpace(errMsg) != "" {
-			return true, "", nil
-		}
-
-		claimedAt, _, claimErr := claims.ClaimedAt(field)
-		if claimErr != nil {
-			return false, "", claimErr
-		}
-
-		if claimedAt.IsZero() {
-			// Legacy blank claims have no known age, so keep them at-most-once.
-			return true, "", nil
-		}
-
-		reclaimed, reclaimErr := claims.ReclaimExpired(field, time.Now().UTC().Add(-pushClaimLease))
-		if reclaimErr != nil {
-			return false, "", reclaimErr
-		}
-
-		if !reclaimed {
-			return true, "", nil
-		}
-	}
-
-	claimID, err = claims.Claim(field)
-	if err != nil {
-		// HSetNX race: another worker already claimed → skip send (same as SMS).
-		// Any other Redis error must surface so the message is not Ack'd.
-		if strings.Contains(err.Error(), "already exists") {
-			return true, "", nil
-		}
-		return false, "", err
-	}
-	return false, claimID, nil
-}
-
-func (s *Service) finalizeToken(
-	request sdkModels.CommApiRequestBody,
-	field, fingerprint, claimID string,
-	execution fcm.ExecutionResult,
-) (string, bool, map[string]interface{}, error) {
-	outcome, err := mapOutcome(execution.Outcome)
-	if err != nil {
-		return "", false, nil, err
-	}
-
-	switch outcome {
-	case outcomeSubmitted:
-		if err := s.claims.SetTransactionID(field, claimID, execution.MessageID); err != nil {
-			return "", false, nil, err
-		}
-	default:
-		msg := execution.Code
-		if strings.TrimSpace(msg) == "" {
-			msg = string(execution.Outcome)
-		}
-		if err := s.claims.SetErrorMessage(field, claimID, outcome, msg); err != nil {
-			return "", false, nil, err
-		}
-	}
-
-	metrics.Count("PushProviderOutcome_"+outcome, providerName, request.Client, 1)
-	return outcome, false, buildOutputAudit(request, fingerprint, outcome, execution), nil
 }
 
 func resolveContent(request sdkModels.CommApiRequestBody) (title, body, templateName, vendor string, err error) {

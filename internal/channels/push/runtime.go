@@ -15,8 +15,9 @@ var (
 	runtimeService *Service
 )
 
-// Init constructs the per-client FCM sender, bounded retry executor, and
-// Redis-backed per-token claim store. It does not contact FCM or mutate schema.
+// Init constructs the per-client FCM sender and bounded retry executor.
+// It does not contact FCM or mutate schema. Dedup is the queue EventId claim,
+// the same gate WhatsApp and RCS use.
 func Init(cfg models.Config) error {
 	clientConfigs, err := fcm.ParseClientConfigs(cfg.FCMClientConfigJSON)
 	if err != nil {
@@ -32,11 +33,7 @@ func Init(cfg models.Config) error {
 	if err != nil {
 		return err
 	}
-	claims, err := newRedisTokenClaims()
-	if err != nil {
-		return err
-	}
-	service, err := NewService(claims, executor)
+	service, err := NewService(executor)
 	if err != nil {
 		return err
 	}

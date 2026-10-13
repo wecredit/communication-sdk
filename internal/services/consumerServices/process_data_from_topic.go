@@ -852,9 +852,8 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 	}
 
 	// Persist terminal PUSH audits once. A finished ZapCash send then records the
-	// outer EventId claim. A later SQS delivery sees that outcome and deletes
-	// the message instead of inserting PushInput/PushOutput again. Per-token
-	// claims still stop a second FCM send.
+	// same EventId claim WhatsApp and RCS use. A later SQS delivery sees that
+	// outcome and deletes the message instead of sending FCM again.
 	if auditErr := writePushAudits(data.Client, result); auditErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
 			data.Client, data.CommId, data.EventId, auditErr))
@@ -870,7 +869,7 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		}
 	} else {
 		// The attempt is not finished. Drop the blank claim so the retry can
-		// claim it again. Token claims still block FCM for tokens already sent.
+		// claim it again, the same rule WhatsApp and RCS use.
 		releaseZapCashClaimIfUnsent(data, queueURL, false)
 	}
 
@@ -917,19 +916,10 @@ func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transacti
 }
 
 func writePushAudits(client string, result push.Result) error {
-	// A redelivery whose tokens are already terminal must not insert again.
-	// The first attempt wrote the rows. This attempt only seals the EventId claim.
-	if result.Replayed > 0 && len(result.FreshOutputAudits) == 0 {
-		return nil
-	}
-	if result.InputAudit != nil && result.Replayed == 0 {
+	if result.InputAudit != nil {
 		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
 	}
-	outputs := result.OutputAudits
-	if result.FreshOutputAudits != nil {
-		outputs = result.FreshOutputAudits
-	}
-	for _, output := range outputs {
+	for _, output := range result.OutputAudits {
 		database.InsertRow(client, config.Configs.PushOutputTable, output)
 	}
 	return nil

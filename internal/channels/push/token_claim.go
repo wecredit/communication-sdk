@@ -15,8 +15,9 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
-// tokenClaimStore is the Redis (or test double) claim authority for one PUSH
-// delivery identity field: {GenerateRedisKeyForRequest}:{tokenFingerprint}.
+// tokenClaimStore is the older per-token Redis claim. push.Send does not use it.
+// The queue EventId claim is the dedupe, the same gate WhatsApp and RCS use.
+// FingerprintToken still identifies a device token on PushOutputTable.
 type tokenClaimStore interface {
 	Get(field string) (exists bool, transactionID, errorMessage string, err error)
 	AttemptCount(field string) (attemptCount int, exists bool, err error)
