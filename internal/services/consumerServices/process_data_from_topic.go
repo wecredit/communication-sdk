@@ -65,16 +65,20 @@ type clientBuffer struct {
 	closed bool
 }
 
-type clientRoutine struct {
+type ClientRoutine struct {
 	buffers   map[string]*clientBuffer
 	buffersMu sync.RWMutex
+	// wake is closed when a channel buffer is created so idle workers rebuild
+	// their select. A worker blocked on the first channel would otherwise never
+	// observe a buffer added later.
+	wake      chan struct{}
 	closeOnce sync.Once
 	wg        *sync.WaitGroup
 	workers   int
 }
 
 var (
-	clientHandlers = make(map[string]*clientRoutine)
+	clientHandlers = make(map[string]*ClientRoutine)
 	clientMux      sync.Mutex
 )
 
@@ -267,7 +271,7 @@ func ConsumerService(_ string) {
 	<-ctx.Done()
 	utils.Warn("Context cancelled. Shutting down all client handlers.")
 	clientMux.Lock()
-	handlers := make([]*clientRoutine, 0, len(clientHandlers))
+	handlers := make([]*ClientRoutine, 0, len(clientHandlers))
 	clients := make([]string, 0, len(clientHandlers))
 	for client, handler := range clientHandlers {
 		handler.closeOnce.Do(handler.closeBuffers)
@@ -347,16 +351,12 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	handler, exists := clientHandlers[poolKey]
 	if !exists {
 		workerCount := ClientSharedWorkerCount(client)
-		handler = &clientRoutine{
-			buffers: make(map[string]*clientBuffer),
-			wg:      &sync.WaitGroup{},
-			workers: workerCount,
-		}
+		handler = NewClientRoutine(workerCount)
 		// Workers call receive immediately. Ensure their first select includes
 		// this channel; otherwise a worker scheduled before buffer creation can
 		// block forever on ctx.Done() and leave the queue poller back-pressured.
 		bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
-		handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
+		handler.BufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
 		clientHandlers[poolKey] = handler
 
 		for i := 0; i < handler.workers; i++ {
@@ -366,10 +366,10 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		utils.Info(fmt.Sprintf("Started %d workers for pool: %s", handler.workers, poolKey))
 	}
 	bufferSize := boundedConsumerConfigInt(config.Configs.ConsumerClientBufferSize, defaultClientBuffer, maxClientBuffer)
-	handler.bufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
+	handler.BufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
 	clientMux.Unlock()
 
-	handler.enqueue(ctx, data.Channel, MessageWrapper{
+	handler.Enqueue(ctx, data.Channel, MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
@@ -537,7 +537,16 @@ func channelBufferCapacity(channel string, totalBufferSize int) int {
 	return totalBufferSize
 }
 
-func (handler *clientRoutine) bufferFor(channel string, bufferSize int) *clientBuffer {
+func NewClientRoutine(workers int) *ClientRoutine {
+	return &ClientRoutine{
+		buffers: make(map[string]*clientBuffer),
+		wake:    make(chan struct{}),
+		wg:      &sync.WaitGroup{},
+		workers: workers,
+	}
+}
+
+func (handler *ClientRoutine) BufferFor(channel string, bufferSize int) *clientBuffer {
 	key := ClientChannelBufferKey(channel)
 	handler.buffersMu.Lock()
 	defer handler.buffersMu.Unlock()
@@ -546,10 +555,19 @@ func (handler *clientRoutine) bufferFor(channel string, bufferSize int) *clientB
 	}
 	buffer := &clientBuffer{ch: make(chan MessageWrapper, bufferSize)}
 	handler.buffers[key] = buffer
+	handler.wakeWaiters()
 	return buffer
 }
 
-func (handler *clientRoutine) enqueue(ctx context.Context, channel string, message MessageWrapper) {
+// wakeWaiters must be called with buffersMu held for write.
+func (handler *ClientRoutine) wakeWaiters() {
+	if handler.wake != nil {
+		close(handler.wake)
+	}
+	handler.wake = make(chan struct{})
+}
+
+func (handler *ClientRoutine) Enqueue(ctx context.Context, channel string, message MessageWrapper) {
 	// Keep the potentially blocking send out of clientMux. A full SMS buffer
 	// must not block WhatsApp handler lookup or buffer creation.
 	handler.buffersMu.RLock()
@@ -567,7 +585,7 @@ func (handler *clientRoutine) enqueue(ctx context.Context, channel string, messa
 	}
 }
 
-func (handler *clientRoutine) closeBuffers() {
+func (handler *ClientRoutine) closeBuffers() {
 	handler.buffersMu.RLock()
 	defer handler.buffersMu.RUnlock()
 	for _, buffer := range handler.buffers {
@@ -580,21 +598,26 @@ func (handler *clientRoutine) closeBuffers() {
 	}
 }
 
-func (handler *clientRoutine) buffersSnapshot() []*clientBuffer {
+func (handler *ClientRoutine) buffersSnapshot() ([]*clientBuffer, <-chan struct{}) {
 	handler.buffersMu.RLock()
 	defer handler.buffersMu.RUnlock()
 	buffers := make([]*clientBuffer, 0, len(handler.buffers))
 	for _, buffer := range handler.buffers {
 		buffers = append(buffers, buffer)
 	}
-	return buffers
+	return buffers, handler.wake
 }
 
-func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool) {
+func (handler *ClientRoutine) Receive(ctx context.Context) (MessageWrapper, bool) {
 	for {
-		buffers := handler.buffersSnapshot()
-		cases := make([]reflect.SelectCase, 0, len(buffers)+1)
+		buffers, wake := handler.buffersSnapshot()
+		cases := make([]reflect.SelectCase, 0, len(buffers)+2)
 		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+		wakeIndex := -1
+		if wake != nil {
+			wakeIndex = len(cases)
+			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(wake)})
+		}
 		for _, buffer := range buffers {
 			cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(buffer.ch)})
 		}
@@ -602,6 +625,9 @@ func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool
 		chosen, value, ok := reflect.Select(cases)
 		if chosen == 0 {
 			return MessageWrapper{}, false
+		}
+		if chosen == wakeIndex {
+			continue
 		}
 		if ok {
 			return value.Interface().(MessageWrapper), true
@@ -611,7 +637,7 @@ func (handler *clientRoutine) receive(ctx context.Context) (MessageWrapper, bool
 	}
 }
 
-func startClientWorker(ctx context.Context, poolKey string, handler *clientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+func startClientWorker(ctx context.Context, poolKey string, handler *ClientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
@@ -620,7 +646,7 @@ func startClientWorker(ctx context.Context, poolKey string, handler *clientRouti
 	}()
 
 	for {
-		msgWrapper, ok := handler.receive(ctx)
+		msgWrapper, ok := handler.Receive(ctx)
 		if !ok {
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
