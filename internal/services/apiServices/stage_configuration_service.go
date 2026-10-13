@@ -97,7 +97,7 @@ func normalizeStageIntervals(raw string) (string, error) {
 			return "", fmt.Errorf("duplicate interval token %q", token)
 		}
 		seen[token] = struct{}{}
-		if _, weekday := weekdays[token]; !weekday {
+		if _, weekday := weekdays[token]; !weekday && !openDayIntervalToken(token) {
 			if len(token) < 2 || !strings.ContainsRune("dhm", rune(token[len(token)-1])) {
 				return "", fmt.Errorf("invalid interval token %q", token)
 			}
@@ -108,6 +108,20 @@ func normalizeStageIntervals(raw string) (string, error) {
 		normalized = append(normalized, token)
 	}
 	return strings.Join(normalized, ";"), nil
+}
+
+// openDayIntervalToken accepts "30+" and "30d+". Both mean that calendar day and every later day.
+// Hour and minute tokens cannot be open.
+func openDayIntervalToken(token string) bool {
+	if !strings.HasSuffix(token, "+") {
+		return false
+	}
+	stem := strings.TrimSuffix(strings.TrimSuffix(token, "+"), "d")
+	if stem == "" || strings.ContainsAny(stem, "hm") {
+		return false
+	}
+	_, err := strconv.Atoi(stem)
+	return err == nil
 }
 
 func scheduleFromRequest(request apiModels.StageConfigurationRequest) apiModels.LenderSchedule {
