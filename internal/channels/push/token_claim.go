@@ -15,8 +15,9 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 )
 
-// tokenClaimStore is the Redis (or test double) claim authority for one PUSH
-// delivery identity field: {GenerateRedisKeyForRequest}:{tokenFingerprint}.
+// tokenClaimStore is the Redis hash for a device that already finished.
+// push.Send does not take a per-token lease or heartbeat. The EventId claim is
+// the gate. Lookup/Mark only stop a batch retry from submitting that device again.
 type tokenClaimStore interface {
 	Get(field string) (exists bool, transactionID, errorMessage string, err error)
 	AttemptCount(field string) (attemptCount int, exists bool, err error)
@@ -36,7 +37,7 @@ type redisTokenClaims struct {
 	hash string
 }
 
-func newRedisTokenClaims() (tokenClaimStore, error) {
+func newRedisTokenClaims() (*redisTokenClaims, error) {
 	if redis.RDB == nil {
 		return nil, fmt.Errorf("PUSH redis client is nil")
 	}
@@ -89,6 +90,63 @@ func (c *redisTokenClaims) SetTransactionID(field, claimID, transactionID string
 
 func (c *redisTokenClaims) SetErrorMessage(field, claimID, outcome, errorMessage string) error {
 	return redis.UpdatePushErrorMessage(c.rdb, c.hash, field, claimID, outcome, errorMessage)
+}
+
+func (c *redisTokenClaims) Lookup(field string) (string, string, string, bool, error) {
+	exists, transactionID, errorMessage, err := c.Get(field)
+	if err != nil || !exists {
+		return "", "", "", false, err
+	}
+	transactionID = strings.TrimSpace(transactionID)
+	errorMessage = strings.TrimSpace(errorMessage)
+	if transactionID == "" && errorMessage == "" {
+		return "", "", "", false, nil
+	}
+	outcome, _, outErr := c.Outcome(field)
+	if outErr != nil {
+		return "", "", "", false, outErr
+	}
+	return strings.TrimSpace(outcome), transactionID, errorMessage, true, nil
+}
+
+func (c *redisTokenClaims) Mark(field, outcome, transactionID, errorMessage string) error {
+	transactionID = strings.TrimSpace(transactionID)
+	errorMessage = strings.TrimSpace(errorMessage)
+	if transactionID == "" && errorMessage == "" {
+		errorMessage = strings.TrimSpace(outcome)
+	}
+
+	claimID, err := c.Claim(field)
+	if err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return err
+		}
+
+		existingID, ok, getErr := c.ClaimID(field)
+		if getErr != nil {
+			return getErr
+		}
+
+		if !ok || strings.TrimSpace(existingID) == "" {
+			return nil
+		}
+
+		_, currentTxn, currentErr, getErr := c.Get(field)
+		if getErr != nil {
+			return getErr
+		}
+
+		if strings.TrimSpace(currentTxn) != "" || strings.TrimSpace(currentErr) != "" {
+			return nil
+		}
+		claimID = existingID
+	}
+
+	if transactionID != "" {
+		return c.SetTransactionID(field, claimID, transactionID)
+	}
+
+	return c.SetErrorMessage(field, claimID, outcome, errorMessage)
 }
 
 // FingerprintToken returns a non-reversible SHA-256 hex fingerprint of a device

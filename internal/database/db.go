@@ -268,6 +268,11 @@ func applyPoolLimits(db *gorm.DB, openRaw, idleRaw, lifetimeRaw, dbName, openNam
 	return nil
 }
 
+// ParsePoolLimit converts a pool-size setting. Blank, zero, and invalid values use fallback.
+func ParsePoolLimit(raw, name, dbName string, fallback int) int {
+	return poolLimit(raw, name, dbName, fallback)
+}
+
 func poolLimit(raw, name, dbName string, fallback int) int {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
