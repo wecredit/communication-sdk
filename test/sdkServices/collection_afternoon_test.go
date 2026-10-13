@@ -32,12 +32,15 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 	if ok, stage, err := sdkServices.ValidateCollectionAfternoonRequest(valid); !ok || stage != 12 || err != nil {
 		t.Fatalf("valid slot = (%t, %d, %v)", ok, stage, err)
 	}
+	dueDate := sdkModels.CommApiRequestBody{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 13.01}
+	if ok, stage, err := sdkServices.ValidateCollectionAfternoonRequest(dueDate); !ok || stage != 13 || err != nil {
+		t.Fatalf("due-date slot = (%t, %d, %v)", ok, stage, err)
+	}
 	for _, request := range []sdkModels.CommApiRequestBody{
 		{CollectionSlot: "morning", Client: "zapcash", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "other", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "SMS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 10.01},
-		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 13.01},
 	} {
 		if _, _, err := sdkServices.ValidateCollectionAfternoonRequest(request); err == nil {
 			t.Fatalf("expected invalid request to fail: %+v", request)

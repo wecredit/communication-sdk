@@ -380,8 +380,8 @@ func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	if replay.Skipped != 2 || len(executor2.payloads) != 0 {
 		t.Fatalf("replay = %+v payloads=%d, want skip both without FCM", replay, len(executor2.payloads))
 	}
-	if len(replay.OutputAudits) != 2 {
-		t.Fatalf("replay output audits = %d, want terminal replay for both tokens", len(replay.OutputAudits))
+	if len(replay.OutputAudits) != 2 || replay.Replayed != 2 || len(replay.FreshOutputAudits) != 0 {
+		t.Fatalf("replay audits=%d replayed=%d fresh=%d, want 2 replayed and no fresh rows", len(replay.OutputAudits), replay.Replayed, len(replay.FreshOutputAudits))
 	}
 	for _, output := range replay.OutputAudits {
 		if output["AttemptCount"] != 1 {

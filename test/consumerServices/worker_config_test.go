@@ -79,6 +79,18 @@ func TestClientChannelBufferKeyIsolatedByChannel(t *testing.T) {
 	}
 }
 
+func TestZapCashChannelOverridesShareOnePool(t *testing.T) {
+	original := config.Configs
+	t.Cleanup(func() { config.Configs = original })
+	config.Configs.ConsumerDefaultClientWorkers = "5"
+	config.Configs.ConsumerClientWorkerOverrides = "zapcash:5"
+	config.Configs.ConsumerChannelWorkerOverrides = "zapcash:rcs:20,zapcash:whatsapp:20,zapcash:push:20"
+
+	if got := services.ClientSharedWorkerCount("zapcash"); got != 60 {
+		t.Fatalf("shared worker pool = %d, want 60", got)
+	}
+}
+
 func TestClientSharedWorkerCountFallsBackToClientBudget(t *testing.T) {
 	original := config.Configs
 	t.Cleanup(func() { config.Configs = original })

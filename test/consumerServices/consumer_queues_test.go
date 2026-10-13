@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/wecredit/communication-sdk/config"
+	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/models"
 	"github.com/wecredit/communication-sdk/sdk/variables"
@@ -216,6 +217,35 @@ func TestZapCashDirectInputAuditTableLeavesHandlerChannelsAlone(t *testing.T) {
 	}
 	if got := services.ZapCashDirectInputAuditTable(variables.RCS); got != "" {
 		t.Fatalf("RCS input table = %q, want handler-owned", got)
+	}
+}
+
+func TestZapCashPushClaimSealStopsBlankRedelivery(t *testing.T) {
+	txn, errMsg := services.ZapCashPushClaimSeal(push.Result{
+		AckSQS:    true,
+		Submitted: 1,
+		OutputAudits: []map[string]interface{}{
+			{"ProviderMessageId": " fcm-1 "},
+		},
+	})
+	if txn != "fcm-1" || errMsg != "" {
+		t.Fatalf("submitted seal = %q %q", txn, errMsg)
+	}
+	if services.ZapCashBlankClaimShouldReclaim(txn, errMsg, 2) {
+		t.Fatal("a submitted PUSH claim must not be reclaimed")
+	}
+
+	txn, errMsg = services.ZapCashPushClaimSeal(push.Result{AckSQS: true, Skipped: 2})
+	if txn != "" || errMsg == "" {
+		t.Fatalf("skipped seal = %q %q", txn, errMsg)
+	}
+	if services.ZapCashBlankClaimShouldReclaim(txn, errMsg, 2) {
+		t.Fatal("a terminal PUSH skip must not be reclaimed")
+	}
+
+	txn, errMsg = services.ZapCashPushClaimSeal(push.Result{AckSQS: false, Submitted: 1})
+	if txn != "" || errMsg != "" {
+		t.Fatalf("unfinished seal = %q %q, want empty", txn, errMsg)
 	}
 }
 

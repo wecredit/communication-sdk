@@ -851,11 +851,10 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, err))
 	}
 
-	// Persist terminal PUSH audits before ACK. On redelivery push.Send rebuilds
-	// terminal output audits from Redis claims without calling FCM again.
-	// Keep the outer ZapCash claim only after audits succeed; otherwise a retry
-	// would see the EventId claim, treat the message as a duplicate, and drop
-	// it before audits can be repaired.
+	// Persist terminal PUSH audits once. A finished ZapCash send then records the
+	// outer EventId claim. A later SQS delivery sees that outcome and deletes
+	// the message instead of inserting PushInput/PushOutput again. Per-token
+	// claims still stop a second FCM send.
 	if auditErr := writePushAudits(data.Client, result); auditErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
 			data.Client, data.CommId, data.EventId, auditErr))
@@ -863,9 +862,17 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		return false, false
 	}
 
-	// PUSH has per-token idempotency of its own. Release the outer ZapCash
-	// claim when no token was submitted or the message needs another attempt.
-	releaseZapCashClaimIfUnsent(data, queueURL, result.AckSQS && result.Submitted > 0)
+	if txn, errMsg := ZapCashPushClaimSeal(result); txn != "" || errMsg != "" {
+		if sealErr := sealZapCashPushClaim(data, queueURL, txn, errMsg); sealErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH claim seal failed: %w",
+				data.Client, data.CommId, data.EventId, sealErr))
+			return false, false
+		}
+	} else {
+		// The attempt is not finished. Drop the blank claim so the retry can
+		// claim it again. Token claims still block FCM for tokens already sent.
+		releaseZapCashClaimIfUnsent(data, queueURL, false)
+	}
 
 	if !result.AckSQS {
 		return result.Processed, false
@@ -879,11 +886,50 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 	return result.Processed, deleted
 }
 
-func writePushAudits(client string, result push.Result) error {
-	if result.InputAudit != nil {
-		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
+// ZapCashPushClaimSeal is the outer EventId outcome for a finished PUSH attempt.
+// A provider message id is stored as the transaction id. Any other terminal
+// result stores an error so the claim is no longer blank. An unfinished attempt
+// returns empty values and must not be sealed.
+func ZapCashPushClaimSeal(result push.Result) (transactionID, errorMessage string) {
+	if !result.AckSQS {
+		return "", ""
 	}
 	for _, output := range result.OutputAudits {
+		messageID, _ := output["ProviderMessageId"].(string)
+		if messageID = strings.TrimSpace(messageID); messageID != "" {
+			return messageID, ""
+		}
+	}
+	if result.Submitted > 0 {
+		return "push-submitted", ""
+	}
+	return "", "push terminal"
+}
+
+func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transactionID, errorMessage string) error {
+	if !isZapCashDirectQueue(queueURL) {
+		return nil
+	}
+	if transactionID != "" {
+		return channelHelper.UpdateRedisTransactionId(data, transactionID)
+	}
+	return channelHelper.UpdateRedisErrorMessage(data, errorMessage)
+}
+
+func writePushAudits(client string, result push.Result) error {
+	// A redelivery whose tokens are already terminal must not insert again.
+	// The first attempt wrote the rows. This attempt only seals the EventId claim.
+	if result.Replayed > 0 && len(result.FreshOutputAudits) == 0 {
+		return nil
+	}
+	if result.InputAudit != nil && result.Replayed == 0 {
+		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
+	}
+	outputs := result.OutputAudits
+	if result.FreshOutputAudits != nil {
+		outputs = result.FreshOutputAudits
+	}
+	for _, output := range outputs {
 		database.InsertRow(client, config.Configs.PushOutputTable, output)
 	}
 	return nil
