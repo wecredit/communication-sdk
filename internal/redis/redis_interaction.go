@@ -150,6 +150,92 @@ return redis.call('HDEL', KEYS[1], ARGV[1])
 	return result > 0, nil
 }
 
+// ReclaimUnstampedPushClaim deletes an EventId field only when it is still the
+// empty string written before AdoptBlankPushClaim. A stamped claim is left alone.
+func ReclaimUnstampedPushClaim(rdb *redis.Client, commIdempotentKey, redisKey string) (bool, error) {
+	if rdb == nil {
+		return false, fmt.Errorf("redis client is nil")
+	}
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val ~= '' then
+  return 0
+end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+	deleted, err := rdb.Eval(context.Background(), script, []string{commIdempotentKey}, redisKey).Int()
+	if err != nil {
+		return false, fmt.Errorf("reclaim unstamped PUSH claim %s: %w", redisKey, err)
+	}
+	return deleted > 0, nil
+}
+
+// AdoptBlankPushClaim replaces a blank EventId field with a claim id.
+// A redelivery can see that id and leave the live worker's FCM retry alone.
+func AdoptBlankPushClaim(rdb *redis.Client, commIdempotentKey, redisKey string) (string, error) {
+	if rdb == nil {
+		return "", fmt.Errorf("redis client is nil")
+	}
+	claimIDBytes := make([]byte, 16)
+	if _, err := rand.Read(claimIDBytes); err != nil {
+		return "", fmt.Errorf("generate PUSH claim id: %w", err)
+	}
+	claimID := fmt.Sprintf("%x", claimIDBytes)
+	payload, err := json.Marshal(redisModels.MobileChannelRedisData{
+		ClaimedAtUnix: time.Now().UTC().Unix(),
+		ClaimID:       claimID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal PUSH claim: %w", err)
+	}
+
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val ~= '' then
+  return ''
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return ARGV[3]
+`
+	raw, err := rdb.Eval(context.Background(), script, []string{commIdempotentKey}, redisKey, string(payload), claimID).Result()
+	if err != nil {
+		return "", fmt.Errorf("stamp PUSH event claim: %w", err)
+	}
+	stamped, _ := raw.(string)
+	if stamped == "" {
+		return "", fmt.Errorf("PUSH event claim was not blank")
+	}
+	return stamped, nil
+}
+
+// ReleaseBlankClaimIfOwner deletes an in-flight EventId field only when claimID
+// still owns it and no terminal outcome has been written.
+func ReleaseBlankClaimIfOwner(rdb *redis.Client, commIdempotentKey, redisKey, claimID string) (bool, error) {
+	if rdb == nil {
+		return false, fmt.Errorf("redis client is nil")
+	}
+	claimID = strings.TrimSpace(claimID)
+	if claimID == "" {
+		return false, fmt.Errorf("PUSH claim id is required")
+	}
+	const script = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false or val == '' or string.sub(val, 1, 1) ~= '{' then
+  return 0
+end
+if string.match(val, '"transactionId"%s*:%s*"[^"]+"') then return 0 end
+if string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then return 0 end
+local id = string.match(val, '"claimId"%s*:%s*"([^"]+)"')
+if id ~= ARGV[2] then return 0 end
+return redis.call('HDEL', KEYS[1], ARGV[1])
+`
+	released, err := rdb.Eval(context.Background(), script, []string{commIdempotentKey}, redisKey, claimID).Int()
+	if err != nil {
+		return false, fmt.Errorf("release PUSH event claim %s: %w", redisKey, err)
+	}
+	return released > 0, nil
+}
+
 // Function to store data into redis from db
 func StoreDataInRedis(query string, db *gorm.DB, RDB *redis.Client, redisKey string) error {
 	pipe := RDB.Pipeline()

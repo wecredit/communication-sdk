@@ -10,6 +10,7 @@ import (
 	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/sdk/models"
+	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
@@ -217,6 +218,34 @@ func TestZapCashDirectInputAuditTableLeavesHandlerChannelsAlone(t *testing.T) {
 	}
 	if got := services.ZapCashDirectInputAuditTable(variables.RCS); got != "" {
 		t.Fatalf("RCS input table = %q, want handler-owned", got)
+	}
+}
+
+func TestLenderEventClaimAppliesToPushOnEveryQueue(t *testing.T) {
+	prev := config.Configs
+	t.Cleanup(func() { config.Configs = prev })
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
+
+	pushMsg := sdkModels.CommApiRequestBody{Channel: variables.PUSH}
+	whatsapp := sdkModels.CommApiRequestBody{Channel: variables.WhatsApp}
+	if !services.LenderEventClaimApplies(pushMsg, "https://sqs.example/other") {
+		t.Fatal("PUSH on a non-direct queue must claim EventId")
+	}
+	if services.LenderEventClaimApplies(whatsapp, "https://sqs.example/other") {
+		t.Fatal("WhatsApp on the shared queue must stay on sdk.Send")
+	}
+	if !services.LenderEventClaimApplies(whatsapp, "https://sqs.example/zapcash") {
+		t.Fatal("WhatsApp on the ZapCash queue must claim EventId")
+	}
+	marketing := sdkModels.CommApiRequestBody{Channel: variables.WhatsApp, Source: "marketing", SourceRowId: 9}
+	if services.LenderEventClaimApplies(marketing, "https://sqs.example/zapcash") {
+		t.Fatal("marketing WhatsApp keeps its own claim")
+	}
+	if !services.PushRedeliveryWaits(variables.PUSH, "", "") {
+		t.Fatal("a live PUSH claim must keep the SQS message")
+	}
+	if services.PushRedeliveryWaits(variables.PUSH, "fcm-1", "") || services.PushRedeliveryWaits(variables.WhatsApp, "", "") {
+		t.Fatal("a sealed PUSH claim and other channels are not an in-flight wait")
 	}
 }
 

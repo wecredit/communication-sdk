@@ -16,8 +16,9 @@ var (
 )
 
 // Init constructs the per-client FCM sender and bounded retry executor.
-// It does not contact FCM or mutate schema. Dedup is the queue EventId claim,
-// the same gate WhatsApp and RCS use.
+// It does not contact FCM or mutate schema. Dedup is the queue EventId claim
+// on every consumer queue. A finished device is remembered so a batch retry
+// does not submit it again.
 func Init(cfg models.Config) error {
 	clientConfigs, err := fcm.ParseClientConfigs(cfg.FCMClientConfigJSON)
 	if err != nil {

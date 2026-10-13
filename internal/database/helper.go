@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,6 +40,22 @@ func SetChannelAuditFlags(weCreditFlag, zapCashFlag, v1Flag string) {
 	commInputOutputWriteWeCredit = weCreditFlag
 	commInputOutputWriteZapCash = zapCashFlag
 	zapCashV1InputOutputWrite = v1Flag
+}
+
+// ChannelAuditFlags returns the Input/Output write toggles currently in effect.
+func ChannelAuditFlags() (weCreditFlag, zapCashFlag, v1Flag string) {
+	return commInputOutputWriteWeCredit, commInputOutputWriteZapCash, zapCashV1InputOutputWrite
+}
+
+// AuditInsertSlotCap is the in-flight audit insert limit.
+func AuditInsertSlotCap() int {
+	return cap(auditInsertSlots)
+}
+
+// EnqueueAuditInsert starts one audit write without waiting.
+// It returns false when every slot is already in use.
+func EnqueueAuditInsert(write func()) bool {
+	return enqueueAuditInsert(write)
 }
 
 // CommWriteEnabled reports whether this client still inserts channel
@@ -118,6 +135,44 @@ func InsertRow(client, table string, row map[string]interface{}) {
 	}) {
 		utils.Error(fmt.Errorf("audit_insert_failed client=%s table=%s: audit insert busy", strings.TrimSpace(client), strings.TrimSpace(table)))
 	}
+}
+
+// InsertRowSync writes one channel audit row on the caller.
+// A disabled destination or a nil pool is a success. A full slot or a database
+// error is returned. PUSH seals its EventId claim only after this returns nil,
+// so a missed audit stays retryable. Other channels keep using InsertRow.
+func InsertRowSync(client, table string, row map[string]interface{}) error {
+	writeComm, writeCore := ChannelAuditDestinations(
+		client,
+		commInputOutputWriteWeCredit,
+		commInputOutputWriteZapCash,
+		zapCashV1InputOutputWrite,
+	)
+	commDB := DBtechWrite
+	coreDB := DBZapCashV1
+	if (!writeComm || commDB == nil) && (!writeCore || coreDB == nil) {
+		return nil
+	}
+
+	copied := copyAuditRow(row)
+	select {
+	case auditInsertSlots <- struct{}{}:
+	default:
+		return fmt.Errorf("audit insert busy")
+	}
+
+	defer func() { <-auditInsertSlots }()
+
+	var err error
+	if writeComm && commDB != nil {
+		err = insertAuditWithTimeout(table, commDB, copied)
+	}
+
+	if writeCore && coreDB != nil {
+		err = errors.Join(err, insertAuditWithTimeout(table, coreDB, copied))
+	}
+
+	return err
 }
 
 func insertAuditWithTimeout(table string, db *gorm.DB, row map[string]interface{}) error {

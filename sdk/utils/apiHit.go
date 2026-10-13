@@ -49,7 +49,7 @@ func decodeAPIResponse(statusCode int, body []byte, err error) (map[string]inter
 		return nil, fmt.Errorf("error unmarshalling response: %v", err)
 	}
 
-	Info(fmt.Sprintf("API_RESPONSE status=%d keys=%d", statusCode, len(result)))
+	// Info(fmt.Sprintf("API_RESPONSE status=%d keys=%d", statusCode, len(result)))
 	result["ApistatusCode"] = statusCode
 	return result, nil
 }
@@ -87,7 +87,7 @@ func ApiHitJSON(method, apiURL string, headers map[string]string, username, pass
 	}
 
 	rawBody = string(body)
-	Info(fmt.Sprintf("API_RESPONSE status=%d bytes=%d", statusCode, len(body)))
+	// Info(fmt.Sprintf("API_RESPONSE status=%d bytes=%d", statusCode, len(body)))
 	if dest != nil {
 		if err := json.Unmarshal(body, dest); err != nil {
 			return statusCode, rawBody, fmt.Errorf("error unmarshalling response: %v", err)

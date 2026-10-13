@@ -337,6 +337,175 @@ func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
 	c.Wait()
 }
 
+type memTerminals struct {
+	mu   sync.Mutex
+	rows map[string][3]string
+}
+
+func (m *memTerminals) Lookup(field string) (string, string, string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[field]
+	if !ok {
+		return "", "", "", false, nil
+	}
+	return row[0], row[1], row[2], true, nil
+}
+
+func (m *memTerminals) Mark(field, outcome, transactionID, errorMessage string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.rows == nil {
+		m.rows = map[string][3]string{}
+	}
+	if _, ok := m.rows[field]; ok {
+		return nil
+	}
+	m.rows[field] = [3]string{outcome, transactionID, errorMessage}
+	return nil
+}
+
+type tokenFailExecutor struct {
+	mu        sync.Mutex
+	tokens    []string
+	failToken string
+}
+
+func (e *tokenFailExecutor) send(payload fcm.SendRequest) (fcm.ExecutionResult, error) {
+	e.mu.Lock()
+	token := payload.Message.Token
+	e.tokens = append(e.tokens, token)
+	fail := token == e.failToken
+	if fail {
+		e.failToken = ""
+	}
+	e.mu.Unlock()
+	if fail {
+		return fcm.ExecutionResult{}, errors.New("temporary fcm")
+	}
+	return fcm.ExecutionResult{Outcome: fcm.OutcomeSubmitted, MessageID: "message-" + token, AttemptCount: 1}, nil
+}
+
+func (e *tokenFailExecutor) ExecuteWithObserver(
+	_ context.Context,
+	_ string,
+	payload fcm.SendRequest,
+	_ fcm.RetryGuard,
+	_ fcm.AttemptObserver,
+) (fcm.ExecutionResult, error) {
+	return e.send(payload)
+}
+
+func TestLaterTokenErrorDoesNotResendSubmittedDevice(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	stage := 1.0
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
+		Id: 1, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
+		Vendor: "FCM", TemplateName: "offer-1", TemplateHeader: "Hi",
+		TemplateText: "Offer", IsActive: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.InstallTemplateSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &tokenFailExecutor{failToken: "token-b"}
+	service, err := push.NewService(executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memTerminals{}
+	service.UseTerminalStore(store)
+	request := sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"token-a", "token-b"},
+	}
+	result, err := service.Send(context.Background(), request)
+	if err == nil || result.AckSQS || result.Submitted != 1 {
+		t.Fatalf("first send err=%v ack=%v submitted=%d, want unfinished after token-a", err, result.AckSQS, result.Submitted)
+	}
+	if noteErr := service.NoteFreshTerminals(request, result.FreshOutputAudits); noteErr != nil {
+		t.Fatal(noteErr)
+	}
+
+	result, err = service.Send(context.Background(), request)
+	if err != nil || !result.AckSQS || result.Submitted != 2 || result.Replayed != 1 {
+		t.Fatalf("retry err=%v result=%+v, want token-a replayed and token-b submitted", err, result)
+	}
+	if len(result.FreshOutputAudits) != 1 {
+		t.Fatalf("fresh audits = %d, want only token-b", len(result.FreshOutputAudits))
+	}
+	if got := executor.tokens; len(got) != 3 || got[0] != "token-a" || got[1] != "token-b" || got[2] != "token-b" {
+		t.Fatalf("FCM tokens = %v, want token-a, token-b, token-b", got)
+	}
+}
+
+type staleClaimExecutor struct {
+	sent int
+}
+
+func (e *staleClaimExecutor) ExecuteWithObserver(
+	ctx context.Context,
+	_ string,
+	payload fcm.SendRequest,
+	guard fcm.RetryGuard,
+	observer fcm.AttemptObserver,
+) (fcm.ExecutionResult, error) {
+	if observer != nil {
+		if err := observer(ctx, 1); err != nil {
+			return fcm.ExecutionResult{}, err
+		}
+	}
+	if guard != nil {
+		current, err := guard(ctx)
+		if err != nil {
+			return fcm.ExecutionResult{}, err
+		}
+		if !current {
+			return fcm.ExecutionResult{Outcome: fcm.OutcomeCancelledStale, Code: "STALE_BEFORE_RETRY"}, nil
+		}
+	}
+	e.sent++
+	return fcm.ExecutionResult{Outcome: fcm.OutcomeSubmitted, MessageID: "message-" + payload.Message.Token, AttemptCount: 1}, nil
+}
+
+func TestStaleEventClaimDoesNotSendFCMRetry(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	stage := 1.0
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
+		Id: 3, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
+		Vendor: "FCM", TemplateName: "offer-1", TemplateHeader: "Hi",
+		TemplateText: "Offer", IsActive: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.InstallTemplateSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &staleClaimExecutor{}
+	service, err := push.NewService(executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.UseClaimCheck(func(string, string) (bool, error) { return false, nil })
+	result, err := service.Send(push.WithEventClaim(context.Background(), "claim-1"), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"token-a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Superseded || result.CancelledStale != 1 || result.Submitted != 0 || executor.sent != 0 {
+		t.Fatalf("result=%+v sent=%d, want superseded without FCM", result, executor.sent)
+	}
+}
+
 func TestRetryGuardCancelsStaleSecondAttempt(t *testing.T) {
 	sender := &sequenceSender{responses: []fcm.SendResponse{
 		{HTTPStatus: http.StatusServiceUnavailable},

@@ -769,9 +769,10 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
 
 	// ZapCash single-hop: sdk.Send no longer claims Redis or writes *InputAuditTable.
-	// Only run this on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through sdk.Send;
-	// claiming here would see that key and skip the vendor send. WeCredit SMS claims in handleSMS.
-	if !isMarketingSMSDispatch(data) && isZapCashDirectQueue(queueURL) {
+	// That claim runs on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through
+	// sdk.Send for WhatsApp, RCS, SMS, and email. PUSH does not, so it claims here
+	// on every consumer queue.
+	if LenderEventClaimApplies(data, queueURL) {
 		skipSend, redisTxn, redisErr, claimErr := claimOrSkipLenderSend(data)
 		if claimErr != nil {
 			utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed: %v", data.Client, data.Channel, claimErr))
@@ -779,8 +780,29 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		}
 		// A blank claim on the first receive is still in flight. A later
 		// receive means that worker is gone, so the blank field can be claimed again.
-		if ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, approximateReceiveCount(msg)) {
-			redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+		// PUSH waits out EventClaimLease so a live FCM retry is not stolen.
+		redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+		if data.Channel == variables.PUSH && marketingRedisClaimBlank(redisTxn, redisErr) && approximateReceiveCount(msg) > 1 {
+			reclaimed, relErr := redis.ReclaimExpiredPushClaim(redis.RDB, config.Configs.CommIdempotentKey, redisKey, time.Now().Add(-push.EventClaimLease))
+			if relErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s Channel:%s] push event claim reclaim failed: %v", data.Client, data.Channel, relErr))
+				return false, false
+			}
+			if !reclaimed {
+				reclaimed, relErr = redis.ReclaimUnstampedPushClaim(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+				if relErr != nil {
+					utils.Error(fmt.Errorf("[Client:%s Channel:%s] push event claim reclaim failed: %v", data.Client, data.Channel, relErr))
+					return false, false
+				}
+			}
+			if reclaimed {
+				skipSend, redisTxn, redisErr, claimErr = claimOrSkipLenderSend(data)
+				if claimErr != nil {
+					utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed after reclaim: %v", data.Client, data.Channel, claimErr))
+					return false, false
+				}
+			}
+		} else if ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, approximateReceiveCount(msg)) {
 			if _, relErr := redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); relErr != nil {
 				utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash blank redis reclaim failed: %v", data.Client, data.Channel, relErr))
 				return false, false
@@ -792,6 +814,9 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			}
 		}
 		if skipSend {
+			if PushRedeliveryWaits(data.Channel, redisTxn, redisErr) {
+				return false, false
+			}
 			deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete duplicate in-flight zapcash message: %v", delErr))
@@ -809,6 +834,20 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		// handlers still write those input rows, so this block must not insert them.
 		if table := ZapCashDirectInputAuditTable(data.Channel); table != "" {
 			database.InsertRow(data.Client, table, dbMappedData)
+		}
+
+		if data.Channel == variables.PUSH {
+			claimID, stampErr := redis.AdoptBlankPushClaim(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+
+			if stampErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s Channel:%s] push event claim stamp failed: %v", data.Client, data.Channel, stampErr))
+				if !strings.Contains(stampErr.Error(), "not blank") {
+					_, _ = redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+				}
+				return false, false
+			}
+
+			ctx = push.WithEventClaim(ctx, claimID)
 		}
 	}
 
@@ -851,14 +890,37 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, err))
 	}
 
-	// Persist terminal PUSH audits once. A finished ZapCash send then records the
-	// same EventId claim WhatsApp and RCS use. A later SQS delivery sees that
-	// outcome and deletes the message instead of sending FCM again.
+	// A redelivery owns the claim. Write the devices this worker finished, then
+	// leave Redis and the SQS message alone so that owner can delete them.
+	if result.Superseded {
+		if auditErr := writePushAudits(data.Client, result); auditErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
+				data.Client, data.CommId, data.EventId, auditErr))
+			return false, false
+		}
+		if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
+				data.Client, data.CommId, data.EventId, noteErr))
+		}
+		return false, false
+	}
+
+	// Persist PUSH audits before sealing the EventId claim. A busy slot or a
+	// database error leaves that claim blank, so SQS retries the message.
 	if auditErr := writePushAudits(data.Client, result); auditErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
 			data.Client, data.CommId, data.EventId, auditErr))
-		releaseZapCashClaimIfUnsent(data, queueURL, false)
+		releaseOwnedEventClaim(ctx, data, queueURL)
 		return false, false
+	}
+	if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
+			data.Client, data.CommId, data.EventId, noteErr))
+		if result.Submitted == 0 {
+			releaseOwnedEventClaim(ctx, data, queueURL)
+			return false, false
+		}
+		result.AckSQS = true
 	}
 
 	if txn, errMsg := ZapCashPushClaimSeal(result); txn != "" || errMsg != "" {
@@ -868,9 +930,9 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			return false, false
 		}
 	} else {
-		// The attempt is not finished. Drop the blank claim so the retry can
-		// claim it again, the same rule WhatsApp and RCS use.
-		releaseZapCashClaimIfUnsent(data, queueURL, false)
+		// The attempt is not finished. Drop the claim this worker still owns
+		// so the retry can send the devices that are not noted yet.
+		releaseOwnedEventClaim(ctx, data, queueURL)
 	}
 
 	if !result.AckSQS {
@@ -906,7 +968,7 @@ func ZapCashPushClaimSeal(result push.Result) (transactionID, errorMessage strin
 }
 
 func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transactionID, errorMessage string) error {
-	if !isZapCashDirectQueue(queueURL) {
+	if !LenderEventClaimApplies(data, queueURL) {
 		return nil
 	}
 	if transactionID != "" {
@@ -916,11 +978,15 @@ func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transacti
 }
 
 func writePushAudits(client string, result push.Result) error {
-	if result.InputAudit != nil {
-		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
+	if result.InputAudit != nil && result.Replayed == 0 && len(result.FreshOutputAudits) > 0 {
+		if err := database.InsertRowSync(client, config.Configs.PushInputAuditTable, result.InputAudit); err != nil {
+			return fmt.Errorf("push input audit: %w", err)
+		}
 	}
-	for _, output := range result.OutputAudits {
-		database.InsertRow(client, config.Configs.PushOutputTable, output)
+	for _, output := range result.FreshOutputAudits {
+		if err := database.InsertRowSync(client, config.Configs.PushOutputTable, output); err != nil {
+			return fmt.Errorf("push output audit: %w", err)
+		}
 	}
 	return nil
 }
@@ -1709,8 +1775,43 @@ func isZapCashDirectQueue(queueURL string) bool {
 	return z != "" && strings.TrimSpace(queueURL) == z
 }
 
+// LenderEventClaimApplies is the EventId claim in front of a channel handler.
+// WhatsApp, RCS, SMS, and email claim only on the ZapCash direct queue because
+// the other queues still claim inside sdk.Send. PUSH never goes through sdk.Send,
+// so it claims on every consumer queue.
+func LenderEventClaimApplies(data sdkModels.CommApiRequestBody, queueURL string) bool {
+	if data.Channel == variables.PUSH {
+		return true
+	}
+	if isMarketingSMSDispatch(data) {
+		return false
+	}
+	return isZapCashDirectQueue(queueURL)
+}
+
+// PushRedeliveryWaits is true when a PUSH redelivery found a live EventId claim
+// and must not delete the message or send FCM.
+func PushRedeliveryWaits(channel, redisTxn, redisErr string) bool {
+	return channel == variables.PUSH && marketingRedisClaimBlank(redisTxn, redisErr)
+}
+
+func releaseOwnedEventClaim(ctx context.Context, data sdkModels.CommApiRequestBody, queueURL string) {
+	if !LenderEventClaimApplies(data, queueURL) {
+		return
+	}
+	claimID := push.EventClaimID(ctx)
+	if claimID == "" {
+		releaseZapCashClaimIfUnsent(data, queueURL, false)
+		return
+	}
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	if _, err := redis.ReleaseBlankClaimIfOwner(redis.RDB, config.Configs.CommIdempotentKey, redisKey, claimID); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to release push event claim: %v", data.Client, data.CommId, err))
+	}
+}
+
 func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL string, sent bool) {
-	if sent || isMarketingSMSDispatch(data) || !isZapCashDirectQueue(queueURL) {
+	if sent || !LenderEventClaimApplies(data, queueURL) {
 		return
 	}
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
