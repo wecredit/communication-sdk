@@ -45,6 +45,22 @@ func TestNormalizeStageConfigurationRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestNormalizeStageConfigurationAcceptsOpenDay(t *testing.T) {
+	interval := "1d;30d;30+"
+	request := apiModels.StageConfigurationRequest{LenderName: "zapcash", CommType: "whatsapp", Stage: 12, Interval: &interval}
+	if err := apiServices.NormalizeStageConfigurationRequest(&request); err != nil {
+		t.Fatalf("open day: %v", err)
+	}
+	if request.Interval == nil || *request.Interval != "1d;30d;30+" {
+		t.Fatalf("normalized interval = %v", request.Interval)
+	}
+	hourOpen := "2h+"
+	rejected := apiModels.StageConfigurationRequest{LenderName: "zapcash", CommType: "whatsapp", Stage: 12, Interval: &hourOpen}
+	if err := apiServices.NormalizeStageConfigurationRequest(&rejected); err == nil {
+		t.Fatal("hour open token was accepted")
+	}
+}
+
 func TestNormalizeStageConfigurationAllowsIndependentResources(t *testing.T) {
 	interval := " 1D "
 	scheduleOnly := apiModels.StageConfigurationRequest{LenderName: "zapcash", CommType: "sms", Stage: 1, Interval: &interval}
