@@ -56,7 +56,7 @@ func ValidateCollectionAfternoonRequest(data sdkModels.CommApiRequestBody) (bool
 	wholeStage := int(data.Stage)
 	if slot != "afternoon" || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") ||
 		!strings.EqualFold(strings.TrimSpace(data.Channel), variables.RCS) ||
-		(wholeStage != 11 && wholeStage != 12) {
+		(wholeStage != 11 && wholeStage != 12 && wholeStage != 13) {
 		return false, 0, fmt.Errorf("invalid collectionSlot request")
 	}
 
