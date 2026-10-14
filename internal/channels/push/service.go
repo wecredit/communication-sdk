@@ -97,11 +97,11 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
 	if err != nil {
-		return terminalContentFailure(err)
+		return terminalContentFailure(request, tokens, "", err)
 	}
 
 	if len(tokens) == 0 {
-		return terminalContentFailure(errors.New("PUSH request contains no usable device tokens"))
+		return terminalContentFailure(request, tokens, templateName, errors.New("PUSH request contains no usable device tokens"))
 	}
 
 	result := Result{
@@ -152,10 +152,56 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	return result, errors.Join(failures...)
 }
 
-// terminalContentFailure finishes the attempt without calling FCM.
-// The handler deletes the SQS message, matching a WhatsApp or RCS template miss.
-func terminalContentFailure(err error) (Result, error) {
-	return Result{Processed: true, AckSQS: true, FailedFinal: 1}, err
+const pushNoTokenSubject = "push:no-device-token"
+
+// terminalContentFailure finishes the attempt without calling FCM and records
+// one input row plus one output row per token. A request with no token still
+// gets one output row so both PUSH audit tables have the failure.
+func terminalContentFailure(request sdkModels.CommApiRequestBody, tokens []string, templateName string, err error) (Result, error) {
+	code := contentFailureCode(err)
+	subjects := tokens
+	if len(subjects) == 0 {
+		subjects = []string{pushNoTokenSubject}
+	}
+
+	vendor := strings.TrimSpace(request.Vendor)
+	if vendor == "" {
+		vendor = providerName
+	}
+	result := Result{
+		Processed:         true,
+		AckSQS:            true,
+		FailedFinal:       len(subjects),
+		InputAudit:        buildInputAudit(request, vendor, templateName, len(subjects)),
+		OutputAudits:      make([]map[string]interface{}, 0, len(subjects)),
+		FreshOutputAudits: make([]map[string]interface{}, 0, len(subjects)),
+	}
+
+	for _, token := range subjects {
+		fingerprint, fpErr := FingerprintToken(token)
+		if fpErr != nil {
+			continue
+		}
+		output := buildOutputAudit(request, fingerprint, outcomeFailedFinal, fcm.ExecutionResult{Code: code})
+		result.OutputAudits = append(result.OutputAudits, output)
+		result.FreshOutputAudits = append(result.FreshOutputAudits, output)
+	}
+	return result, err
+}
+
+func contentFailureCode(err error) string {
+	message := ""
+	if err != nil {
+		message = strings.ToLower(err.Error())
+	}
+	switch {
+	case strings.Contains(message, "no usable device"):
+		return "NO_DEVICE_TOKEN"
+	case strings.Contains(message, "title and body"):
+		return "PUSH_TEMPLATE_INCOMPLETE"
+	default:
+		return "PUSH_TEMPLATE_NOT_FOUND"
+	}
 }
 
 func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Result {

@@ -209,6 +209,47 @@ func TestPushTemplateMissIsTerminal(t *testing.T) {
 	if err == nil || !result.AckSQS || !result.Processed || result.FailedFinal != 1 {
 		t.Fatalf("err=%v result=%+v, want a finished template miss", err, result)
 	}
+	if result.InputAudit == nil || result.InputAudit["EventId"] != "event-1" || result.InputAudit["DeviceCount"] != 1 {
+		t.Fatalf("InputAudit = %#v, want one input row", result.InputAudit)
+	}
+	if len(result.FreshOutputAudits) != 1 || result.FreshOutputAudits[0]["Outcome"] != "failed_final" || result.FreshOutputAudits[0]["ErrorCode"] != "PUSH_TEMPLATE_NOT_FOUND" {
+		t.Fatalf("FreshOutputAudits = %#v, want one failed_final template miss", result.FreshOutputAudits)
+	}
+}
+
+func TestPushEmptyTokenIsAudited(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	stage := 1.0
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{{
+		Id: 1, Client: "zapcash", Channel: "PUSH", Process: "OFFER", Stage: &stage,
+		Vendor: "FCM", TemplateName: "offer-1", TemplateHeader: "Hi",
+		TemplateText: "Offer", IsActive: true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.InstallTemplateSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	service, err := push.NewService(&fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"  "},
+	})
+	if err == nil || !result.AckSQS || result.InputAudit == nil || result.InputAudit["TemplateName"] != "offer-1" {
+		t.Fatalf("err=%v input=%#v, want an audited empty-token failure", err, result.InputAudit)
+	}
+	if len(result.FreshOutputAudits) != 1 || result.FreshOutputAudits[0]["ErrorCode"] != "NO_DEVICE_TOKEN" {
+		t.Fatalf("FreshOutputAudits = %#v, want one NO_DEVICE_TOKEN row", result.FreshOutputAudits)
+	}
+	fingerprint, _ := result.FreshOutputAudits[0]["TokenFingerprint"].(string)
+	if len(fingerprint) != 64 {
+		t.Fatalf("TokenFingerprint = %q, want 64 characters", fingerprint)
+	}
 }
 
 func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {

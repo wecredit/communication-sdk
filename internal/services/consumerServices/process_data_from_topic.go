@@ -902,16 +902,11 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 	}
 
 	// Remember devices that already reached FCM before deciding the SQS delete.
-	// A note failure on a batch that already submitted must still delete, or the
-	// retry would send those devices again.
+	// A note failure must not finish an unfinished batch: tokens that never
+	// reached FCM stay on the queue for retry.
 	if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
 			data.Client, data.CommId, data.EventId, noteErr))
-		if !result.AckSQS && result.Submitted == 0 {
-			releaseOwnedEventClaim(ctx, data, queueURL)
-			return false, false
-		}
-		result.AckSQS = true
 	}
 
 	// Same as WhatsApp and RCS: the audit write is log-only and does not keep
