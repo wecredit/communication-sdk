@@ -124,7 +124,7 @@ func activeTemplateResolutionKey(row apiModels.Templatedetails, stage, client, c
 		appID := strings.ToLower(strings.TrimSpace(row.AppId))
 		return "named\x00" + process + "\x00" + strings.ToLower(name) + "\x00" + appID + "\x00" + base, ""
 
-	case "RCS", "EMAIL", "PUSH":
+	case "RCS", "EMAIL", "PUSH", "IVR":
 		name := strings.TrimSpace(row.TemplateName)
 		if name == "" {
 			return "", "reference template has no TemplateName"
@@ -149,36 +149,37 @@ func templateCacheData(row apiModels.Templatedetails) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"Id":                   int64(row.Id),
-		"Client":               row.Client,
-		"Channel":              row.Channel,
-		"Process":              row.Process,
-		"Stage":                stage,
-		"Vendor":               row.Vendor,
-		"TemplateName":         row.TemplateName,
-		"ImageId":              row.ImageId,
-		"ImageUrl":             row.ImageUrl,
-		"DltTemplateId":        row.DltTemplateId,
-		"TemplateEntityId":     row.TemplateEntityId,
-		"TemplateHeader":       row.TemplateHeader,
-		"IsActive":             isActive,
-		"TemplateText":         row.TemplateText,
-		"Link":                 row.Link,
-		"CreatedOn":            row.CreatedOn,
-		"UpdatedOn":            row.UpdatedOn,
-		"TemplateCategory":     row.TemplateCategory,
-		"TemplateVariables":    row.TemplateVariables,
-		"SmsFallbackVariables": row.SmsFallbackVariables,
-		"Subject":              row.Subject,
-		"FromEmail":            row.FromEmail,
-		"AppId":                row.AppId,
+		"Id":                       int64(row.Id),
+		"Client":                   row.Client,
+		"Channel":                  row.Channel,
+		"Process":                  row.Process,
+		"Stage":                    stage,
+		"Vendor":                   row.Vendor,
+		"TemplateName":             row.TemplateName,
+		"VoiceId":                  row.VoiceId,
+		"ImageId":                  row.ImageId,
+		"ImageUrl":                 row.ImageUrl,
+		"DltTemplateId":            row.DltTemplateId,
+		"TemplateEntityId":         row.TemplateEntityId,
+		"TemplateHeader":           row.TemplateHeader,
+		"IsActive":                 isActive,
+		"TemplateText":             row.TemplateText,
+		"Link":                     row.Link,
+		"CreatedOn":                row.CreatedOn,
+		"UpdatedOn":                row.UpdatedOn,
+		"TemplateCategory":         row.TemplateCategory,
+		"TemplateVariables":        row.TemplateVariables,
+		"SmsFallbackVariables":     row.SmsFallbackVariables,
+		"Subject":                  row.Subject,
+		"FromEmail":                row.FromEmail,
+		"AppId":                    row.AppId,
 		"ProviderTemplateCategory": row.ProviderTemplateCategory,
-		"LanguageCode":         row.LanguageCode,
-		"CampaignId":           row.CampaignId,
-		"CtaId":                row.CtaId,
-		"WabaNumber":           row.WabaNumber,
-		"Error":                row.Error,
-		"CategoryUpdatedOn":    row.CategoryUpdatedOn,
+		"LanguageCode":             row.LanguageCode,
+		"CampaignId":               row.CampaignId,
+		"CtaId":                    row.CtaId,
+		"WabaNumber":               row.WabaNumber,
+		"Error":                    row.Error,
+		"CategoryUpdatedOn":        row.CategoryUpdatedOn,
 	}
 }
 

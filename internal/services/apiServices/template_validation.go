@@ -29,6 +29,7 @@ const (
 )
 
 var pinnacleRCSTemplateIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{24}$`)
+var ivrVoiceIDPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 var (
 	ErrTemplateNotFound   = errors.New("template not found")
@@ -116,7 +117,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	switch template.Channel {
-	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH":
+	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH", "IVR":
 	default:
 		return fmt.Errorf("unsupported channel %q", template.Channel)
 	}
@@ -141,6 +142,15 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 
 		if strings.TrimSpace(template.TemplateText) == "" {
 			return errors.New("templateText is required as the body for PUSH")
+		}
+
+	case "IVR":
+		if strings.TrimSpace(template.TemplateName) == "" {
+			return errors.New("templateName is required for IVR")
+		}
+
+		if !ivrVoiceIDPattern.MatchString(strings.TrimSpace(template.VoiceId)) {
+			return errors.New("voiceId is required for IVR and must be 1 to 20 digits")
 		}
 	}
 
@@ -172,7 +182,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 				return errors.New("dltTemplateId is required for SMS REFERENCE_MODE")
 			}
 
-		case "RCS", "WHATSAPP", "EMAIL", "PUSH":
+		case "RCS", "WHATSAPP", "EMAIL", "PUSH", "IVR":
 			if template.TemplateName == "" {
 				return fmt.Errorf("templateName is required for %s REFERENCE_MODE", template.Channel)
 			}
@@ -359,7 +369,7 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 				query = query.Where("LOWER(TRIM(AppId)) = LOWER(TRIM(?))", appID)
 			}
 
-		case "RCS", "EMAIL", "PUSH":
+		case "RCS", "EMAIL", "PUSH", "IVR":
 			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 		}
 	}

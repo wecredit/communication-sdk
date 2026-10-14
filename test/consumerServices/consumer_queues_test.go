@@ -303,4 +303,10 @@ func TestZapCashBlankClaimShouldReclaim(t *testing.T) {
 	if services.ZapCashBlankClaimShouldReclaim("txn-1", "", 2) || services.ZapCashBlankClaimShouldReclaim("", "vendor off", 2) {
 		t.Fatal("a recorded outcome must stay")
 	}
+	if services.ShouldReclaimBlankZapCashClaim(variables.IVR, "", "", 2) {
+		t.Fatal("IVR redelivery must leave a blank claim in place")
+	}
+	if !services.ShouldReclaimBlankZapCashClaim(variables.RCS, "", "", 2) || !services.ShouldReclaimBlankZapCashClaim(variables.WhatsApp, "", "", 2) {
+		t.Fatal("RCS and WhatsApp redelivery must still reclaim a blank claim")
+	}
 }

@@ -38,6 +38,11 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 			return false, "Mobile is required for RCS communication"
 		}
 
+	case variables.IVR:
+		if data.Mobile == "" {
+			return false, "Mobile is required for IVR communication"
+		}
+
 	case variables.WhatsApp:
 		if data.Mobile == "" {
 			return false, "Mobile is required for WhatsApp Communication"

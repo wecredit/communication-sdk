@@ -15,7 +15,7 @@ import (
 
 var bulkHeaders = map[string]string{
 	"Client": "Client", "Channel": "Channel", "Process": "Process", "Stage": "Stage", "Vendor": "Vendor",
-	"Template Name": "TemplateName", "Image ID": "ImageId", "Image URL": "ImageUrl", "DLT Template ID": "DltTemplateId",
+	"Template Name": "TemplateName", "Voice ID": "VoiceId", "Image ID": "ImageId", "Image URL": "ImageUrl", "DLT Template ID": "DltTemplateId",
 	"Template Entity ID": "TemplateEntityId", "Template Header": "TemplateHeader", "Is Active": "IsActive",
 	"Template Text": "TemplateText", "Link": "Link", "Template Category": "TemplateCategory",
 	"Provider Template Category": "ProviderTemplateCategory", "Variables": "TemplateVariables",
@@ -167,6 +167,8 @@ func bulkTemplateFromRecord(headers, record []string) (apiModels.Templatedetails
 			t.Vendor = v
 		case "TemplateName":
 			t.TemplateName = v
+		case "VoiceId":
+			t.VoiceId = v
 		case "ImageId":
 			t.ImageId = v
 		case "ImageUrl":
@@ -263,7 +265,6 @@ func normalizeWhatsAppProviderTemplateCategory(channel, value string) (string, e
 		return "", fmt.Errorf("Provider Template Category must be MARKETING or UTILITY for WhatsApp")
 	}
 }
-
 
 func parseBulkStage(v string) (float64, error) {
 	v = strings.TrimSpace(v)
