@@ -195,6 +195,22 @@ func (e *fakeExecutor) ExecuteWithObserver(
 	return fcm.ExecutionResult{Outcome: fcm.OutcomeSubmitted, MessageID: "message-1", AttemptCount: 1}, nil
 }
 
+func TestPushTemplateMissIsTerminal(t *testing.T) {
+	cache.InitializeCache()
+	seedZapCashPushShouldHitVendor(t, true)
+	service, err := push.NewService(&fakeExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Send(context.Background(), sdkModels.CommApiRequestBody{
+		CommId: "comm-1", EventId: "event-1", Client: "zapcash", Channel: "PUSH",
+		ProcessName: "OFFER", Stage: 1, DeviceTokens: []string{"token-a"},
+	})
+	if err == nil || !result.AckSQS || !result.Processed || result.FailedFinal != 1 {
+		t.Fatalf("err=%v result=%+v, want a finished template miss", err, result)
+	}
+}
+
 func TestPushServiceDeduplicatesTokensAndResolvesTemplate(t *testing.T) {
 	cache.InitializeCache()
 	seedZapCashPushShouldHitVendor(t, true)

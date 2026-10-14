@@ -278,6 +278,21 @@ func TestZapCashPushClaimSealStopsBlankRedelivery(t *testing.T) {
 	}
 }
 
+func TestPushFinishedAttemptDeletesLikeOtherChannels(t *testing.T) {
+	if !services.PushAttemptDeletesSQS(push.Result{AckSQS: true, Submitted: 1}) {
+		t.Fatal("a finished PUSH attempt must delete the SQS message")
+	}
+	if !services.PushAttemptDeletesSQS(push.Result{AckSQS: true, FailedFinal: 1}) {
+		t.Fatal("a terminal PUSH failure must delete the SQS message")
+	}
+	if services.PushAttemptDeletesSQS(push.Result{AckSQS: false, Submitted: 1}) {
+		t.Fatal("an unfinished PUSH batch must stay for retry")
+	}
+	if services.PushAttemptDeletesSQS(push.Result{AckSQS: true, Superseded: true}) {
+		t.Fatal("a superseded PUSH delivery must leave the owner's message")
+	}
+}
+
 func TestZapCashBlankClaimShouldReclaim(t *testing.T) {
 	if services.ZapCashBlankClaimShouldReclaim("", "", 1) {
 		t.Fatal("first receive must keep a blank in-flight claim")

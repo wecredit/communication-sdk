@@ -890,14 +890,10 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, err))
 	}
 
-	// A redelivery owns the claim. Write the devices this worker finished, then
+	// A redelivery owns the claim. Record whatever this worker finished, then
 	// leave Redis and the SQS message alone so that owner can delete them.
 	if result.Superseded {
-		if auditErr := writePushAudits(data.Client, result); auditErr != nil {
-			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
-				data.Client, data.CommId, data.EventId, auditErr))
-			return false, false
-		}
+		writePushAudits(data.Client, result)
 		if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
 			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
 				data.Client, data.CommId, data.EventId, noteErr))
@@ -905,38 +901,33 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		return false, false
 	}
 
-	// Persist PUSH audits before sealing the EventId claim. A busy slot or a
-	// database error leaves that claim blank, so SQS retries the message.
-	if auditErr := writePushAudits(data.Client, result); auditErr != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH audit persistence failed: %w",
-			data.Client, data.CommId, data.EventId, auditErr))
-		releaseOwnedEventClaim(ctx, data, queueURL)
-		return false, false
-	}
+	// Remember devices that already reached FCM before deciding the SQS delete.
+	// A note failure on a batch that already submitted must still delete, or the
+	// retry would send those devices again.
 	if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
 			data.Client, data.CommId, data.EventId, noteErr))
-		if result.Submitted == 0 {
+		if !result.AckSQS && result.Submitted == 0 {
 			releaseOwnedEventClaim(ctx, data, queueURL)
 			return false, false
 		}
 		result.AckSQS = true
 	}
 
+	// Same as WhatsApp and RCS: the audit write is log-only and does not keep
+	// the SQS message. An unfinished token batch stays so the remaining devices
+	// can be retried.
+	writePushAudits(data.Client, result)
+	if !PushAttemptDeletesSQS(result) {
+		releaseOwnedEventClaim(ctx, data, queueURL)
+		return result.Processed, false
+	}
+
 	if txn, errMsg := ZapCashPushClaimSeal(result); txn != "" || errMsg != "" {
 		if sealErr := sealZapCashPushClaim(data, queueURL, txn, errMsg); sealErr != nil {
 			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH claim seal failed: %w",
 				data.Client, data.CommId, data.EventId, sealErr))
-			return false, false
 		}
-	} else {
-		// The attempt is not finished. Drop the claim this worker still owns
-		// so the retry can send the devices that are not noted yet.
-		releaseOwnedEventClaim(ctx, data, queueURL)
-	}
-
-	if !result.AckSQS {
-		return result.Processed, false
 	}
 
 	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
@@ -977,18 +968,23 @@ func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transacti
 	return channelHelper.UpdateRedisErrorMessage(data, errorMessage)
 }
 
-func writePushAudits(client string, result push.Result) error {
+// writePushAudits records PUSH input and output rows the same way WhatsApp and
+// RCS record theirs. InsertRow logs a busy or failed insert and returns. The
+// caller still deletes a finished SQS message.
+func writePushAudits(client string, result push.Result) {
 	if result.InputAudit != nil && result.Replayed == 0 && len(result.FreshOutputAudits) > 0 {
-		if err := database.InsertRowSync(client, config.Configs.PushInputAuditTable, result.InputAudit); err != nil {
-			return fmt.Errorf("push input audit: %w", err)
-		}
+		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
 	}
 	for _, output := range result.FreshOutputAudits {
-		if err := database.InsertRowSync(client, config.Configs.PushOutputTable, output); err != nil {
-			return fmt.Errorf("push output audit: %w", err)
-		}
+		database.InsertRow(client, config.Configs.PushOutputTable, output)
 	}
-	return nil
+}
+
+// PushAttemptDeletesSQS is true when this PUSH attempt is finished.
+// WhatsApp and RCS delete on that same condition. An unfinished token batch
+// stays on the queue. A superseded delivery belongs to the claim owner.
+func PushAttemptDeletesSQS(result push.Result) bool {
+	return result.AckSQS && !result.Superseded
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {

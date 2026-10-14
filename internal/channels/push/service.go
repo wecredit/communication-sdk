@@ -97,11 +97,11 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
 	if err != nil {
-		return Result{}, err
+		return terminalContentFailure(err)
 	}
 
 	if len(tokens) == 0 {
-		return Result{}, errors.New("PUSH request contains no usable device tokens")
+		return terminalContentFailure(errors.New("PUSH request contains no usable device tokens"))
 	}
 
 	result := Result{
@@ -150,6 +150,12 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 	}
 
 	return result, errors.Join(failures...)
+}
+
+// terminalContentFailure finishes the attempt without calling FCM.
+// The handler deletes the SQS message, matching a WhatsApp or RCS template miss.
+func terminalContentFailure(err error) (Result, error) {
+	return Result{Processed: true, AckSQS: true, FailedFinal: 1}, err
 }
 
 func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Result {
