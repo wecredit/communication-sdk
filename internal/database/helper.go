@@ -139,8 +139,8 @@ func InsertRow(client, table string, row map[string]interface{}) {
 
 // InsertRowSync writes one channel audit row on the caller.
 // A disabled destination or a nil pool is a success. A full slot or a database
-// error is returned. PUSH seals its EventId claim only after this returns nil,
-// so a missed audit stays retryable. Other channels keep using InsertRow.
+// error is returned. Channel handlers that must delete SQS when the send is
+// finished, including PUSH, use InsertRow instead.
 func InsertRowSync(client, table string, row map[string]interface{}) error {
 	writeComm, writeCore := ChannelAuditDestinations(
 		client,
