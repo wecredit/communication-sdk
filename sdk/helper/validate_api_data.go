@@ -8,6 +8,8 @@ import (
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
+var ivrMobilePattern = regexp.MustCompile(`^[0-9]{10}$`)
+
 // ValidateCommRequest validates the CommApi request fields
 func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 	// Trim inputs to avoid issues with spaces
@@ -41,6 +43,9 @@ func ValidateCommRequest(data sdkModels.CommApiRequestBody) (bool, string) {
 	case variables.IVR:
 		if data.Mobile == "" {
 			return false, "Mobile is required for IVR communication"
+		}
+		if !ivrMobilePattern.MatchString(data.Mobile) {
+			return false, "Mobile must be 10 digits for IVR communication"
 		}
 
 	case variables.WhatsApp:

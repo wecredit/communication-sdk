@@ -20,11 +20,23 @@ import (
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/pkg/cache"
+	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
 )
+
+func TestValidateIVRMobileIsTenDigits(t *testing.T) {
+	valid := sdkModels.CommApiRequestBody{Channel: variables.IVR, ProcessName: "collection", Mobile: "7014850582"}
+	if ok, message := sdkHelper.ValidateCommRequest(valid); !ok {
+		t.Fatalf("10 digit mobile rejected: %s", message)
+	}
+	valid.Mobile = "701485058"
+	if ok, _ := sdkHelper.ValidateCommRequest(valid); ok {
+		t.Fatal("short mobile was accepted")
+	}
+}
 
 func TestShouldReclaimBlankZapCashClaimSkipsIVR(t *testing.T) {
 	if services.ShouldReclaimBlankZapCashClaim(variables.IVR, "", "", 2) {

@@ -297,7 +297,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			saved.UpdatedBy = actorUsername
 			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
 				Select(
-					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName",
+					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName", "VoiceId",
 					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
 					"IsActive", "TemplateText", "Link", "UpdatedOn", "UpdatedBy", "TemplateCategory",
 					"TemplateVariables", "SmsFallbackVariables", "Subject", "FromEmail",
