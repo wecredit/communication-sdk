@@ -14,6 +14,7 @@ import (
 	sinchSms "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/templatevars"
 	timesSms "github.com/wecredit/communication-sdk/internal/channels/sms/times"
+	vapioSms "github.com/wecredit/communication-sdk/internal/channels/sms/vapio"
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
@@ -134,6 +135,8 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 		response = sinchSms.HitSinchSmsApi(req)
 	case variables.PINNACLE:
 		response = pinnacleSms.HitPinnacleApiWithContext(ctx, req)
+	case variables.VAPIO:
+		response = vapioSms.HitVapioSmsApiWithContext(ctx, req)
 	default:
 		response.Outcome = outcome.FailedFinal
 		response.ResponseMessage = fmt.Sprintf("unsupported SMS vendor: %s", msg.Vendor)

@@ -75,8 +75,8 @@ type Config struct {
 	AwsWeCreditSmsTopicArn string `envconfig:"AWS_WECREDIT_SMS_TOPIC_ARN"`
 	AwsQueueUrl            string `envconfig:"AWS_QUEUE_URL"`
 	// ZapCash single-hop: set this to the existing ZapCash queue URL.
-	AwsZapCashQueueUrl     string `envconfig:"AWS_ZAPCASH_QUEUE_URL"`
-	AwsErrorQueueUrl       string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
+	AwsZapCashQueueUrl string `envconfig:"AWS_ZAPCASH_QUEUE_URL"`
+	AwsErrorQueueUrl   string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
 	// ZapCash monitoring copies ride the existing SNS -> shared SQS path.
 	ZapCashMonitoringEnabled  string `envconfig:"ZAPCASH_MONITORING_ENABLED" default:"false"`
@@ -220,7 +220,7 @@ type Config struct {
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
 	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
-	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100"`
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
@@ -242,4 +242,10 @@ type Config struct {
 	PinnacleSmsApiUrl      string `envconfig:"PINNACLE_SMS_API_URL"`
 	PinnacleSmsAccessKey   string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
 	PinnacleSmsDltEntityId string `envconfig:"PINNACLE_SMS_DLT_ENTITY_ID"`
+
+	// WeCredit Vapio SMS. The API key stays in the environment and is not logged.
+	WeCreditVapioSmsApiUrl   string `envconfig:"WECREDIT_VAPIO_SMS_API_URL" default:"https://vapio.in/api.php"`
+	WeCreditVapioSmsUsername string `envconfig:"WECREDIT_VAPIO_SMS_USERNAME"`
+	WeCreditVapioSmsApiKey   string `envconfig:"WECREDIT_VAPIO_SMS_API_KEY"`
+	WeCreditVapioSmsRoute    string `envconfig:"WECREDIT_VAPIO_SMS_ROUTE"`
 }
