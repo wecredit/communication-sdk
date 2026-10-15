@@ -73,6 +73,15 @@ func TestValidateTemplateStructure(t *testing.T) {
 			wantErr: "contains 1 entries but templateText contains 0",
 		},
 		{
+			name: "sms accepts vapio vendor",
+			input: apiModels.Templatedetails{
+				Process: "BRANCH", Client: "wecredit", Channel: "SMS", Vendor: "VAPIO",
+				DltTemplateId: 1777178764360614607, TemplateEntityId: 1701170417883448407,
+				TemplateHeader: "WECRWP", TemplateCategory: 3, TemplateVariables: "Link",
+				TemplateText: "Funding chahiye aur process simple rakhna hai. Branch se Rs 5 lakh tak personal loan option. Aaj hi explore karein {#var#} WeCredit",
+			},
+		},
+		{
 			name:  "sms accepts one general variable",
 			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "SMS", Vendor: "V", DltTemplateId: 1, TemplateCategory: 3, TemplateText: "Hello {#var#}", TemplateVariables: "var"},
 		},

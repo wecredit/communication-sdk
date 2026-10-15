@@ -223,7 +223,7 @@ type Config struct {
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
 	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
-	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
@@ -250,4 +250,10 @@ type Config struct {
 	PinnacleSmsApiUrl      string `envconfig:"PINNACLE_SMS_API_URL"`
 	PinnacleSmsAccessKey   string `envconfig:"PINNACLE_SMS_ACCESSKEY"`
 	PinnacleSmsDltEntityId string `envconfig:"PINNACLE_SMS_DLT_ENTITY_ID"`
+
+	// WeCredit Vapio SMS. The API key stays in the environment and is not logged.
+	WeCreditVapioSmsApiUrl   string `envconfig:"WECREDIT_VAPIO_SMS_API_URL" default:"https://vapio.in/api.php"`
+	WeCreditVapioSmsUsername string `envconfig:"WECREDIT_VAPIO_SMS_USERNAME"`
+	WeCreditVapioSmsApiKey   string `envconfig:"WECREDIT_VAPIO_SMS_API_KEY"`
+	WeCreditVapioSmsRoute    string `envconfig:"WECREDIT_VAPIO_SMS_ROUTE"`
 }
