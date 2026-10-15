@@ -10,6 +10,7 @@ import (
 	pinnacle "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle"
 	sinch "github.com/wecredit/communication-sdk/internal/channels/sms/sinch"
 	times "github.com/wecredit/communication-sdk/internal/channels/sms/times"
+	vapio "github.com/wecredit/communication-sdk/internal/channels/sms/vapio"
 	"github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	models "github.com/wecredit/communication-sdk/sdk/models"
@@ -28,17 +29,21 @@ func TestEverySMSProviderBlocksImmediatelyBeforeHTTP(t *testing.T) {
 	previous := config.Configs
 	t.Cleanup(func() { config.Configs = previous })
 	config.Configs = models.Config{
-		ProviderRPSDefault:     "50",
-		SinchSmsApiUrl:         "http://127.0.0.1:1/sinch",
-		SinchSmsApiUserName:    "user",
-		SinchSmsApiPassword:    "password",
-		SinchSmsApiAppID:       "app",
-		SinchSmsApiSender:      "sender",
-		TimesSmsApiUrl:         "http://127.0.0.1:1/times",
-		TimesSmsApiSender:      "sender",
-		PinnacleSmsApiUrl:      "http://127.0.0.1:1/pinnacle",
-		PinnacleSmsAccessKey:   "secret",
-		PinnacleSmsDltEntityId: "entity",
+		ProviderRPSDefault:       "50",
+		SinchSmsApiUrl:           "http://127.0.0.1:1/sinch",
+		SinchSmsApiUserName:      "user",
+		SinchSmsApiPassword:      "password",
+		SinchSmsApiAppID:         "app",
+		SinchSmsApiSender:        "sender",
+		TimesSmsApiUrl:           "http://127.0.0.1:1/times",
+		TimesSmsApiSender:        "sender",
+		PinnacleSmsApiUrl:        "http://127.0.0.1:1/pinnacle",
+		PinnacleSmsAccessKey:     "secret",
+		PinnacleSmsDltEntityId:   "entity",
+		WeCreditVapioSmsApiUrl:   "http://127.0.0.1:1/vapio",
+		WeCreditVapioSmsUsername: "user",
+		WeCreditVapioSmsApiKey:   "secret",
+		WeCreditVapioSmsRoute:    "Trans",
 	}
 	ratelimit.ResetForTest()
 
@@ -52,6 +57,7 @@ func TestEverySMSProviderBlocksImmediatelyBeforeHTTP(t *testing.T) {
 		"sinch":    sinch.HitSinchSmsApi(request),
 		"times":    times.HitTimesSmsApi(request),
 		"pinnacle": pinnacle.HitPinnacleApi(request),
+		"vapio":    vapio.HitVapioSmsApi(request),
 	}
 	for provider, response := range responses {
 		if response.Outcome != outcome.FailedFinal {
