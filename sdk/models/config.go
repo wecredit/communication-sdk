@@ -123,6 +123,9 @@ type Config struct {
 	SdkRcsInputTable string `envconfig:"SDK_RCS_INPUT_TABLE" default:"RcsInputAuditTable"`
 	RcsOutputTable   string `envconfig:"RCS_OUTPUT_TABLE"`
 
+	SdkIvrInputTable string `envconfig:"SDK_IVR_INPUT_TABLE" default:"IvrInputAuditTable"`
+	IvrOutputTable   string `envconfig:"IVR_OUTPUT_TABLE" default:"IvrOutputTable"`
+
 	SdkSmsInputTable string `envconfig:"SDK_SMS_INPUT_TABLE"`
 	SmsOutputTable   string `envconfig:"SMS_OUTPUT_TABLE"`
 
@@ -220,7 +223,7 @@ type Config struct {
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
 	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
-	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100"`
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
@@ -237,6 +240,11 @@ type Config struct {
 	PinnacleZapcashRcsTransactionalBotId string `envconfig:"PINNACLE_ZAPCASH_RCS_TRANSACTIONAL_BOT_ID"`
 	PinnacleZapcashRcsPromotionalBotId   string `envconfig:"PINNACLE_ZAPCASH_RCS_PROMOTIONAL_BOT_ID"`
 	PinnacleZapcashRcsTtl                string `envconfig:"PINNACLE_ZAPCASH_RCS_TTL"`
+
+	// ZapCash Pinnacle IVR. The URL is the REST prefix, not the portal /OBD/ path.
+	PinnacleZapcashIvrApiUrl      string `envconfig:"PINNACLE_ZAPCASH_IVR_API_URL"`
+	PinnacleZapcashIvrApiUsername string `envconfig:"PINNACLE_ZAPCASH_IVR_API_USERNAME"`
+	PinnacleZapcashIvrApiPassword string `envconfig:"PINNACLE_ZAPCASH_IVR_API_PASSWORD"`
 
 	// Pinnacle SMS API
 	PinnacleSmsApiUrl      string `envconfig:"PINNACLE_SMS_API_URL"`

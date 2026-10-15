@@ -38,6 +38,7 @@ type TemplateCreateRequest struct {
 	Stage                    *float64 `json:"stage"`
 	Vendor                   string   `json:"vendor"`
 	TemplateName             string   `json:"templateName"`
+	VoiceId                  string   `json:"voiceId"`
 	ImageId                  string   `json:"imageId"`
 	ImageUrl                 string   `json:"imageUrl"`
 	DltTemplateId            int64    `json:"dltTemplateId"`
@@ -68,6 +69,7 @@ func (r TemplateCreateRequest) Template() Templatedetails {
 		Stage:                    r.Stage,
 		Vendor:                   r.Vendor,
 		TemplateName:             r.TemplateName,
+		VoiceId:                  r.VoiceId,
 		ImageId:                  r.ImageId,
 		ImageUrl:                 r.ImageUrl,
 		DltTemplateId:            r.DltTemplateId,
@@ -100,6 +102,7 @@ type TemplateUpdateRequest struct {
 	Stage                    NullableFloat64 `json:"stage"`
 	Vendor                   *string         `json:"vendor"`
 	TemplateName             *string         `json:"templateName"`
+	VoiceId                  *string         `json:"voiceId"`
 	ImageId                  *string         `json:"imageId"`
 	ImageUrl                 *string         `json:"imageUrl"`
 	DltTemplateId            *int64          `json:"dltTemplateId"`
@@ -139,6 +142,9 @@ func (r TemplateUpdateRequest) Apply(template *Templatedetails) {
 	}
 	if r.TemplateName != nil {
 		template.TemplateName = *r.TemplateName
+	}
+	if r.VoiceId != nil {
+		template.VoiceId = *r.VoiceId
 	}
 	if r.ImageId != nil {
 		template.ImageId = *r.ImageId

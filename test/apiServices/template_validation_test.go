@@ -23,8 +23,22 @@ func TestValidateTemplateStructure(t *testing.T) {
 		},
 		{
 			name:    "stage mode rejects unsupported channel",
-			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "V", Stage: &stage},
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "FAX", Vendor: "V", Stage: &stage},
 			wantErr: "unsupported channel",
+		},
+		{
+			name:  "ivr stage mode accepts a numeric voice id",
+			input: apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "PINNACLE", Stage: &stage, TemplateName: "ZapDueDateeng", VoiceId: "57965"},
+		},
+		{
+			name:    "ivr rejects a nonnumeric voice id",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "PINNACLE", Stage: &stage, TemplateName: "ZapDueDateeng", VoiceId: "ZapDue"},
+			wantErr: "voiceId is required",
+		},
+		{
+			name:    "ivr rejects a non pinnacle vendor",
+			input:   apiModels.Templatedetails{Process: "P", Client: "c", Channel: "IVR", Vendor: "SINCH", Stage: &stage, TemplateName: "ZapDueDateeng", VoiceId: "57965"},
+			wantErr: "vendor must be PINNACLE",
 		},
 		{
 			name:    "stage mode rejects more than two decimal places",

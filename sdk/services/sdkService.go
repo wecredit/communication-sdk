@@ -45,17 +45,20 @@ func ResolveCommID(existing, clientName string) string {
 
 const collectionAfternoonClaimTTL = 36 * time.Hour
 
-// ValidateCollectionAfternoonRequest validates the only tagged request shape
-// that may bypass the legacy SDK idempotency hash.
+// ValidateCollectionAfternoonRequest validates the tagged request shape that
+// bypasses the legacy SDK idempotency hash. RCS and IVR use it for the second
+// collection send. Morning and afternoon stay distinct because each claim key
+// includes the channel.
 func ValidateCollectionAfternoonRequest(data sdkModels.CommApiRequestBody) (bool, int, error) {
 	slot := strings.TrimSpace(data.CollectionSlot)
 	if slot == "" {
 		return false, 0, nil
 	}
 
+	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
 	wholeStage := int(data.Stage)
 	if slot != "afternoon" || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") ||
-		!strings.EqualFold(strings.TrimSpace(data.Channel), variables.RCS) ||
+		(channel != variables.RCS && channel != variables.IVR) ||
 		(wholeStage != 11 && wholeStage != 12 && wholeStage != 13) {
 		return false, 0, fmt.Errorf("invalid collectionSlot request")
 	}
@@ -64,13 +67,19 @@ func ValidateCollectionAfternoonRequest(data sdkModels.CommApiRequestBody) (bool
 }
 
 // CollectionAfternoonClaimKey returns the standalone IST-date claim key.
-func CollectionAfternoonClaimKey(now time.Time, mobile string, wholeStage int) string {
+// The channel segment keeps the RCS replay and the IVR replay from sharing a claim.
+func CollectionAfternoonClaimKey(now time.Time, mobile, channel string, wholeStage int) string {
 	ist, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {
 		ist = time.FixedZone("IST", 5*60*60+30*60)
 	}
 
-	return fmt.Sprintf("zapcash:collection:rcs:afternoon:%s:%s:%d", now.In(ist).Format("2006-01-02"), strings.TrimSpace(mobile), wholeStage)
+	name := strings.ToLower(strings.TrimSpace(channel))
+	if name == "" {
+		name = "rcs"
+	}
+
+	return fmt.Sprintf("zapcash:collection:%s:afternoon:%s:%s:%d", name, now.In(ist).Format("2006-01-02"), strings.TrimSpace(mobile), wholeStage)
 }
 
 func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, topicArn, queueURL string, redisClient *redis.Client) (sdkModels.CommApiResponseBody, error) {
@@ -315,7 +324,7 @@ func processCollectionAfternoon(data *sdkModels.CommApiRequestBody, snsClient *s
 		return sdkModels.CommApiResponseBody{Success: false}, fmt.Errorf("collectionSlot is required")
 	}
 
-	claimKey := CollectionAfternoonClaimKey(time.Now(), data.Mobile, wholeStage)
+	claimKey := CollectionAfternoonClaimKey(time.Now(), data.Mobile, data.Channel, wholeStage)
 	claimToken := uuid.NewString()
 	claimed, err := redisInteraction.ClaimCollectionAfternoonKey(redisClient, claimKey, claimToken, collectionAfternoonClaimTTL)
 	if err != nil {

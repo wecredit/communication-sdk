@@ -36,6 +36,10 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 	if ok, stage, err := sdkServices.ValidateCollectionAfternoonRequest(dueDate); !ok || stage != 13 || err != nil {
 		t.Fatalf("due-date slot = (%t, %d, %v)", ok, stage, err)
 	}
+	ivr := sdkModels.CommApiRequestBody{CollectionSlot: "afternoon", Client: "zapcash", Channel: "IVR", Stage: 12.01}
+	if ok, stage, err := sdkServices.ValidateCollectionAfternoonRequest(ivr); !ok || stage != 12 || err != nil {
+		t.Fatalf("ivr slot = (%t, %d, %v)", ok, stage, err)
+	}
 	for _, request := range []sdkModels.CommApiRequestBody{
 		{CollectionSlot: "morning", Client: "zapcash", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "other", Channel: "RCS", Stage: 12.07},
@@ -49,9 +53,14 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 }
 
 func TestCollectionAfternoonClaimKeyUsesISTDateAndWholeStage(t *testing.T) {
-	key := sdkServices.CollectionAfternoonClaimKey(time.Date(2026, 10, 1, 15, 5, 0, 0, time.FixedZone("IST", 19800)), "9999999999", 12)
+	when := time.Date(2026, 10, 1, 15, 5, 0, 0, time.FixedZone("IST", 19800))
+	key := sdkServices.CollectionAfternoonClaimKey(when, "9999999999", "RCS", 12)
 	if key != "zapcash:collection:rcs:afternoon:2026-10-01:9999999999:12" {
 		t.Fatalf("claim key = %q", key)
+	}
+	ivrKey := sdkServices.CollectionAfternoonClaimKey(when, "9999999999", "IVR", 12)
+	if ivrKey != "zapcash:collection:ivr:afternoon:2026-10-01:9999999999:12" || ivrKey == key {
+		t.Fatalf("ivr claim key = %q", ivrKey)
 	}
 }
 
@@ -114,7 +123,7 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 		if got := requests.Load(); got != 1 {
 			t.Fatalf("accepted queue calls = %d, want 1", got)
 		}
-		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, 12)
+		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, request.Channel, 12)
 		if !mini.Exists(key) {
 			t.Fatal("accepted enqueue did not retain afternoon claim")
 		}
@@ -132,7 +141,7 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 		if _, err := sdkServices.ProcessCommApiData(&request, nil, "", server.URL+"/queue", redisClient); err == nil {
 			t.Fatal("enqueue failure unexpectedly succeeded")
 		}
-		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, 12)
+		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, request.Channel, 12)
 		if mini.Exists(key) {
 			t.Fatal("enqueue failure retained afternoon claim")
 		}

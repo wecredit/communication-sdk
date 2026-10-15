@@ -21,6 +21,7 @@ import (
 
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	email "github.com/wecredit/communication-sdk/internal/channels/email"
+	ivr "github.com/wecredit/communication-sdk/internal/channels/ivr"
 	push "github.com/wecredit/communication-sdk/internal/channels/push"
 	rcs "github.com/wecredit/communication-sdk/internal/channels/rcs"
 	sms "github.com/wecredit/communication-sdk/internal/channels/sms"
@@ -802,7 +803,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 					return false, false
 				}
 			}
-		} else if ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, approximateReceiveCount(msg)) {
+		} else if ShouldReclaimBlankZapCashClaim(data.Channel, redisTxn, redisErr, approximateReceiveCount(msg)) {
 			if _, relErr := redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey); relErr != nil {
 				utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash blank redis reclaim failed: %v", data.Client, data.Channel, relErr))
 				return false, false
@@ -867,6 +868,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 	case variables.PUSH:
 		isMessageProcessed, deleted := handlePush(ctx, data, sqsClient, queueURL, msg)
 		return isMessageProcessed, deleted
+	case variables.IVR:
+		return handleIVR(ctx, data, dbMappedData, sqsClient, queueURL, msg)
 	default:
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] invalid channel: %s", data.Client, data.CommId, data.Channel))
 		// Delete invalid messages to prevent unnecessary retries
@@ -877,6 +880,28 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		releaseZapCashClaimIfUnsent(data, queueURL, false)
 		return true, deleted // message processed (rejected due to invalid channel)
 	}
+}
+
+func handleIVR(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
+	if !AssignVendor(&data) {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	result := ivr.SendAttempt(ctx, &data, dbMappedData)
+	if result.InactiveVendor {
+		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	if !result.DeleteMessage {
+		return false, false
+	}
+
+	deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+	if !deleted {
+		utils.Error(fmt.Errorf("failed to delete message after IVR attempt: %v", delErr))
+	}
+
+	return true, deleted
 }
 
 func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
@@ -1826,6 +1851,13 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 // blank field so a live worker is not interrupted.
 func ZapCashBlankClaimShouldReclaim(redisTxn, redisErr string, receiveCount int) bool {
 	return marketingRedisClaimBlank(redisTxn, redisErr) && receiveCount > 1
+}
+
+// ShouldReclaimBlankZapCashClaim reclaims a blank field once SQS has
+// redelivered it. A stamp such as ivr_attempted is not blank, so a call that
+// already started is not dialed again.
+func ShouldReclaimBlankZapCashClaim(_, redisTxn, redisErr string, receiveCount int) bool {
+	return ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, receiveCount)
 }
 
 func claimOrSkipLenderSend(data sdkModels.CommApiRequestBody) (skipSend bool, redisTxn, redisErr string, err error) {

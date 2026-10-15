@@ -96,7 +96,7 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 	offset := (params.Page - 1) * params.PageSize
 
 	if err := query.
-		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, DltTemplateId, AppId, ProviderTemplateCategory, Error, CategoryUpdatedOn, IsActive, CreatedOn, COALESCE(UpdatedOn, CreatedOn) AS UpdatedOn, CreatedBy, UpdatedBy").
+		Select("Id, Client, Channel, Process, CAST(Stage AS CHAR) AS Stage, Vendor, TemplateName, VoiceId, DltTemplateId, AppId, ProviderTemplateCategory, Error, CategoryUpdatedOn, IsActive, CreatedOn, COALESCE(UpdatedOn, CreatedOn) AS UpdatedOn, CreatedBy, UpdatedBy").
 		Order(orderClause).
 		Limit(params.PageSize).
 		Offset(offset).
@@ -297,7 +297,7 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 			saved.UpdatedBy = actorUsername
 			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id = ?", id).
 				Select(
-					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName",
+					"Client", "Channel", "Process", "Stage", "Vendor", "TemplateName", "VoiceId",
 					"ImageId", "ImageUrl", "DltTemplateId", "TemplateEntityId", "TemplateHeader",
 					"IsActive", "TemplateText", "Link", "UpdatedOn", "UpdatedBy", "TemplateCategory",
 					"TemplateVariables", "SmsFallbackVariables", "Subject", "FromEmail",

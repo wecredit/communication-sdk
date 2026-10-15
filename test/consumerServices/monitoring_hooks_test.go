@@ -21,6 +21,7 @@ func TestShouldSubmitZapCashMonitoring(t *testing.T) {
 		{name: "monitor recursion", payload: sdkModels.CommApiRequestBody{Client: "zapcash", Channel: "SMS", IsMonitorCopy: true}, accepted: true},
 		{name: "other client", payload: sdkModels.CommApiRequestBody{Client: "creditsea", Channel: "SMS"}, accepted: true},
 		{name: "email", payload: sdkModels.CommApiRequestBody{Client: "zapcash", Channel: "EMAIL"}, accepted: true},
+		{name: "ivr stays out of monitoring", payload: sdkModels.CommApiRequestBody{Client: "zapcash", Channel: "IVR"}, accepted: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

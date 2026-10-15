@@ -7,6 +7,7 @@ var (
 	WhatsApp string = "WHATSAPP"
 	Email    string = "EMAIL"
 	PUSH     string = "PUSH"
+	IVR      string = "IVR"
 )
 
 var (
