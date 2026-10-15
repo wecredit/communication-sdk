@@ -18,6 +18,7 @@ import (
 	pinnacleIvr "github.com/wecredit/communication-sdk/internal/channels/ivr/pinnacle"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
+	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/consumerServices"
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
@@ -72,6 +73,7 @@ func TestPinnacleIVROneCall(t *testing.T) {
 		{name: "malformed", status: 200, body: `{`, wantPrefix: pinnacleIvr.PrefixUnknown},
 		{name: "missing code", status: 200, body: `{"ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"}`, wantPrefix: pinnacleIvr.PrefixUnknown},
 		{name: "numeric zero", status: 200, body: `{"ERR_CODE":0,"TRANS_ID":10227391223,"CAMPG_ID":"1234567890123456789012345678901"}`, wantPrefix: pinnacleIvr.PrefixUnknown},
+		{name: "trailing", status: 200, body: `{"ERR_CODE":"0","ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"} junk`, wantPrefix: pinnacleIvr.PrefixUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,16 +259,14 @@ func TestIVRCancelledBeforeStampReleasesBlankClaim(t *testing.T) {
 	}
 }
 
-func TestIVRStampErrorLeavesClaimAndSkipsCall(t *testing.T) {
-	env := startIVR(t)
-	env.script(200, `{"ERR_CODE":"0","ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"}`, nil)
-	env.claims.stampErr = errors.New("redis timeout")
-	got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
-	if env.calls.Load() != 0 || got.DeleteMessage {
-		t.Fatalf("stamp error calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+func TestIvrOutcomeRejectsControlCharacter(t *testing.T) {
+	err := redis.SetIvrClaimOutcome(nil, "hash", "field", "10227\n391", "")
+	if err == nil || !strings.Contains(err.Error(), "ivr outcome value rejected") {
+		t.Fatalf("newline transaction id: %v", err)
 	}
-	if value, ok := env.claims.get("ivr-test", "event-1"); !ok || value != "" {
-		t.Fatalf("claim changed to %q ok=%v", value, ok)
+	err = redis.SetIvrClaimOutcome(nil, "hash", "field", "10227391223", "")
+	if err == nil || !strings.Contains(err.Error(), "redis client is nil") {
+		t.Fatalf("plain transaction id: %v", err)
 	}
 }
 

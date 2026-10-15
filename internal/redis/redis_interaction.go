@@ -403,7 +403,7 @@ if not string.match(val, '"errorMessage"%s*:%s*"ivr_attempted"') then
 end
 local txn = ARGV[2]
 local category = ARGV[3]
-if string.match(txn, '["\\]') or string.match(category, '["\\]') then
+if string.match(txn, '["\\%c]') or string.match(category, '["\\%c]') then
   return redis.error_reply('ivr outcome value rejected')
 end
 local parts = {}
@@ -442,12 +442,15 @@ func StampIvrClaimIfBlank(RDB *redis.Client, commIdempotentKey, redisKey, marker
 // ivr_attempted. An empty category with a transaction id clears the marker.
 // A missing field or a different marker is left unchanged and returned as an error.
 func SetIvrClaimOutcome(RDB *redis.Client, commIdempotentKey, redisKey, transactionID, category string) error {
-	if RDB == nil {
-		return fmt.Errorf("redis client is nil")
-	}
-
 	if transactionID == "" && category == "" {
 		return fmt.Errorf("ivr outcome empty")
+	}
+
+	if !ivrClaimLiteral(transactionID) || !ivrClaimLiteral(category) {
+		return fmt.Errorf("ivr outcome value rejected")
+	}
+	if RDB == nil {
+		return fmt.Errorf("redis client is nil")
 	}
 
 	ctx := context.Background()
@@ -456,6 +459,15 @@ func SetIvrClaimOutcome(RDB *redis.Client, commIdempotentKey, redisKey, transact
 	}
 
 	return nil
+}
+
+func ivrClaimLiteral(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == '"' || value[i] == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 // 2. Update the value (e.g. responseId) for an existing mobile_channel key

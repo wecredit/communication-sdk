@@ -137,16 +137,13 @@ func parseCallResponse(status int, raw []byte) CallResult {
 		return result
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var payload struct {
 		ErrCode json.RawMessage `json:"ERR_CODE"`
 		ErrDesc json.RawMessage `json:"ERR_DESC"`
 		CampgID json.RawMessage `json:"CAMPG_ID"`
 		TransID json.RawMessage `json:"TRANS_ID"`
 	}
-
-	if err := decoder.Decode(&payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		result.ResponseMessage = capMessage(PrefixUnknown + " malformed")
 		return result
 	}
