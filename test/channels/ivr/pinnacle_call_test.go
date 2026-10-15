@@ -39,16 +39,13 @@ func TestValidateIVRMobileIsTenDigits(t *testing.T) {
 	}
 }
 
-func TestShouldReclaimBlankZapCashClaimSkipsIVR(t *testing.T) {
-	if services.ShouldReclaimBlankZapCashClaim(variables.IVR, "", "", 2) {
-		t.Fatal("IVR must not reclaim a blank claim")
-	}
-	for _, channel := range []string{variables.RCS, variables.WhatsApp, variables.SMS} {
+func TestShouldReclaimBlankZapCashClaimIncludesIVR(t *testing.T) {
+	for _, channel := range []string{variables.IVR, variables.RCS, variables.WhatsApp, variables.SMS} {
 		if !services.ShouldReclaimBlankZapCashClaim(channel, "", "", 2) {
-			t.Fatalf("%s redelivery must still reclaim a blank claim", channel)
+			t.Fatalf("%s redelivery must reclaim a blank claim", channel)
 		}
-		if services.ShouldReclaimBlankZapCashClaim(channel, "txn-1", "", 2) {
-			t.Fatalf("%s must keep a sealed claim", channel)
+		if services.ShouldReclaimBlankZapCashClaim(channel, "", "ivr_attempted", 2) {
+			t.Fatalf("%s must keep a stamped claim", channel)
 		}
 	}
 }
@@ -147,6 +144,33 @@ func TestIVRAttemptDoesNotCallTwice(t *testing.T) {
 	}
 	if !strings.Contains(logs, "ivr_audit_enqueue commId=WC-ivr-1 table=IvrOutputTable") {
 		t.Fatalf("missing audit enqueue log: %s", logs)
+	}
+}
+
+func TestIVRAcceptedWithoutTransactionStoresOutcome(t *testing.T) {
+	env := startIVR(t)
+	env.script(200, `{"ERR_CODE":"0","ERR_DESC":"ok"}`, nil)
+	got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+	if env.calls.Load() != 1 || !got.DeleteMessage {
+		t.Fatalf("calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+	}
+	value, ok := env.claims.get("ivr-test", "event-1")
+	if !ok || value != "ivr_accepted" {
+		t.Fatalf("claim %q ok=%v", value, ok)
+	}
+}
+
+func TestIVRActiveNonPinnacleVendorDoesNotCall(t *testing.T) {
+	env := startIVR(t)
+	cache.GetCache().Set(cache.VendorsData, map[string]map[string]interface{}{
+		"Name:SINCH|Channel:IVR|Client:zapcash": {"Status": int64(1)},
+	})
+	cache.GetCache().Wait()
+	req := env.request()
+	req.Vendor = "SINCH"
+	got := ivr.SendAttempt(context.Background(), req, map[string]interface{}{})
+	if env.calls.Load() != 0 || !got.DeleteMessage || got.InactiveVendor {
+		t.Fatalf("calls=%d delete=%v inactive=%v", env.calls.Load(), got.DeleteMessage, got.InactiveVendor)
 	}
 }
 

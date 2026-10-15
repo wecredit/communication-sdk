@@ -145,6 +145,10 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 		}
 
 	case "IVR":
+		if !strings.EqualFold(strings.TrimSpace(template.Vendor), "PINNACLE") {
+			return errors.New("vendor must be PINNACLE for IVR")
+		}
+
 		if strings.TrimSpace(template.TemplateName) == "" {
 			return errors.New("templateName is required for IVR")
 		}

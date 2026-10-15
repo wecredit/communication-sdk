@@ -20,6 +20,7 @@ import (
 
 const (
 	markerAttempted = "ivr_attempted"
+	markerAccepted  = "ivr_accepted"
 	markerRejected  = "ivr_provider_rejected"
 	markerUnknown   = "ivr_outcome_unknown"
 	markerNotSent   = "ivr_not_sent"
@@ -138,6 +139,8 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 	if result.IsSent {
 		if result.TransactionID != "" {
 			recordOutcome(*data, result.TransactionID, "")
+		} else {
+			recordOutcome(*data, "", markerAccepted)
 		}
 
 		utils.Info(fmt.Sprintf("provider_accepted commId=%s client=%s http=%d", data.CommId, data.Client, result.HTTPStatus))
@@ -161,6 +164,10 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 }
 
 func resolveSend(data sdkModels.CommApiRequestBody) (voiceID, templateName, reject string) {
+	if !strings.EqualFold(strings.TrimSpace(data.Vendor), variables.PINNACLE) {
+		return "", "", "vendor"
+	}
+
 	if strings.TrimSpace(config.Configs.PinnacleZapcashIvrApiUrl) == "" ||
 		strings.TrimSpace(config.Configs.PinnacleZapcashIvrApiUsername) == "" ||
 		strings.TrimSpace(config.Configs.PinnacleZapcashIvrApiPassword) == "" ||

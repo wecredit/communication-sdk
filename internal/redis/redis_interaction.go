@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// ClaimCollectionAfternoonKey reserves one ZapCash afternoon collection RCS
+// ClaimCollectionAfternoonKey reserves one ZapCash afternoon collection send.
 // dispatch. It is a standalone Redis string so it never shares lifecycle with
 // the legacy COMM_IDEMPOTENT_KEY hash.
 func ClaimCollectionAfternoonKey(rdb *redis.Client, key, claimToken string, ttl time.Duration) (bool, error) {

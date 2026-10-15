@@ -53,13 +53,13 @@ func main() {
 	mobile := ""
 	email := ""
 	var deviceTokens []string
-	if channel == "EMAIL" {
+	switch channel {
+	case "EMAIL":
 		email = requiredEnv("ZAPCASH_TEST_EMAIL")
-	} else {
-		mobile = requiredEnv("ZAPCASH_TEST_MOBILE")
-	}
-	if channel == "PUSH" {
+	case "PUSH":
 		deviceTokens = []string{requiredEnv("ZAPCASH_FCM_DEVICE_TOKEN")}
+	default:
+		mobile = requiredEnv("ZAPCASH_TEST_MOBILE")
 	}
 
 	client, err := sdk.NewSdkClient(username, password, channel, baseURL)

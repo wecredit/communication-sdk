@@ -1853,14 +1853,10 @@ func ZapCashBlankClaimShouldReclaim(redisTxn, redisErr string, receiveCount int)
 	return marketingRedisClaimBlank(redisTxn, redisErr) && receiveCount > 1
 }
 
-// ShouldReclaimBlankZapCashClaim is the shared redelivery reclaim. IVR is
-// excluded so a blank field is left in place and the later skipSend delete
-// does not dial again. WhatsApp, RCS, SMS, and email keep the reclaim.
-func ShouldReclaimBlankZapCashClaim(channel, redisTxn, redisErr string, receiveCount int) bool {
-	if channel == variables.IVR {
-		return false
-	}
-
+// ShouldReclaimBlankZapCashClaim reclaims a blank field once SQS has
+// redelivered it. A stamp such as ivr_attempted is not blank, so a call that
+// already started is not dialed again.
+func ShouldReclaimBlankZapCashClaim(_, redisTxn, redisErr string, receiveCount int) bool {
 	return ZapCashBlankClaimShouldReclaim(redisTxn, redisErr, receiveCount)
 }
 
