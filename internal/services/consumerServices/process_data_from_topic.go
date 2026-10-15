@@ -1460,6 +1460,11 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			releaseMarketingDispatchClaims(data)
 		}
 		releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
+		// Processed stays true for a classified provider result. A non-terminal
+		// outcome must return false so the worker fallback does not delete it.
+		if !result.AckSQS {
+			return false, false
+		}
 		return result.Processed, deleted
 	}
 
@@ -1543,6 +1548,11 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	releaseZapCashClaimIfUnsent(data, queueURL, result.DBData["IsSent"] == 1)
+	// The worker deletes when processing returns true and the handler did not.
+	// Retryable SMS is already classified; leave the SQS message in place.
+	if !result.AckSQS {
+		return false, false
+	}
 	return result.Processed, deleted
 }
 
