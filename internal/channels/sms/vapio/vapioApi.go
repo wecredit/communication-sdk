@@ -13,6 +13,7 @@ import (
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	smspolicy "github.com/wecredit/communication-sdk/sdk/policy"
+	"github.com/wecredit/communication-sdk/sdk/queue"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
@@ -68,6 +69,10 @@ func HitVapioSmsApiWithContext(ctx context.Context, data extapimodels.SmsRequest
 	if err != nil {
 		utils.Error(fmt.Errorf("Vapio SMS API call failed client=%s commId=%s sourceRowId=%d: %v",
 			data.Client, data.CommId, data.SourceRowId, err))
+		if queueErr := queue.SendMessageWithSubject(queue.SQSClient, data, config.Configs.AwsErrorQueueUrl, variables.ApiHitsFails, err.Error()); queueErr != nil {
+			utils.Error(fmt.Errorf("error sending message to error queue: %v", queueErr))
+		}
+
 		vapioSmsResponse.ResponseMessage = fmt.Sprintf("error calling vapio api: %v", err)
 		vapioSmsResponse.Outcome = outcome.ClassifyTransportError(err)
 		return vapioSmsResponse

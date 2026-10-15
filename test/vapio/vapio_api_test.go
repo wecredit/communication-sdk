@@ -23,7 +23,7 @@ func TestVapioPayloadUsesTenDigitMobileAndDLT(t *testing.T) {
 	payload, err := vapiopayloads.GetTemplatePayload(extapimodels.SmsRequestBody{
 		Mobile:         "917014850582",
 		TemplateHeader: "WECRWP",
-		TemplateText:   "Loan dekhein https://example.test WeCredit",
+		TemplateText:   "Loan dekhein {#var#} WeCredit",
 		DltTemplateId:  1707178333854271272,
 	}, testConfig())
 	if err != nil {
@@ -43,8 +43,8 @@ func TestVapioPayloadUsesTenDigitMobileAndDLT(t *testing.T) {
 			"senderid": payload["senderid"], "route": payload["route"], "username": payload["username"],
 		})
 	}
-	if strings.Contains(payload["text"], "{#var#}") {
-		t.Fatal("payload rebuilt a placeholder that SendSmsByProcess should already have replaced")
+	if payload["text"] != "Loan dekhein {#var#} WeCredit" {
+		t.Fatalf("text = %q, payload builder must forward the resolved body unchanged", payload["text"])
 	}
 	if payload["apikey"] != "secret" {
 		t.Fatal("apikey was not placed in the form body")
