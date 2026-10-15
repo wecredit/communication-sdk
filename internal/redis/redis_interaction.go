@@ -429,6 +429,25 @@ func RefreshPushClaim(RDB *redis.Client, commIdempotentKey, redisKey, claimID st
 	})
 }
 
+// pushClaimFieldSwapAttempts bounds retries when this one field changes between
+// the read and the swap. Other fields in the hash do not cause a retry.
+const pushClaimFieldSwapAttempts = 8
+
+// swapPushClaimFieldScript replaces one hash field only when it is still the
+// value the caller read. Redis WATCH applies to the whole hash key, so a
+// claim write for any other mobile aborts it. This script does not.
+const swapPushClaimFieldScript = `
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if current == false then
+  return 0
+end
+if current ~= ARGV[2] then
+  return 0
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+return 1
+`
+
 func updatePushClaim(rdb *redis.Client, hash, field, claimID string, update func(*redisModels.MobileChannelRedisData)) error {
 	if rdb == nil {
 		return fmt.Errorf("redis client is nil")
@@ -437,8 +456,8 @@ func updatePushClaim(rdb *redis.Client, hash, field, claimID string, update func
 		return fmt.Errorf("PUSH claim id is required")
 	}
 	ctx := context.Background()
-	return rdb.Watch(ctx, func(tx *redis.Tx) error {
-		value, err := tx.HGet(ctx, hash, field).Result()
+	for attempt := 0; attempt < pushClaimFieldSwapAttempts; attempt++ {
+		value, err := rdb.HGet(ctx, hash, field).Result()
 		if err != nil {
 			return err
 		}
@@ -449,17 +468,22 @@ func updatePushClaim(rdb *redis.Client, hash, field, claimID string, update func
 		if data.ClaimID != claimID {
 			return fmt.Errorf("PUSH claim is no longer owned")
 		}
+		// The callback runs again after a same-field conflict. It must assign
+		// the desired fields from the struct it is given.
 		update(&data)
 		jsonData, err := json.Marshal(data)
 		if err != nil {
 			return fmt.Errorf("failed to marshal PUSH claim: %w", err)
 		}
-		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			pipe.HSet(ctx, hash, field, string(jsonData))
+		swapped, err := rdb.Eval(ctx, swapPushClaimFieldScript, []string{hash}, field, value, string(jsonData)).Int()
+		if err != nil {
+			return err
+		}
+		if swapped == 1 {
 			return nil
-		})
-		return err
-	}, hash)
+		}
+	}
+	return fmt.Errorf("PUSH claim field changed during update")
 }
 
 func getMobileChannelRedisData(ctx context.Context, rdb *redis.Client, hash, field string) (redisModels.MobileChannelRedisData, error) {
