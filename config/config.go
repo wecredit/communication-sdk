@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
@@ -165,12 +166,38 @@ func TimesWpRateChannel(mode string) string {
 	return "whatsapp"
 }
 
-// ValidateTimesWpMode fails process startup when async mode has no URL or the mode is unknown.
+// TimesTemplateListBaseURL is the origin for the Times template get-list call.
+// An explicit list base wins. Otherwise the host of the sync send URL is used.
+func TimesTemplateListBaseURL(listBase, syncURL string) string {
+	if v := strings.TrimSpace(listBase); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	raw := strings.TrimSpace(syncURL)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// ValidateTimesWpMode fails process startup when async mode has no URL, the mode
+// is unknown, or template-sync single-host fallback has no list base.
 func ValidateTimesWpMode(cfg models.Config) error {
 	mode, err := ResolveTimesWpMode(cfg.TimesWpApiMode)
 	if err != nil {
 		return err
 	}
-	_, err = TimesWpSendURL(mode, cfg.TimesWpApiUrl, cfg.TimesWpAsyncApiUrl)
-	return err
+	if _, err = TimesWpSendURL(mode, cfg.TimesWpApiUrl, cfg.TimesWpAsyncApiUrl); err != nil {
+		return err
+	}
+
+	syncOn := strings.EqualFold(strings.TrimSpace(cfg.WhatsappTemplateSyncEnabled), "true")
+	fallbackOn := strings.EqualFold(strings.TrimSpace(cfg.WhatsappTemplateSyncAllowSingleHostFallback), "true")
+	if syncOn && fallbackOn && TimesTemplateListBaseURL(cfg.TimesWpTemplateListBaseUrl, cfg.TimesWpApiUrl) == "" {
+		return fmt.Errorf("TIMES_WP_TEMPLATE_LIST_BASE_URL or TIMES_WP_API_URL is required when template sync single-host fallback is enabled")
+	}
+	return nil
 }

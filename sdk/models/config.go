@@ -227,9 +227,9 @@ type Config struct {
 	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
-	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target);
-	// ZapCash Pinnacle IVR 50.
-	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
+	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); Times async 200;
+	// SMS 83 (=5k/min target); ZapCash Pinnacle IVR 50.
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,times:wecredit:whatsapp-async:200,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`

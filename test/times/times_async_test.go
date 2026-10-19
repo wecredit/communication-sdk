@@ -1,6 +1,7 @@
 package timesWhatsapp_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -56,6 +57,33 @@ func TestTimesWpModeAsyncRequiresURL(t *testing.T) {
 	}
 	if err := config.ValidateTimesWpMode(models.Config{TimesWpApiMode: "async"}); err == nil {
 		t.Fatal("expected startup error when async URL is empty")
+	}
+}
+
+func TestValidateTimesWpFallbackRequiresTemplateListBase(t *testing.T) {
+	cfg := models.Config{
+		TimesWpApiMode:                              "async",
+		TimesWpAsyncApiUrl:                          "https://asyncmsg.integration.timespanel.in/wa/v1/messages/send",
+		WhatsappTemplateSyncEnabled:                 "true",
+		WhatsappTemplateSyncAllowSingleHostFallback: "true",
+	}
+	if err := config.ValidateTimesWpMode(cfg); err == nil {
+		t.Fatal("expected template list base error")
+	}
+	cfg.WhatsappTemplateSyncAllowSingleHostFallback = "false"
+	if err := config.ValidateTimesWpMode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WhatsappTemplateSyncAllowSingleHostFallback = "true"
+	cfg.TimesWpApiUrl = "https://sync.example/wa/v1/messages/send"
+	if err := config.ValidateTimesWpMode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.TimesTemplateListBaseURL("", cfg.TimesWpApiUrl); got != "https://sync.example" {
+		t.Fatalf("base = %q", got)
+	}
+	if got := config.TimesTemplateListBaseURL("https://panel.example/", ""); got != "https://panel.example" {
+		t.Fatalf("base = %q", got)
 	}
 }
 
@@ -124,6 +152,17 @@ func TestClassifyTimesAsyncUnauthorized(t *testing.T) {
 	}
 }
 
+func TestClassifyTimesAsyncRateLimited(t *testing.T) {
+	raw := []byte(`{"status":"failure","message":"Too many requests","code":429}`)
+	got, err := timesWhatsapp.ClassifyTimesAsyncSend(429, raw)
+	if err == nil {
+		t.Fatal("expected retryable error")
+	}
+	if got.IsSent {
+		t.Fatal("429 must not be sent")
+	}
+}
+
 func TestClassifyTimesAsyncServiceUnavailable(t *testing.T) {
 	raw := []byte(`{"status":"failure","message":"internal service error"}`)
 	got, err := timesWhatsapp.ClassifyTimesAsyncSend(503, raw)
@@ -168,5 +207,12 @@ func TestAsyncRateCapDoesNotRaiseSyncCap(t *testing.T) {
 	}
 	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp:400", caps); err == nil {
 		t.Fatal("sync override of 400 must be rejected by the 130 cap")
+	}
+	field, ok := reflect.TypeOf(models.Config{}).FieldByName("ProviderRPSApprovedCaps")
+	if !ok {
+		t.Fatal("missing ProviderRPSApprovedCaps")
+	}
+	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp-async:200", field.Tag.Get("default")); err != nil {
+		t.Fatal(err)
 	}
 }

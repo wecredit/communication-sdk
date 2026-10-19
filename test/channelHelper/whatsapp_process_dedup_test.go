@@ -196,6 +196,18 @@ func (s *dedupRedis) serve(conn net.Conn) {
 			} else {
 				_, _ = w.WriteString(":0\r\n")
 			}
+		case "EVAL":
+			if len(args) < 5 {
+				_, _ = w.WriteString("-ERR eval arity\r\n")
+				break
+			}
+			key, value := args[3], args[4]
+			if current, ok := s.strings[key]; ok && current == value {
+				delete(s.strings, key)
+				_, _ = w.WriteString(":1\r\n")
+			} else {
+				_, _ = w.WriteString(":0\r\n")
+			}
 		default:
 			_, _ = fmt.Fprintf(w, "-ERR unsupported %s\r\n", args[0])
 		}

@@ -174,8 +174,8 @@ func applyTimesSyncResponse(apiResponse timesAPIResponse) extapimodels.WhatsappR
 }
 
 // ClassifyTimesAsyncSend reads an async accept body.
-// A non-nil error is a transport failure (non-JSON or HTTP 5xx) and must use the error queue.
-// HTTP 200 failure and HTTP 403 are terminal vendor rejects.
+// A non-nil error is a transport failure (non-JSON, HTTP 429, or HTTP 5xx) and must use the error queue.
+// HTTP 200 failure, HTTP 400, and HTTP 403 are terminal vendor rejects.
 func ClassifyTimesAsyncSend(statusCode int, raw []byte) (extapimodels.WhatsappResponse, error) {
 	var responseBody extapimodels.WhatsappResponse
 	responseBody.IsSent = false
@@ -185,7 +185,7 @@ func ClassifyTimesAsyncSend(statusCode int, raw []byte) (extapimodels.WhatsappRe
 		return responseBody, fmt.Errorf("error unmarshalling response: %v", err)
 	}
 
-	if statusCode >= 500 {
+	if statusCode == httpStatusTooManyRequests || statusCode >= 500 {
 		msg := strings.TrimSpace(body.Message)
 		if msg == "" {
 			msg = "internal service error"
@@ -219,8 +219,9 @@ func ClassifyTimesAsyncSend(statusCode int, raw []byte) (extapimodels.WhatsappRe
 }
 
 const (
-	httpStatusBadRequest   = 400
-	httpStatusUnauthorized = 403
+	httpStatusBadRequest      = 400
+	httpStatusUnauthorized    = 403
+	httpStatusTooManyRequests = 429
 )
 
 func asyncFailureMessage(body timesAsyncAPIResponse) string {
