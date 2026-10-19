@@ -32,7 +32,7 @@ func (s *TemplateService) BulkImportTemplates(ctx context.Context, r io.Reader, 
 			result.Errors = append(result.Errors, bulkRowError(row.Row, err))
 			continue
 		}
-		identity := bulkTemplateIdentity(t)
+		identity := BulkTemplateIdentity(t)
 		if prior, ok := identities[identity]; ok {
 			result.Errors = append(result.Errors, BulkTemplateError{Row: row.Row, Code: "TEMPLATE_DUPLICATE", Message: fmt.Sprintf("duplicates row %d", prior)})
 			continue
@@ -224,7 +224,7 @@ func buildBulkValidationIndex(tx *gorm.DB, rows []BulkTemplateRow) (*bulkValidat
 		}
 		for _, template := range existing {
 			normalizeTemplate(&template)
-			index.duplicates[bulkTemplateIdentity(template)] = template.Id
+			index.duplicates[BulkTemplateIdentity(template)] = template.Id
 			if template.IsActive {
 				index.active[BulkActiveIdentity(template)] = struct{}{}
 			}
@@ -270,7 +270,7 @@ func validateBulkTemplateFromIndex(index *bulkValidationIndex, template apiModel
 		}
 	}
 
-	if existingID, ok := index.duplicates[bulkTemplateIdentity(template)]; ok {
+	if existingID, ok := index.duplicates[BulkTemplateIdentity(template)]; ok {
 		return fmt.Errorf("%w: template id %d", ErrTemplateDuplicate, existingID)
 	}
 	if template.IsActive {
@@ -335,13 +335,13 @@ func bulkRowError(row int, err error) BulkTemplateError {
 	}
 	return BulkTemplateError{Row: row, Code: code, Message: strings.TrimSpace(err.Error())}
 }
-func bulkTemplateIdentity(t apiModels.Templatedetails) string {
+func BulkTemplateIdentity(t apiModels.Templatedetails) string {
 	stage := ""
 	if t.Stage != nil {
 		stage = fmt.Sprintf("%.2f", *t.Stage)
 	}
 	return strings.Join([]string{
-		t.Client, t.Channel, t.Process, stage, t.Vendor, t.TemplateName,
+		t.Client, t.Channel, t.Process, stage, t.Vendor, t.TemplateName, t.VoiceId,
 		t.ImageId, t.ImageUrl, strconv.FormatInt(t.DltTemplateId, 10),
 		strconv.FormatInt(t.TemplateEntityId, 10), t.TemplateHeader, t.TemplateText,
 		t.Link, strconv.FormatInt(t.TemplateCategory, 10), t.TemplateVariables,

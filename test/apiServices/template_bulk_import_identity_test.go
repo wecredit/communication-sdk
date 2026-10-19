@@ -52,3 +52,12 @@ func TestBulkActiveIdentityMatchesCreateUniquenessBranches(t *testing.T) {
 		t.Fatal("WhatsApp active identity must include AppId")
 	}
 }
+
+func TestBulkTemplateIdentityIncludesVoiceID(t *testing.T) {
+	left := apiModels.Templatedetails{Client: "zapcash", Channel: "IVR", Vendor: "PINNACLE", TemplateName: "ZapDue", VoiceId: "57965"}
+	right := left
+	right.VoiceId = "57966"
+	if services.BulkTemplateIdentity(left) == services.BulkTemplateIdentity(right) {
+		t.Fatal("templates that differ only by VoiceId must not share a duplicate identity")
+	}
+}

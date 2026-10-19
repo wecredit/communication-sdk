@@ -53,6 +53,7 @@ type TemplateListItem struct {
 	Stage                    *string    `gorm:"column:Stage" json:"stage"`
 	Vendor                   string     `gorm:"column:Vendor" json:"vendor"`
 	TemplateName             string     `gorm:"column:TemplateName" json:"templateName,omitempty"`
+	VoiceId                  string     `gorm:"column:VoiceId" json:"voiceId,omitempty"`
 	DltTemplateId            int64      `gorm:"column:DltTemplateId" json:"dltTemplateId,omitempty"`
 	AppId                    string     `gorm:"column:AppId" json:"appId,omitempty"`
 	ProviderTemplateCategory string     `gorm:"column:ProviderTemplateCategory" json:"providerTemplateCategory,omitempty"`
