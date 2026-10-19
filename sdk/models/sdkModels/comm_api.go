@@ -74,7 +74,7 @@ type CommApiRequestBody struct {
 	IsMonitorCopy    bool   `json:"isMonitorCopy,omitempty" gorm:"-"`
 	MonitorVariantId string `json:"monitorVariantId,omitempty" gorm:"-"`
 	// CollectionSlot is optional so existing producers and consumers keep their
-	// current wire shape. Only the SDK's ZapCash afternoon RCS path uses it.
+	// current wire shape. The ZapCash afternoon collection path uses it for RCS and IVR.
 	CollectionSlot string `json:"collectionSlot,omitempty" gorm:"-"`
 }
 
