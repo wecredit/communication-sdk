@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 
@@ -50,6 +51,10 @@ func LoadConfigs() error {
 				}
 			}
 		}
+	}
+
+	if err := ValidateTimesWpMode(Configs); err != nil {
+		return err
 	}
 
 	if err := ratelimit.InitFromConfig(Configs.ProviderRPSOverrides, Configs.ProviderRPSApprovedCaps, Configs.ProviderRPSDefault); err != nil {
@@ -113,10 +118,59 @@ func LoadConfigs() error {
 // logChannelAuditToggles records the resolved WeCredit, ZapCash, and Core write flags.
 func logChannelAuditToggles() {
 	database.SetChannelAuditFlags(Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash, Configs.ZapCashV1InputOutputWrite)
-	
+
 	utils.Info(fmt.Sprintf("channel audit toggles: comm_wecredit=%t comm_zapcash=%t zapcash_v1=%t",
 		database.CommWriteEnabled(variables.WeCredit, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
 		database.CommWriteEnabled(variables.ZapCash, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
 		database.ZapCashV1WriteEnabled(Configs.ZapCashV1InputOutputWrite),
 	))
+}
+
+const (
+	TimesWpModeSync  = "sync"
+	TimesWpModeAsync = "async"
+)
+
+// ResolveTimesWpMode returns sync or async. A blank value is sync.
+func ResolveTimesWpMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" {
+		return TimesWpModeSync, nil
+	}
+	if mode != TimesWpModeSync && mode != TimesWpModeAsync {
+		return "", fmt.Errorf("TIMES_WP_API_MODE must be sync or async")
+	}
+	return mode, nil
+}
+
+// TimesWpSendURL returns the sync or async send URL for mode.
+// Async with a blank URL is an error. Sync keeps the configured sync URL, including blank.
+func TimesWpSendURL(mode, syncURL, asyncURL string) (string, error) {
+	if mode == TimesWpModeAsync {
+		asyncURL = strings.TrimSpace(asyncURL)
+		if asyncURL == "" {
+			return "", fmt.Errorf("TIMES_WP_ASYNC_API_URL is required when TIMES_WP_API_MODE=async")
+		}
+		return asyncURL, nil
+	}
+	return strings.TrimSpace(syncURL), nil
+}
+
+// TimesWpRateChannel is the limiter channel segment for mode.
+// Sync stays whatsapp. Async uses whatsapp-async so the 200 cap does not raise the sync cap.
+func TimesWpRateChannel(mode string) string {
+	if mode == TimesWpModeAsync {
+		return "whatsapp-async"
+	}
+	return "whatsapp"
+}
+
+// ValidateTimesWpMode fails process startup when async mode has no URL or the mode is unknown.
+func ValidateTimesWpMode(cfg models.Config) error {
+	mode, err := ResolveTimesWpMode(cfg.TimesWpApiMode)
+	if err != nil {
+		return err
+	}
+	_, err = TimesWpSendURL(mode, cfg.TimesWpApiUrl, cfg.TimesWpAsyncApiUrl)
+	return err
 }

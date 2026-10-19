@@ -185,6 +185,11 @@ type Config struct {
 	// Times API Details
 	TimesWpApiUrl   string `envconfig:"TIMES_WP_API_URL"`
 	TimesWpAPIToken string `envconfig:"TIMES_WP_API_TOKEN"`
+	// TimesWpApiMode selects the Times WhatsApp send API. sync keeps TIMES_WP_API_URL.
+	// async posts to TIMES_WP_ASYNC_API_URL. One mode per process.
+	TimesWpApiMode string `envconfig:"TIMES_WP_API_MODE" default:"sync"`
+	// TimesWpAsyncApiUrl is required when TIMES_WP_API_MODE=async.
+	TimesWpAsyncApiUrl string `envconfig:"TIMES_WP_ASYNC_API_URL"`
 
 	// Times SMS API Variables
 	TimesSmsApiUserName  string `envconfig:"TIMES_SMS_API_USERNAME"`
@@ -219,8 +224,8 @@ type Config struct {
 	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
-	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
-	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100"`
+	// Locked WeCredit defaults: WA Sinch/Times sync 130 (Tushar); Times async 200; SMS 83 (=5k/min target).
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,times:wecredit:whatsapp-async:200,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
