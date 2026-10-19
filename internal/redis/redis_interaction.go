@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// ClaimCollectionAfternoonKey reserves one ZapCash afternoon collection RCS
+// ClaimCollectionAfternoonKey reserves one ZapCash afternoon collection send.
 // dispatch. It is a standalone Redis string so it never shares lifecycle with
 // the legacy COMM_IDEMPOTENT_KEY hash.
 func ClaimCollectionAfternoonKey(rdb *redis.Client, key, claimToken string, ttl time.Duration) (bool, error) {
@@ -367,6 +367,107 @@ return redis.call('HDEL', KEYS[1], ARGV[1])
 		return true, nil
 	}
 	return false, nil
+}
+
+const stampIvrClaimIfBlankScript = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false then
+  return -1
+end
+local blank = false
+if val == '' then
+  blank = true
+elseif string.sub(val, 1, 1) == '{' then
+  if not string.match(val, '"transactionId"%s*:%s*"[^"]+"') and not string.match(val, '"errorMessage"%s*:%s*"[^"]+"') then
+    blank = true
+  end
+end
+if not blank then
+  return 0
+end
+local marker = ARGV[2]
+if string.match(marker, '[^%w_]') then
+  return redis.error_reply('ivr stamp marker rejected')
+end
+redis.call('HSET', KEYS[1], ARGV[1], '{"errorMessage":"' .. marker .. '"}')
+return 1
+`
+
+const setIvrClaimOutcomeScript = `
+local val = redis.call('HGET', KEYS[1], ARGV[1])
+if val == false or val == '' then
+  return redis.error_reply('ivr claim missing')
+end
+if not string.match(val, '"errorMessage"%s*:%s*"ivr_attempted"') then
+  return redis.error_reply('ivr claim is not attempted')
+end
+local txn = ARGV[2]
+local category = ARGV[3]
+if string.match(txn, '["\\%c]') or string.match(category, '["\\%c]') then
+  return redis.error_reply('ivr outcome value rejected')
+end
+local parts = {}
+if txn ~= '' then
+  parts[#parts + 1] = '"transactionId":"' .. txn .. '"'
+end
+if category ~= '' then
+  parts[#parts + 1] = '"errorMessage":"' .. category .. '"'
+end
+if #parts == 0 then
+  return redis.error_reply('ivr outcome empty')
+end
+redis.call('HSET', KEYS[1], ARGV[1], '{' .. table.concat(parts, ',') .. '}')
+return 1
+`
+
+// StampIvrClaimIfBlank writes errorMessage only when the field exists and is
+// still blank. It does not create a missing field.
+// 1 means the stamp landed, 0 means the field is already marked, -1 means absent.
+// A Redis error is ambiguous and is not a successful stamp.
+func StampIvrClaimIfBlank(RDB *redis.Client, commIdempotentKey, redisKey, marker string) (int, error) {
+	if RDB == nil {
+		return 0, fmt.Errorf("redis client is nil")
+	}
+
+	ctx := context.Background()
+	result, err := RDB.Eval(ctx, stampIvrClaimIfBlankScript, []string{commIdempotentKey}, redisKey, marker).Int()
+	if err != nil {
+		return 0, fmt.Errorf("ivr stamp failed: %w", err)
+	}
+
+	return result, nil
+}
+
+// SetIvrClaimOutcome updates a field only while errorMessage is still
+// ivr_attempted. An empty category with a transaction id clears the marker.
+// A missing field or a different marker is left unchanged and returned as an error.
+func SetIvrClaimOutcome(RDB *redis.Client, commIdempotentKey, redisKey, transactionID, category string) error {
+	if transactionID == "" && category == "" {
+		return fmt.Errorf("ivr outcome empty")
+	}
+
+	if !ivrClaimLiteral(transactionID) || !ivrClaimLiteral(category) {
+		return fmt.Errorf("ivr outcome value rejected")
+	}
+	if RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+
+	ctx := context.Background()
+	if err := RDB.Eval(ctx, setIvrClaimOutcomeScript, []string{commIdempotentKey}, redisKey, transactionID, category).Err(); err != nil {
+		return fmt.Errorf("ivr outcome update failed: %w", err)
+	}
+
+	return nil
+}
+
+func ivrClaimLiteral(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == '"' || value[i] == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 // 2. Update the value (e.g. responseId) for an existing mobile_channel key

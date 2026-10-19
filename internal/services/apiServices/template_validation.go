@@ -29,6 +29,7 @@ const (
 )
 
 var pinnacleRCSTemplateIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{24}$`)
+var ivrVoiceIDPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 var (
 	ErrTemplateNotFound   = errors.New("template not found")
@@ -61,6 +62,8 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 // validateCreateDuplicate rejects a repeated create with identical business
 // fields. IsActive is deliberately excluded: callers should update the
 // existing row when only its active state needs to change.
+// VoiceId is included so two IVR rows that differ only by recording are not
+// duplicates. BulkTemplateIdentity uses the same field.
 // AppId / WabaNumber / LanguageCode / CampaignId / CtaId match hermis template
 // identity (whatsapp_process_temp.app_id + waba/cta metadata). ProviderTemplateCategory
 // is owned by category sync and is not part of create uniqueness.
@@ -68,14 +71,14 @@ func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) er
 	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 		Where(
 			`Client = ? AND Channel = ? AND Process = ? AND Vendor = ?
-			AND TemplateName = ? AND ImageId = ? AND ImageUrl = ?
+			AND TemplateName = ? AND VoiceId = ? AND ImageId = ? AND ImageUrl = ?
 			AND DltTemplateId = ? AND TemplateEntityId = ? AND TemplateHeader = ?
 			AND TemplateText = ? AND Link = ? AND TemplateCategory = ?
 			AND TemplateVariables = ? AND SmsFallbackVariables = ?
 			AND Subject = ? AND FromEmail = ?
 			AND AppId = ? AND LanguageCode = ? AND CampaignId = ? AND CtaId = ? AND WabaNumber = ?`,
 			template.Client, template.Channel, template.Process, template.Vendor,
-			template.TemplateName, template.ImageId, template.ImageUrl,
+			template.TemplateName, template.VoiceId, template.ImageId, template.ImageUrl,
 			template.DltTemplateId, template.TemplateEntityId, template.TemplateHeader,
 			template.TemplateText, template.Link, template.TemplateCategory,
 			template.TemplateVariables, template.SmsFallbackVariables,
@@ -116,7 +119,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 	}
 
 	switch template.Channel {
-	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH":
+	case "SMS", "RCS", "WHATSAPP", "EMAIL", "PUSH", "IVR":
 	default:
 		return fmt.Errorf("unsupported channel %q", template.Channel)
 	}
@@ -141,6 +144,19 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 
 		if strings.TrimSpace(template.TemplateText) == "" {
 			return errors.New("templateText is required as the body for PUSH")
+		}
+
+	case "IVR":
+		if !strings.EqualFold(strings.TrimSpace(template.Vendor), "PINNACLE") {
+			return errors.New("vendor must be PINNACLE for IVR")
+		}
+
+		if strings.TrimSpace(template.TemplateName) == "" {
+			return errors.New("templateName is required for IVR")
+		}
+
+		if !ivrVoiceIDPattern.MatchString(strings.TrimSpace(template.VoiceId)) {
+			return errors.New("voiceId is required for IVR and must be 1 to 20 digits")
 		}
 	}
 
@@ -172,7 +188,7 @@ func ValidateTemplateStructure(template apiModels.Templatedetails) error {
 				return errors.New("dltTemplateId is required for SMS REFERENCE_MODE")
 			}
 
-		case "RCS", "WHATSAPP", "EMAIL", "PUSH":
+		case "RCS", "WHATSAPP", "EMAIL", "PUSH", "IVR":
 			if template.TemplateName == "" {
 				return fmt.Errorf("templateName is required for %s REFERENCE_MODE", template.Channel)
 			}
@@ -359,7 +375,7 @@ func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) e
 				query = query.Where("LOWER(TRIM(AppId)) = LOWER(TRIM(?))", appID)
 			}
 
-		case "RCS", "EMAIL", "PUSH":
+		case "RCS", "EMAIL", "PUSH", "IVR":
 			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
 		}
 	}
