@@ -32,7 +32,7 @@ func main() {
 	}
 
 	// Local ZapCash harness. Do not run the nurture feed poller against prod for UAT.
-	// ZAPCASH_TEST_CHANNEL selects PUSH, RCS, WHATSAPP, SMS, or EMAIL.
+	// ZAPCASH_TEST_CHANNEL selects PUSH, RCS, WHATSAPP, SMS, EMAIL, or IVR.
 	username := os.Getenv("ZAPCASH_USERNAME")
 	password := os.Getenv("ZAPCASH_PASSWORD")
 	channel := strings.ToUpper(optionalEnv("ZAPCASH_TEST_CHANNEL"))
@@ -40,9 +40,9 @@ func main() {
 		channel = "RCS"
 	}
 	switch channel {
-	case "PUSH", "RCS", "WHATSAPP", "SMS", "EMAIL":
+	case "PUSH", "RCS", "WHATSAPP", "SMS", "EMAIL", "IVR":
 	default:
-		log.Fatalf("ZAPCASH_TEST_CHANNEL must be PUSH, RCS, WHATSAPP, SMS, or EMAIL")
+		log.Fatalf("ZAPCASH_TEST_CHANNEL must be PUSH, RCS, WHATSAPP, SMS, EMAIL, or IVR")
 	}
 
 	baseURL := "http://localhost:8080"
@@ -59,6 +59,8 @@ func main() {
 	case "PUSH":
 		deviceTokens = []string{requiredEnv("ZAPCASH_FCM_DEVICE_TOKEN")}
 	default:
+		// IVR uses the same mobile as RCS, SMS, and WhatsApp. The consumer
+		// posts that call with CustCall_ID set to CommId.
 		mobile = requiredEnv("ZAPCASH_TEST_MOBILE")
 	}
 
@@ -72,7 +74,7 @@ func main() {
 	// Uncomment the stages that have a ZapCash template for this channel.
 	// Stages 8 and 10 and stages 13–15 are intentionally not configured for PUSH.
 	stages := []float64{
-		1.01,
+		// 1.01,
 		// 1.02,
 		// 1.03,
 		// 2.01,
@@ -110,6 +112,7 @@ func main() {
 		// 12.17, 12.18, 12.19, 12.20, 12.21, 12.22, 12.23, 12.24,
 		// 12.25, 12.26, 12.27, 12.28, 12.29, 12.30,
 		// 12.31,
+		// 13.01,
 	}
 
 	// Empty vendor lets the consumer assign the active vendor for this client and channel.
