@@ -668,6 +668,31 @@ func ClaimMarketingCampaignDedupKey(rdb *redis.Client, key, value string) (bool,
 	return ok, nil
 }
 
+// ReleaseMarketingCampaignDedupKeyIfValue deletes the key only when it still holds value.
+// A key owned by another sender is left in place.
+func ReleaseMarketingCampaignDedupKeyIfValue(rdb *redis.Client, key, value string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	key = strings.TrimSpace(key)
+	ctx := context.Background()
+	existing, err := rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if existing != value {
+		return nil
+	}
+
+	return rdb.Del(ctx, key).Err()
+}
+
 // ReleaseMarketingCampaignDedupKey deletes a campaign dedup string key (rollback helper).
 func ReleaseMarketingCampaignDedupKey(rdb *redis.Client, key string) error {
 	if rdb == nil {
