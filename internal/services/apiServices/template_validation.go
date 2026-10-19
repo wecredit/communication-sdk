@@ -62,6 +62,8 @@ func normalizeTemplate(template *apiModels.Templatedetails) {
 // validateCreateDuplicate rejects a repeated create with identical business
 // fields. IsActive is deliberately excluded: callers should update the
 // existing row when only its active state needs to change.
+// VoiceId is included so two IVR rows that differ only by recording are not
+// duplicates. BulkTemplateIdentity uses the same field.
 // AppId / WabaNumber / LanguageCode / CampaignId / CtaId match hermis template
 // identity (whatsapp_process_temp.app_id + waba/cta metadata). ProviderTemplateCategory
 // is owned by category sync and is not part of create uniqueness.
@@ -69,14 +71,14 @@ func validateCreateDuplicate(db *gorm.DB, template apiModels.Templatedetails) er
 	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
 		Where(
 			`Client = ? AND Channel = ? AND Process = ? AND Vendor = ?
-			AND TemplateName = ? AND ImageId = ? AND ImageUrl = ?
+			AND TemplateName = ? AND VoiceId = ? AND ImageId = ? AND ImageUrl = ?
 			AND DltTemplateId = ? AND TemplateEntityId = ? AND TemplateHeader = ?
 			AND TemplateText = ? AND Link = ? AND TemplateCategory = ?
 			AND TemplateVariables = ? AND SmsFallbackVariables = ?
 			AND Subject = ? AND FromEmail = ?
 			AND AppId = ? AND LanguageCode = ? AND CampaignId = ? AND CtaId = ? AND WabaNumber = ?`,
 			template.Client, template.Channel, template.Process, template.Vendor,
-			template.TemplateName, template.ImageId, template.ImageUrl,
+			template.TemplateName, template.VoiceId, template.ImageId, template.ImageUrl,
 			template.DltTemplateId, template.TemplateEntityId, template.TemplateHeader,
 			template.TemplateText, template.Link, template.TemplateCategory,
 			template.TemplateVariables, template.SmsFallbackVariables,

@@ -112,6 +112,7 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 		defer restoreQueue()
 
 		request := validAfternoonRequest()
+		claimedAt := time.Now()
 		response, err := sdkServices.ProcessCommApiData(&request, nil, "", server.URL+"/queue", redisClient)
 		if err != nil || !response.Success {
 			t.Fatalf("first send = (%+v, %v)", response, err)
@@ -123,7 +124,7 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 		if got := requests.Load(); got != 1 {
 			t.Fatalf("accepted queue calls = %d, want 1", got)
 		}
-		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, request.Channel, 12)
+		key := sdkServices.CollectionAfternoonClaimKey(claimedAt, request.Mobile, request.Channel, 12)
 		if !mini.Exists(key) {
 			t.Fatal("accepted enqueue did not retain afternoon claim")
 		}
@@ -138,10 +139,11 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 		defer restoreQueue()
 
 		request := validAfternoonRequest()
+		claimedAt := time.Now()
 		if _, err := sdkServices.ProcessCommApiData(&request, nil, "", server.URL+"/queue", redisClient); err == nil {
 			t.Fatal("enqueue failure unexpectedly succeeded")
 		}
-		key := sdkServices.CollectionAfternoonClaimKey(time.Now(), request.Mobile, request.Channel, 12)
+		key := sdkServices.CollectionAfternoonClaimKey(claimedAt, request.Mobile, request.Channel, 12)
 		if mini.Exists(key) {
 			t.Fatal("enqueue failure retained afternoon claim")
 		}
@@ -152,6 +154,83 @@ func TestProcessCollectionAfternoonClaimLifecycle(t *testing.T) {
 			t.Fatalf("queue calls = %d, want at least 2; retry was blocked by stale claim", got)
 		}
 	})
+}
+
+func TestAfternoonIVRWritesSharedIdempotencyField(t *testing.T) {
+	redisClient, mini := testRedis(t)
+	defer mini.Close()
+	server, requests := fakeSDKQueue(t, http.StatusOK)
+	defer server.Close()
+	restoreQueue := setSDKQueue(t, server.URL)
+	defer restoreQueue()
+
+	oldKey := config.Configs.CommIdempotentKey
+	oldZap := config.Configs.AwsZapCashQueueUrl
+	config.Configs.CommIdempotentKey = "test-legacy-idempotency"
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
+	defer func() {
+		config.Configs.CommIdempotentKey = oldKey
+		config.Configs.AwsZapCashQueueUrl = oldZap
+	}()
+
+	shared := validAfternoonRequest()
+	shared.Channel = "IVR"
+	shared.EventId = "afternoon-ivr-shared"
+	if response, err := sdkServices.ProcessCommApiData(&shared, nil, "", server.URL+"/queue", redisClient); err != nil || !response.Success {
+		t.Fatalf("shared IVR send = (%+v, %v)", response, err)
+	}
+	keys, err := mini.HKeys(config.Configs.CommIdempotentKey)
+	if err != nil || !contains(keys, "afternoon-ivr-shared") {
+		t.Fatalf("shared IVR fields = %v, err = %v", keys, err)
+	}
+
+	direct := shared
+	direct.Mobile = "8888888888"
+	direct.EventId = "afternoon-ivr-direct"
+	if response, err := sdkServices.ProcessCommApiData(&direct, nil, "", config.Configs.AwsZapCashQueueUrl, redisClient); err != nil || !response.Success {
+		t.Fatalf("direct IVR send = (%+v, %v)", response, err)
+	}
+	keys, err = mini.HKeys(config.Configs.CommIdempotentKey)
+	if err != nil || contains(keys, "afternoon-ivr-direct") {
+		t.Fatalf("direct IVR fields = %v, err = %v", keys, err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("queue calls = %d, want 2", got)
+	}
+}
+
+func TestAfternoonIVRReleasesIdempotencyFieldWhenEnqueueFails(t *testing.T) {
+	redisClient, mini := testRedis(t)
+	defer mini.Close()
+	server, _ := fakeSDKQueue(t, http.StatusInternalServerError)
+	defer server.Close()
+	restoreQueue := setSDKQueue(t, server.URL)
+	defer restoreQueue()
+
+	oldKey := config.Configs.CommIdempotentKey
+	oldZap := config.Configs.AwsZapCashQueueUrl
+	config.Configs.CommIdempotentKey = "test-legacy-idempotency"
+	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
+	defer func() {
+		config.Configs.CommIdempotentKey = oldKey
+		config.Configs.AwsZapCashQueueUrl = oldZap
+	}()
+
+	request := validAfternoonRequest()
+	request.Channel = "IVR"
+	request.EventId = "afternoon-ivr-failed"
+	claimedAt := time.Now()
+	if _, err := sdkServices.ProcessCommApiData(&request, nil, "", server.URL+"/queue", redisClient); err == nil {
+		t.Fatal("enqueue failure unexpectedly succeeded")
+	}
+	keys, err := mini.HKeys(config.Configs.CommIdempotentKey)
+	if err != nil || contains(keys, "afternoon-ivr-failed") {
+		t.Fatalf("failed IVR fields = %v, err = %v", keys, err)
+	}
+	key := sdkServices.CollectionAfternoonClaimKey(claimedAt, request.Mobile, request.Channel, 12)
+	if mini.Exists(key) {
+		t.Fatal("enqueue failure retained afternoon claim")
+	}
 }
 
 func TestUntaggedRequestUsesLegacyHashDedupe(t *testing.T) {

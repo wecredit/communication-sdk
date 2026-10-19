@@ -175,16 +175,35 @@ func TestIVRActiveNonPinnacleVendorDoesNotCall(t *testing.T) {
 }
 
 func TestIVRRejectedAndUnknownDoNotRetry(t *testing.T) {
-	env := startIVR(t)
-	env.script(200, `{"ERR_CODE":"6","ERR_DESC":"Incorrect OBD TYPE Code","CAMPG_ID":"-1","TRANS_ID":"-1"}`, nil)
-	got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
-	if env.calls.Load() != 1 || !got.DeleteMessage {
-		t.Fatalf("rejected calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
-	}
-	again := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
-	if env.calls.Load() != 1 || !again.DeleteMessage {
-		t.Fatalf("redelivery calls=%d", env.calls.Load())
-	}
+	t.Run("rejected", func(t *testing.T) {
+		env := startIVR(t)
+		env.script(200, `{"ERR_CODE":"6","ERR_DESC":"Incorrect OBD TYPE Code","CAMPG_ID":"-1","TRANS_ID":"-1"}`, nil)
+		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+		if env.calls.Load() != 1 || !got.DeleteMessage {
+			t.Fatalf("rejected calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+		}
+		again := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+		if env.calls.Load() != 1 || !again.DeleteMessage {
+			t.Fatalf("redelivery calls=%d", env.calls.Load())
+		}
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		env := startIVR(t)
+		env.script(200, `not-json`, nil)
+		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+		if env.calls.Load() != 1 || !got.DeleteMessage {
+			t.Fatalf("unknown calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+		}
+		value, ok := env.claims.get("ivr-test", "event-1")
+		if !ok || value != "ivr_outcome_unknown" {
+			t.Fatalf("claim %q ok=%v", value, ok)
+		}
+		again := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+		if env.calls.Load() != 1 || !again.DeleteMessage {
+			t.Fatalf("redelivery calls=%d delete=%v", env.calls.Load(), again.DeleteMessage)
+		}
+	})
 }
 
 func TestIVRStampMissDoesNotCallOrDelete(t *testing.T) {
@@ -224,7 +243,7 @@ func TestIVRInvalidVoiceDoesNotCall(t *testing.T) {
 	}
 }
 
-func TestIVRRequestBodyAndCancelledContext(t *testing.T) {
+func TestIVRRequestBody(t *testing.T) {
 	env := startIVR(t)
 	var raw []byte
 	var method, url string
@@ -259,6 +278,30 @@ func TestIVRRequestBodyAndCancelledContext(t *testing.T) {
 	}
 	if body["UserName"] == "" || body["Password"] == "" {
 		t.Fatalf("credentials missing from the request body: %s", raw)
+	}
+}
+
+func TestIVRCancelledAfterStampDoesNotCall(t *testing.T) {
+	env := startIVR(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	restore := ivr.SetClaimHooksForTest(func(hash, field, marker string) (int, error) {
+		result, err := env.claims.stamp(hash, field, marker)
+		cancel()
+		return result, err
+	}, env.claims.outcome, env.claims.reclaim)
+	t.Cleanup(restore)
+
+	got := ivr.SendAttempt(ctx, env.request(), map[string]interface{}{})
+	if env.calls.Load() != 0 || !got.DeleteMessage {
+		t.Fatalf("cancelled calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+	}
+	value, ok := env.claims.get("ivr-test", "event-1")
+	if !ok || value != "ivr_outcome_unknown" {
+		t.Fatalf("claim %q ok=%v", value, ok)
+	}
+	again := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+	if env.calls.Load() != 0 || !again.DeleteMessage {
+		t.Fatalf("redelivery calls=%d delete=%v", env.calls.Load(), again.DeleteMessage)
 	}
 }
 

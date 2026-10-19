@@ -779,9 +779,12 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			utils.Error(fmt.Errorf("[Client:%s Channel:%s] zapcash redis claim failed: %v", data.Client, data.Channel, claimErr))
 			return false, false
 		}
-		// A blank claim on the first receive is still in flight. A later
-		// receive means that worker is gone, so the blank field can be claimed again.
-		// PUSH waits out EventClaimLease so a live FCM retry is not stolen.
+		// A blank claim on the first receive is still in flight. A later receive
+		// is past the 300s visibility timeout, and provider HTTP calls time out
+		// at 30s, so that attempt has finished or died. Reclaim the blank field
+		// and send. IVR writes ivr_attempted before the dial, so an in-flight
+		// call is not blank. PUSH waits out EventClaimLease so a live FCM retry
+		// is not stolen.
 		redisKey := channelHelper.GenerateRedisKeyForRequest(data)
 		if data.Channel == variables.PUSH && marketingRedisClaimBlank(redisTxn, redisErr) && approximateReceiveCount(msg) > 1 {
 			reclaimed, relErr := redis.ReclaimExpiredPushClaim(redis.RDB, config.Configs.CommIdempotentKey, redisKey, time.Now().Add(-push.EventClaimLease))

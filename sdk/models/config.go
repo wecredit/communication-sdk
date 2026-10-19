@@ -216,13 +216,14 @@ type Config struct {
 	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
 	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
 
-	// Per-provider SMS and WhatsApp outbound rate limits (in-process token bucket
+	// Per-provider SMS, WhatsApp, and IVR outbound rate limits (in-process token bucket
 	// per ECS task — N tasks ≈ N × configured RPS). Overrides format:
 	// vendor:client:channel:rps | vendor:client:rps | vendor:rps (comma-separated).
 	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"50"`
 	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
-	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target).
+	// Locked WeCredit defaults: WA Sinch/Times 130 (Tushar); SMS 83 (=5k/min target);
+	// ZapCash Pinnacle IVR 50.
 	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:130,times:wecredit:whatsapp:130,sinch:wecredit:sms:83,times:wecredit:sms:83,pinnacle:wecredit:whatsapp:667,pinnacle:wecredit:sms:100,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 
 	// Sinch Email API Variables
