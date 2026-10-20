@@ -2,6 +2,7 @@ package sdkServices
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -187,8 +188,11 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	campaignClaimed := false
+	flaggedClaimed := false
 	rollbackSendClaims := func() {
-		if campaignClaimed {
+		if flaggedClaimed {
+			channelHelper.ReleaseFlaggedWeCreditWhatsapp(redisClient, *data)
+		} else if campaignClaimed {
 			if releaseErr := redisInteraction.ReleaseMarketingCampaignDedupKey(redisClient, channelHelper.GenerateMarketingCampaignDedupKey(*data)); releaseErr != nil {
 				utils.Error(fmt.Errorf("failed to rollback campaign dedup key event_id=%s: %v", strings.TrimSpace(data.EventId), releaseErr))
 			}
@@ -199,37 +203,41 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	}
 
 	if channelHelper.IsMarketingCampaignRequest(*data) {
-		campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(*data)
 		eventID := strings.TrimSpace(data.EventId)
-		claimed, claimErr := redisInteraction.ClaimMarketingCampaignDedupKey(redisClient, campaignKey, eventID)
+		if channelHelper.SkipsWeCreditWhatsappMobileDayCap(*data) {
+			_, claimErr := channelHelper.ClaimFlaggedWeCreditWhatsapp(redisClient, *data)
+			if claimErr != nil {
+				if errors.Is(claimErr, channelHelper.ErrWhatsappProcessRequired) || errors.Is(claimErr, channelHelper.ErrWhatsappAlreadySentForProcess) {
+					rollbackSendClaims()
+					dupErr := fmt.Errorf("%s", channelHelper.CampaignDuplicateMessage(*data))
+					utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
+					return sdkModels.CommApiResponseBody{Success: false}, dupErr
+				}
 
-		if claimErr != nil {
-			rollbackSendClaims()
-			utils.Error(fmt.Errorf("campaign dedup claim failed dedup_type=campaign event_id=%s: %v", eventID, claimErr))
-			return sdkModels.CommApiResponseBody{Success: false}, claimErr
-		}
-
-		if !claimed {
-			rollbackSendClaims()
-			client := strings.ToLower(strings.TrimSpace(data.Client))
-			channel := strings.ToUpper(strings.TrimSpace(data.Channel))
-			var dupErr error
-
-			if client == "wecredit" && channel == "WHATSAPP" {
-				dupErr = fmt.Errorf("whatsapp already sent today for mobile %s", strings.TrimSpace(data.Mobile))
-			} else {
-				dupErr = fmt.Errorf(
-					"campaign duplicate: channel %s process %s event_id %s already sent today",
-					channel,
-					strings.ToLower(strings.TrimSpace(data.ProcessName)),
-					eventID,
-				)
+				rollbackSendClaims()
+				utils.Error(fmt.Errorf("campaign dedup claim failed dedup_type=campaign event_id=%s: %v", eventID, claimErr))
+				return sdkModels.CommApiResponseBody{Success: false}, claimErr
 			}
 
-			utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
-			return sdkModels.CommApiResponseBody{Success: false}, dupErr
+			flaggedClaimed = true
+		} else {
+			campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(*data)
+			claimed, claimErr := redisInteraction.ClaimMarketingCampaignDedupKey(redisClient, campaignKey, eventID)
+
+			if claimErr != nil {
+				rollbackSendClaims()
+				utils.Error(fmt.Errorf("campaign dedup claim failed dedup_type=campaign event_id=%s: %v", eventID, claimErr))
+				return sdkModels.CommApiResponseBody{Success: false}, claimErr
+			}
+
+			if !claimed {
+				rollbackSendClaims()
+				dupErr := fmt.Errorf("%s", channelHelper.CampaignDuplicateMessage(*data))
+				utils.Error(fmt.Errorf("%v dedup_type=campaign", dupErr))
+				return sdkModels.CommApiResponseBody{Success: false}, dupErr
+			}
+			campaignClaimed = true
 		}
-		campaignClaimed = true
 	}
 
 	// Preserve caller-supplied CommId when present; otherwise generate WC-<CLIENT>-UUID-ts

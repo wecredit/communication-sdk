@@ -3,9 +3,11 @@ package config
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 
@@ -50,6 +52,10 @@ func LoadConfigs() error {
 				}
 			}
 		}
+	}
+
+	if err := ValidateTimesWpMode(Configs); err != nil {
+		return err
 	}
 
 	if err := ratelimit.InitFromConfig(Configs.ProviderRPSOverrides, Configs.ProviderRPSApprovedCaps, Configs.ProviderRPSDefault); err != nil {
@@ -113,10 +119,85 @@ func LoadConfigs() error {
 // logChannelAuditToggles records the resolved WeCredit, ZapCash, and Core write flags.
 func logChannelAuditToggles() {
 	database.SetChannelAuditFlags(Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash, Configs.ZapCashV1InputOutputWrite)
-	
+
 	utils.Info(fmt.Sprintf("channel audit toggles: comm_wecredit=%t comm_zapcash=%t zapcash_v1=%t",
 		database.CommWriteEnabled(variables.WeCredit, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
 		database.CommWriteEnabled(variables.ZapCash, Configs.CommInputOutputWriteWeCredit, Configs.CommInputOutputWriteZapCash),
 		database.ZapCashV1WriteEnabled(Configs.ZapCashV1InputOutputWrite),
 	))
+}
+
+const (
+	TimesWpModeSync  = "sync"
+	TimesWpModeAsync = "async"
+)
+
+// ResolveTimesWpMode returns sync or async. A blank value is sync.
+func ResolveTimesWpMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" {
+		return TimesWpModeSync, nil
+	}
+	if mode != TimesWpModeSync && mode != TimesWpModeAsync {
+		return "", fmt.Errorf("TIMES_WP_API_MODE must be sync or async")
+	}
+	return mode, nil
+}
+
+// TimesWpSendURL returns the sync or async send URL for mode.
+// Async with a blank URL is an error. Sync keeps the configured sync URL, including blank.
+func TimesWpSendURL(mode, syncURL, asyncURL string) (string, error) {
+	if mode == TimesWpModeAsync {
+		asyncURL = strings.TrimSpace(asyncURL)
+		if asyncURL == "" {
+			return "", fmt.Errorf("TIMES_WP_ASYNC_API_URL is required when TIMES_WP_API_MODE=async")
+		}
+		return asyncURL, nil
+	}
+	return strings.TrimSpace(syncURL), nil
+}
+
+// TimesWpRateChannel is the limiter channel segment for mode.
+// Sync stays whatsapp. Async uses whatsapp-async so the 200 cap does not raise the sync cap.
+func TimesWpRateChannel(mode string) string {
+	if mode == TimesWpModeAsync {
+		return "whatsapp-async"
+	}
+	return "whatsapp"
+}
+
+// TimesTemplateListBaseURL is the origin for the Times template get-list call.
+// An explicit list base wins. Otherwise the host of the sync send URL is used.
+func TimesTemplateListBaseURL(listBase, syncURL string) string {
+	if v := strings.TrimSpace(listBase); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	raw := strings.TrimSpace(syncURL)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// ValidateTimesWpMode fails process startup when async mode has no URL, the mode
+// is unknown, or template-sync single-host fallback has no list base.
+func ValidateTimesWpMode(cfg models.Config) error {
+	mode, err := ResolveTimesWpMode(cfg.TimesWpApiMode)
+	if err != nil {
+		return err
+	}
+	if _, err = TimesWpSendURL(mode, cfg.TimesWpApiUrl, cfg.TimesWpAsyncApiUrl); err != nil {
+		return err
+	}
+
+	syncOn := strings.EqualFold(strings.TrimSpace(cfg.WhatsappTemplateSyncEnabled), "true")
+	fallbackOn := strings.EqualFold(strings.TrimSpace(cfg.WhatsappTemplateSyncAllowSingleHostFallback), "true")
+	if syncOn && fallbackOn && TimesTemplateListBaseURL(cfg.TimesWpTemplateListBaseUrl, cfg.TimesWpApiUrl) == "" {
+		return fmt.Errorf("TIMES_WP_TEMPLATE_LIST_BASE_URL or TIMES_WP_API_URL is required when template sync single-host fallback is enabled")
+	}
+	return nil
 }

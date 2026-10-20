@@ -211,6 +211,68 @@ func TestMarketingWhatsappTerminalOutcomesAcknowledgeAfterOutput(t *testing.T) {
 
 func boolPtr(v bool) *bool { return &v }
 
+func TestFlaggedProcessDuplicateUsesSameTerminalAsTodayCap(t *testing.T) {
+	run := func(data sdkModels.CommApiRequestBody) (bool, bool, map[string]interface{}) {
+		state := &whatsappTestState{}
+		deps := marketingWhatsappTestDependencies(state)
+		deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
+			return false, true, "", "", nil
+		}
+		processed, deleted := services.HandleMarketingWhatsappWithDependencies(data, nil, nil, 5, deps)
+		return processed, deleted, state.lastOutput
+	}
+
+	todayData := marketingWhatsappTestData()
+	todayData.Mobile = "7014850582"
+	todayData.ProcessName = "Offer"
+	flaggedData := todayData
+	flaggedData.IsFollowUpMessage = 1
+
+	todayProcessed, todayDeleted, todayOutput := run(todayData)
+	flaggedProcessed, flaggedDeleted, flaggedOutput := run(flaggedData)
+	if !todayProcessed || !todayDeleted || !flaggedProcessed || !flaggedDeleted {
+		t.Fatalf("terminal ack today=(%t,%t) flagged=(%t,%t)", todayProcessed, todayDeleted, flaggedProcessed, flaggedDeleted)
+	}
+	if outputIsSent(todayOutput) || outputIsSent(flaggedOutput) {
+		t.Fatalf("terminal duplicates should be IsSent=false, today=%v flagged=%v", todayOutput, flaggedOutput)
+	}
+	todayMessage, _ := todayOutput["ResponseMessage"].(string)
+	flaggedMessage, _ := flaggedOutput["ResponseMessage"].(string)
+	if todayMessage != "whatsapp already sent today for mobile 7014850582" {
+		t.Fatalf("flag 0 message = %q", todayMessage)
+	}
+	if flaggedMessage == todayMessage || !strings.Contains(flaggedMessage, "for this process offer") || strings.HasPrefix(flaggedMessage, "campaign duplicate:") {
+		t.Fatalf("flag 1 message = %q", flaggedMessage)
+	}
+}
+
+func TestFlaggedEmptyProcessAndClaimRedisErrorDoNotSend(t *testing.T) {
+	state := &whatsappTestState{}
+	deps := marketingWhatsappTestDependencies(state)
+	deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
+		return false, true, "", "", nil
+	}
+	data := marketingWhatsappTestData()
+	data.ProcessName = ""
+	data.IsFollowUpMessage = 1
+	processed, deleted := services.HandleMarketingWhatsappWithDependencies(data, nil, nil, 5, deps)
+	if !processed || !deleted || state.sendCalls != 0 || outputIsSent(state.lastOutput) {
+		t.Fatalf("empty process was not a terminal reject: %+v result=(%t,%t) output=%v", state, processed, deleted, state.lastOutput)
+	}
+
+	state = &whatsappTestState{}
+	deps = marketingWhatsappTestDependencies(state)
+	deps.Claim = func(sdkModels.CommApiRequestBody) (bool, bool, string, string, error) {
+		return false, false, "", "", errors.New("redis down")
+	}
+	flagged := marketingWhatsappTestData()
+	flagged.IsFollowUpMessage = 1
+	processed, deleted = services.HandleMarketingWhatsappWithDependencies(flagged, nil, nil, 5, deps)
+	if processed || deleted || state.outputCalls != 0 || state.deleteCalls != 0 || state.sendCalls != 0 {
+		t.Fatalf("redis claim error was not retryable: %+v result=(%t,%t)", state, processed, deleted)
+	}
+}
+
 func TestMarketingWhatsappRetryBlankAndOutputFailureDoNotAcknowledge(t *testing.T) {
 	t.Run("retryable send", func(t *testing.T) {
 		state := &whatsappTestState{}
