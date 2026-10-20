@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -58,10 +59,6 @@ func LoadConfigs() error {
 		return err
 	}
 
-	if err := ratelimit.InitFromConfig(Configs.ProviderRPSOverrides, Configs.ProviderRPSApprovedCaps, Configs.ProviderRPSDefault); err != nil {
-		return fmt.Errorf("invalid PROVIDER_RPS_OVERRIDES vs PROVIDER_RPS_APPROVED_CAPS: %w", err)
-	}
-
 	logChannelAuditToggles()
 
 	// Initialize Redis Connection
@@ -96,6 +93,29 @@ func LoadConfigs() error {
 
 	if err := database.ConnectZapCashV1IfEnabled(Configs); err != nil {
 		utils.Error(fmt.Errorf("zapcash v1 audit database unavailable: %v", err))
+	}
+
+	// Apply central tuning before consumers and provider channels start. AppConfig
+	// values win; environment/code values remain the startup fallback.
+	if err := applyRuntimeTuningFromAppConfig(); err != nil {
+		return err
+	}
+	if err := ratelimit.InitFromConfig(
+		Configs.ProviderRPSOverrides,
+		Configs.ProviderRPSApprovedCaps,
+		Configs.ProviderRPSDefault,
+		Configs.ProviderRPSTaskSlots,
+	); err != nil {
+		return fmt.Errorf("invalid provider RPS configuration: %w", err)
+	}
+
+	slots := int(positiveConfigInt(Configs.ProviderRPSTaskSlots, 2))
+	ratelimit.ConfigureRedis(redis.RDB, slots)
+	utils.Info(fmt.Sprintf("provider RPS budget configured task_slots=%d (client totals across tasks)", slots))
+	utils.SetLogLevel(Configs.LogLevel)
+
+	if procs := int(positiveConfigInt(Configs.GoMaxProcs, 1)); procs > 0 {
+		runtime.GOMAXPROCS(procs)
 	}
 
 	// Configure Queue client
@@ -199,5 +219,113 @@ func ValidateTimesWpMode(cfg models.Config) error {
 	if syncOn && fallbackOn && TimesTemplateListBaseURL(cfg.TimesWpTemplateListBaseUrl, cfg.TimesWpApiUrl) == "" {
 		return fmt.Errorf("TIMES_WP_TEMPLATE_LIST_BASE_URL or TIMES_WP_API_URL is required when template sync single-host fallback is enabled")
 	}
+	return nil
+}
+
+func positiveConfigInt(raw string, fallback int) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return int64(fallback)
+	}
+
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return int64(fallback)
+	}
+	return n
+}
+
+// applyRuntimeTuningFromAppConfig loads operational tuning from AppConfig.
+// Blank or unreachable AppConfig keeps code/environment fallbacks and never blocks boot.
+func applyRuntimeTuningFromAppConfig() error {
+	fallback := Configs
+	candidate := Configs
+	db := database.DBtechWrite
+	if db == nil {
+		db = database.DBtechRead
+	}
+
+	if db == nil {
+		utils.Info("AppConfig overlay skipped: communication database is not initialized")
+	} else {
+		table := strings.TrimSpace(Configs.AppConfigTableName)
+		if table == "" {
+			table = "AppConfig"
+		}
+
+		type appConfigRow struct {
+			ConfigKey   string `gorm:"column:ConfigKey"`
+			ConfigValue string `gorm:"column:ConfigValue"`
+		}
+
+		var rows []appConfigRow
+		keys := []string{
+			"PROVIDER_RPS_OVERRIDES",
+			"PROVIDER_RPS_APPROVED_CAPS",
+			"PROVIDER_RPS_DEFAULT",
+			"PROVIDER_RPS_TASK_SLOTS",
+			"CONSUMER_DEFAULT_CLIENT_WORKERS",
+			"CONSUMER_CLIENT_WORKER_OVERRIDES",
+			"CONSUMER_CHANNEL_WORKER_OVERRIDES",
+			"CONSUMER_CLIENT_BUFFER_SIZE",
+			"SMS_WORKERS",
+			"WHATSAPP_WORKERS",
+			"GOMAXPROCS",
+			"LOG_LEVEL",
+		}
+
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
+		query := fmt.Sprintf("SELECT ConfigKey, ConfigValue FROM %s WHERE ConfigKey IN (%s)", table, placeholders)
+		args := make([]interface{}, len(keys))
+		for i, key := range keys {
+			args[i] = key
+		}
+
+		if err := db.Raw(query, args...).Scan(&rows).Error; err != nil {
+			utils.Error(fmt.Errorf("AppConfig overlay load failed; keeping code/environment defaults: %w", err))
+		} else {
+			byKey := make(map[string]string, len(rows))
+			for _, row := range rows {
+				key := strings.TrimSpace(row.ConfigKey)
+				if key != "" {
+					byKey[key] = strings.TrimSpace(row.ConfigValue)
+				}
+			}
+
+			apply := func(key string, dst *string) {
+				if raw := byKey[key]; raw != "" {
+					*dst = raw
+					utils.Info("AppConfig applied " + key)
+				} else if _, exists := byKey[key]; exists {
+					utils.Info("AppConfig " + key + " blank; keeping fallback")
+				}
+			}
+			apply("PROVIDER_RPS_OVERRIDES", &candidate.ProviderRPSOverrides)
+			apply("PROVIDER_RPS_APPROVED_CAPS", &candidate.ProviderRPSApprovedCaps)
+			apply("PROVIDER_RPS_DEFAULT", &candidate.ProviderRPSDefault)
+			apply("PROVIDER_RPS_TASK_SLOTS", &candidate.ProviderRPSTaskSlots)
+			apply("CONSUMER_DEFAULT_CLIENT_WORKERS", &candidate.ConsumerDefaultClientWorkers)
+			apply("CONSUMER_CLIENT_WORKER_OVERRIDES", &candidate.ConsumerClientWorkerOverrides)
+			apply("CONSUMER_CHANNEL_WORKER_OVERRIDES", &candidate.ConsumerChannelWorkerOverrides)
+			apply("CONSUMER_CLIENT_BUFFER_SIZE", &candidate.ConsumerClientBufferSize)
+			apply("SMS_WORKERS", &candidate.SMSWorkers)
+			apply("WHATSAPP_WORKERS", &candidate.WhatsAppWorkers)
+			apply("GOMAXPROCS", &candidate.GoMaxProcs)
+			apply("LOG_LEVEL", &candidate.LogLevel)
+		}
+	}
+
+	if err := ratelimit.ValidateOverridesAgainstCaps(candidate.ProviderRPSOverrides, candidate.ProviderRPSApprovedCaps); err != nil {
+		utils.Error(fmt.Errorf("AppConfig provider RPS values invalid; keeping code/environment defaults: %w", err))
+		candidate = fallback
+		if fallbackErr := ratelimit.ValidateOverridesAgainstCaps(fallback.ProviderRPSOverrides, fallback.ProviderRPSApprovedCaps); fallbackErr != nil {
+			return fmt.Errorf("invalid fallback provider RPS configuration: %w", fallbackErr)
+		}
+	}
+	
+	Configs = candidate
+	utils.SetLogLevel(Configs.LogLevel)
+	procs := positiveConfigInt(Configs.GoMaxProcs, 1)
+	runtime.GOMAXPROCS(int(procs))
 	return nil
 }

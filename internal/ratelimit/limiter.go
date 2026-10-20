@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // TokenBucket is a simple in-process limiter (no external deps).
@@ -67,16 +69,103 @@ func (b *TokenBucket) Wait(ctx context.Context) error {
 	}
 }
 
+// redisTakeScript is a shared client-total token bucket.
+// ARGV: rate (tokens/sec), burst (~1s of tokens), now_ms.
+// Returns 0 when a token is taken, or wait time in ms.
+// A missing key starts at burst (not unlimited), then consumes one token.
+var redisTakeScript = redis.NewScript(`
+local key = KEYS[1]
+local rate = tonumber(ARGV[1])
+local burst = tonumber(ARGV[2])
+local now_ms = tonumber(ARGV[3])
+if rate == nil or rate <= 0 or burst == nil or burst < 1 or now_ms == nil then
+  return -1
+end
+
+local data = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(data[1])
+local ts = tonumber(data[2])
+
+if tokens == nil or ts == nil then
+  tokens = burst
+  ts = now_ms
+end
+
+local elapsed = (now_ms - ts) / 1000.0
+if elapsed < 0 then
+  elapsed = 0
+end
+tokens = tokens + elapsed * rate
+if tokens > burst then
+  tokens = burst
+end
+ts = now_ms
+
+if tokens >= 1 then
+  tokens = tokens - 1
+  redis.call('HSET', key, 'tokens', tostring(tokens), 'ts', tostring(ts))
+  local ttl_ms = math.ceil((burst / rate) * 2000)
+  if ttl_ms < 2000 then
+    ttl_ms = 2000
+  end
+  redis.call('PEXPIRE', key, ttl_ms)
+  return 0
+end
+
+local need = 1 - tokens
+local wait_ms = math.ceil((need / rate) * 1000)
+if wait_ms < 1 then
+  wait_ms = 1
+end
+redis.call('HSET', key, 'tokens', tostring(tokens), 'ts', tostring(ts))
+local ttl_ms = math.ceil((burst / rate) * 2000)
+if ttl_ms < 2000 then
+  ttl_ms = 2000
+end
+redis.call('PEXPIRE', key, ttl_ms)
+return wait_ms
+`)
+
 var (
-	registryMu sync.Mutex
-	registry   = map[string]*TokenBucket{}
+	fallbackMu       sync.Mutex
+	fallbackRegistry = map[string]*TokenBucket{}
 
 	overridesMu       sync.RWMutex
 	lastGoodOverrides map[string]float64
 	lastGoodRaw       string
 	defaultRPS        = 50.0
 	approvedCapsRaw   string
+	taskSlots         = 1
+
+	redisMu     sync.RWMutex
+	redisClient *redis.Client
 )
+
+// ConfigureRedis enables the shared Redis client budget. slots must equal ECS autoscaling max.
+// A nil client disables Redis and uses the in-process bucket at the full client-total RPS.
+func ConfigureRedis(rdb *redis.Client, slots int) {
+	redisMu.Lock()
+	redisClient = rdb
+	redisMu.Unlock()
+
+	overridesMu.Lock()
+	if slots < 1 {
+		slots = 1
+	}
+	taskSlots = slots
+	overridesMu.Unlock()
+
+	fallbackMu.Lock()
+	fallbackRegistry = map[string]*TokenBucket{}
+	fallbackMu.Unlock()
+}
+
+// TaskSlots returns the configured PROVIDER_RPS_TASK_SLOTS value (tests/ops).
+func TaskSlots() int {
+	overridesMu.RLock()
+	defer overridesMu.RUnlock()
+	return taskSlots
+}
 
 // Key builds a limiter identity from vendor and client (legacy, no channel).
 func Key(vendor, client string) string {
@@ -100,25 +189,100 @@ func KeyWithChannel(vendor, client, channel string) string {
 	return vendor + ":" + client + ":" + channel
 }
 
+func redisKey(limitKey string) string {
+	return "provider_rps:" + limitKey
+}
+
 // WaitFor acquires one permit for key (e.g. "sinch:wecredit:whatsapp").
+// With Redis configured, the budget is the client total across tasks. On Redis
+// errors, falls back to a local bucket at floor(client_total / TASK_SLOTS).
 func WaitFor(ctx context.Context, key string) error {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {
 		key = "default"
 	}
-	bucket := getBucket(key)
-	return bucket.Wait(ctx)
+
+	redisMu.RLock()
+	rdb := redisClient
+	redisMu.RUnlock()
+	if rdb != nil {
+		if err := waitRedis(ctx, rdb, key); err == nil {
+			return nil
+		} else if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Redis error (or script failure): do not send unlimited.
+		return getFallbackBucket(key).Wait(ctx)
+	}
+	// Missing Redis is the same safety condition as an unavailable Redis server:
+	// divide the client total by the configured task slots on this process.
+	return getFallbackBucket(key).Wait(ctx)
 }
 
-func getBucket(key string) *TokenBucket {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if b, ok := registry[key]; ok {
+func waitRedis(ctx context.Context, rdb *redis.Client, key string) error {
+	rate := rpsForKey(key)
+	burst := rate
+	if burst < 1 {
+		burst = 1
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		
+		waitMs, err := takeRedis(ctx, rdb, key, rate, burst)
+		if err != nil {
+			return err
+		}
+
+		if waitMs <= 0 {
+			return nil
+		}
+		
+		wait := time.Duration(waitMs) * time.Millisecond
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+			// One local sleep per denied take — no busy-polling Redis.
+		}
+	}
+}
+
+func takeRedis(ctx context.Context, rdb *redis.Client, key string, rate, burst float64) (int64, error) {
+	nowMs := time.Now().UnixMilli()
+	res, err := redisTakeScript.Run(ctx, rdb, []string{redisKey(key)}, rate, burst, nowMs).Int64()
+	if err != nil {
+		return 0, err
+	}
+	if res < 0 {
+		return 0, fmt.Errorf("provider_rps_redis_script_invalid_args")
+	}
+	return res, nil
+}
+
+func getFallbackBucket(key string) *TokenBucket {
+	fallbackMu.Lock()
+	defer fallbackMu.Unlock()
+	if b, ok := fallbackRegistry[key]; ok {
 		return b
 	}
-	b := newTokenBucket(rpsForKey(key))
-	registry[key] = b
+	b := newTokenBucket(localFallbackRPS(key))
+	fallbackRegistry[key] = b
 	return b
+}
+
+func localFallbackRPS(key string) float64 {
+	overridesMu.RLock()
+	slots := taskSlots
+	overridesMu.RUnlock()
+	if slots < 1 {
+		slots = 1
+	}
+	total := rpsForKey(key)
+	return math.Floor(total / float64(slots))
 }
 
 func rpsForKey(key string) float64 {
@@ -241,9 +405,15 @@ func validateOverrideEntries(raw, label string) error {
 
 // InitFromConfig validates overrides against caps and installs last-good map.
 // Call once at process startup; returns error for fail-fast boot.
-func InitFromConfig(overridesRaw, capsRaw, defaultRaw string) error {
+// taskSlotsRaw is PROVIDER_RPS_TASK_SLOTS (autoscaling max); blank or invalid → 1.
+func InitFromConfig(overridesRaw, capsRaw, defaultRaw, taskSlotsRaw string) error {
 	if err := ValidateOverridesAgainstCaps(overridesRaw, capsRaw); err != nil {
 		return err
+	}
+	
+	slots := int(positiveFloat(taskSlotsRaw, 1))
+	if slots < 1 {
+		slots = 1
 	}
 	overridesMu.Lock()
 	defer overridesMu.Unlock()
@@ -251,6 +421,7 @@ func InitFromConfig(overridesRaw, capsRaw, defaultRaw string) error {
 	lastGoodRaw = overridesRaw
 	approvedCapsRaw = capsRaw
 	defaultRPS = positiveFloat(defaultRaw, 50)
+	taskSlots = slots
 	return nil
 }
 
@@ -273,9 +444,9 @@ func TryApplyOverrides(overridesRaw, capsRaw string) error {
 	}
 	overridesMu.Unlock()
 
-	registryMu.Lock()
-	registry = map[string]*TokenBucket{}
-	registryMu.Unlock()
+	fallbackMu.Lock()
+	fallbackRegistry = map[string]*TokenBucket{}
+	fallbackMu.Unlock()
 	return nil
 }
 
@@ -286,9 +457,14 @@ func LastGoodOverridesRaw() string {
 	return lastGoodRaw
 }
 
-// ResolvedRPS returns the effective RPS for a key (tests / cross-client checks).
+// ResolvedRPS returns the effective client-total RPS for a key (tests / cross-client checks).
 func ResolvedRPS(key string) float64 {
 	return rpsForKey(strings.ToLower(strings.TrimSpace(key)))
+}
+
+// LocalFallbackRPS returns floor(client_total / TASK_SLOTS) used when Redis errors.
+func LocalFallbackRPS(key string) float64 {
+	return localFallbackRPS(strings.ToLower(strings.TrimSpace(key)))
 }
 
 func positiveFloat(raw string, fallback float64) float64 {
@@ -305,13 +481,17 @@ func positiveFloat(raw string, fallback float64) float64 {
 
 // ResetForTest clears limiter state (unit tests only).
 func ResetForTest() {
-	registryMu.Lock()
-	registry = map[string]*TokenBucket{}
-	registryMu.Unlock()
+	fallbackMu.Lock()
+	fallbackRegistry = map[string]*TokenBucket{}
+	fallbackMu.Unlock()
 	overridesMu.Lock()
 	lastGoodOverrides = nil
 	lastGoodRaw = ""
 	approvedCapsRaw = ""
 	defaultRPS = 50
+	taskSlots = 1
 	overridesMu.Unlock()
+	redisMu.Lock()
+	redisClient = nil
+	redisMu.Unlock()
 }

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	channelHelper "github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	pinnacleWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle"
 	sinchWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch"
 	timesWhatsapp "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times"
+	"github.com/wecredit/communication-sdk/internal/channels/whatsapp/vendormetrics"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	services "github.com/wecredit/communication-sdk/internal/services/dbService"
@@ -96,7 +98,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 
 	if shouldHitVendor {
-		// Hit Into WP
+		started := time.Now()
 		switch msg.Vendor {
 		case variables.TIMES:
 			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
@@ -105,6 +107,8 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 		case variables.PINNACLE:
 			response = pinnacleWhatsapp.HitPinnacleWhatsappApi(requestBody)
 		}
+
+		vendormetrics.Record(msg.Vendor, time.Since(started), response.IsSent)
 	}
 
 	// apihit. : successful -> redis

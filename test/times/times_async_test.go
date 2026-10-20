@@ -201,18 +201,23 @@ func TestSyncBodyKeepsWamid(t *testing.T) {
 }
 
 func TestAsyncRateCapDoesNotRaiseSyncCap(t *testing.T) {
-	caps := "times:wecredit:whatsapp:130,times:wecredit:whatsapp-async:200"
+	// Async caps stay optional. Production supplies approved caps explicitly via env.
+	caps := "times:wecredit:whatsapp:120,times:wecredit:whatsapp-async:200"
 	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp-async:200", caps); err != nil {
 		t.Fatal(err)
 	}
 	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp:400", caps); err == nil {
-		t.Fatal("sync override of 400 must be rejected by the 130 cap")
+		t.Fatal("sync override of 400 must be rejected by the sync cap")
 	}
 	field, ok := reflect.TypeOf(models.Config{}).FieldByName("ProviderRPSApprovedCaps")
 	if !ok {
 		t.Fatal("missing ProviderRPSApprovedCaps")
 	}
-	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp-async:200", field.Tag.Get("default")); err != nil {
-		t.Fatal(err)
+	defaultCaps := field.Tag.Get("default")
+	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp:120", defaultCaps); err != nil {
+		t.Fatalf("sync default cap missing: %v", err)
+	}
+	if err := ratelimit.ValidateOverridesAgainstCaps("times:wecredit:whatsapp-async:200", defaultCaps); err == nil {
+		t.Fatal("dormant async cap must not be part of the approved defaults")
 	}
 }
