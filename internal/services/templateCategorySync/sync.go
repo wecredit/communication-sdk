@@ -657,21 +657,7 @@ func deactivateMissingTemplates(vendor string, local map[string]struct{}, pendin
 }
 
 func timesTemplateListBaseURL() string {
-	if v := strings.TrimSpace(config.Configs.TimesWpTemplateListBaseUrl); v != "" {
-		return strings.TrimRight(v, "/")
-	}
-
-	raw := strings.TrimSpace(config.Configs.TimesWpApiUrl)
-	if raw == "" {
-		return ""
-	}
-
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-
-	return u.Scheme + "://" + u.Host
+	return config.TimesTemplateListBaseURL(config.Configs.TimesWpTemplateListBaseUrl, config.Configs.TimesWpApiUrl)
 }
 
 func publishTemplateCacheInvalidation() {

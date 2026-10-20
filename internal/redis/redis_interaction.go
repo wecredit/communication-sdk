@@ -668,6 +668,23 @@ func ClaimMarketingCampaignDedupKey(rdb *redis.Client, key, value string) (bool,
 	return ok, nil
 }
 
+// ReleaseMarketingCampaignDedupKeyIfValue deletes the key only when it still holds value.
+// GET and DEL run in one script so a reclaim between them is not deleted.
+func ReleaseMarketingCampaignDedupKeyIfValue(rdb *redis.Client, key, value string) error {
+	if rdb == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+
+	key = strings.TrimSpace(key)
+	const script = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`
+	return rdb.Eval(context.Background(), script, []string{key}, value).Err()
+}
+
 // ReleaseMarketingCampaignDedupKey deletes a campaign dedup string key (rollback helper).
 func ReleaseMarketingCampaignDedupKey(rdb *redis.Client, key string) error {
 	if rdb == nil {

@@ -1287,7 +1287,8 @@ func HandleMarketingWhatsappWithDependencies(data sdkModels.CommApiRequestBody, 
 		_ = deps.WriteInputAudit(data, dbMappedData)
 	}
 
-	// WeCredit WA same-day cap is client_channel_mobile (no process); cleared by 1 AM FlushAll.
+	// Unflagged WeCredit WA uses wecredit_whatsapp_{mobile}. Flagged rows also claim
+	// wecredit_whatsapp_{process}_{mobile}. Both are cleared by the 1 AM FlushAll.
 	isMessageProcessed, outputData, sendErr := deps.Send(data)
 	if sendErr != nil && !isMessageProcessed {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] retryable WhatsApp processing error: %v", data.Client, data.CommId, sendErr))
@@ -1941,6 +1942,20 @@ func claimOrSkipMarketingDispatch(data sdkModels.CommApiRequestBody) (skipSend, 
 	}
 
 	eventID := strings.TrimSpace(data.EventId)
+	if channelHelper.SkipsWeCreditWhatsappMobileDayCap(data) {
+		_, err := channelHelper.ClaimFlaggedWeCreditWhatsapp(redis.RDB, data)
+		if err != nil {
+			if errors.Is(err, channelHelper.ErrWhatsappProcessRequired) || errors.Is(err, channelHelper.ErrWhatsappAlreadySentForProcess) {
+				return false, true, "", "", nil
+			}
+
+			_ = redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+			return false, false, "", "", err
+		}
+
+		return false, false, "", "", nil
+	}
+
 	campaignKey := channelHelper.GenerateMarketingCampaignDedupKey(data)
 	claimed, claimErr := redis.ClaimMarketingCampaignDedupKey(redis.RDB, campaignKey, eventID)
 	if claimErr != nil {
@@ -1962,22 +1977,17 @@ func claimOrSkipMarketingDispatch(data sdkModels.CommApiRequestBody) (skipSend, 
 func releaseMarketingDispatchClaims(data sdkModels.CommApiRequestBody) {
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
 	_, _ = redis.ReclaimBlankMobileChannelKey(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
+	if channelHelper.SkipsWeCreditWhatsappMobileDayCap(data) {
+		channelHelper.ReleaseFlaggedWeCreditWhatsapp(redis.RDB, data)
+		return
+	}
 	if channelHelper.IsMarketingCampaignRequest(data) {
 		_ = redis.ReleaseMarketingCampaignDedupKey(redis.RDB, channelHelper.GenerateMarketingCampaignDedupKey(data))
 	}
 }
 
 func campaignDuplicateError(data sdkModels.CommApiRequestBody) string {
-	client := strings.ToLower(strings.TrimSpace(data.Client))
-	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
-	if client == "wecredit" && channel == "WHATSAPP" {
-		return fmt.Sprintf("whatsapp already sent today for mobile %s", strings.TrimSpace(data.Mobile))
-	}
-
-	return fmt.Sprintf("campaign duplicate: channel %s process %s event_id %s already sent today",
-		channel,
-		strings.ToLower(strings.TrimSpace(data.ProcessName)),
-		strings.TrimSpace(data.EventId))
+	return channelHelper.CampaignDuplicateMessage(data)
 }
 
 // recordBlankMarketingWhatsappClaim records a blank marketing WhatsApp claim.

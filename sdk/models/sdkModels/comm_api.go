@@ -76,6 +76,9 @@ type CommApiRequestBody struct {
 	// CollectionSlot is optional so existing producers and consumers keep their
 	// current wire shape. The ZapCash afternoon collection path uses it for RCS and IVR.
 	CollectionSlot string `json:"collectionSlot,omitempty" gorm:"-"`
+	// IsFollowUpMessage is 1 when a WeCredit WhatsApp row is a follow-up and may send
+	// after that mobile was already used today. 0 keeps the day-level mobile key.
+	IsFollowUpMessage int `json:"isFollowUpMessage,omitempty" gorm:"-"`
 }
 
 type CommApiResponseBody struct {
