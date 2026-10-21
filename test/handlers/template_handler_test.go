@@ -104,7 +104,7 @@ func TestGetTemplateByIDRejectsInvalidID(t *testing.T) {
 }
 
 func TestDeleteTemplateRequiresExactMarketingRole(t *testing.T) {
-	for _, role := range []string{"marketing_wecredit", "marketing_zapcash", "zapcash.marketing", "wecredit.marketing"} {
+	for _, role := range []string{"", "marketing_wecredit", "marketing_zapcash", "zapcash.marketing", "wecredit.marketing"} {
 		t.Run(role, func(t *testing.T) {
 			context, recorder := newTemplateContext("/templates/id/1")
 			context.Params = gin.Params{{Key: "id", Value: "1"}}

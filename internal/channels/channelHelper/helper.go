@@ -112,7 +112,7 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		if channel != "WHATSAPP" {
 			return lowestTemplateID(matches), vendor, nil
 		}
-		
+
 		if wantAppID != "" {
 			return lowestTemplateID(matches), vendor, nil
 		}
@@ -122,7 +122,7 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 			appID, _ := match["AppId"].(string)
 			appIDs[strings.ToLower(strings.TrimSpace(appID))] = struct{}{}
 		}
-		
+
 		if len(appIDs) == 1 {
 			return lowestTemplateID(matches), vendor, nil
 		}
@@ -205,6 +205,7 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		"No exact template found for Stage %.2f; Trying stage fallback within stage %s for vendor %s, channel %s...",
 		msg.Stage, stageWhole, msg.Vendor, msg.Channel))
 
+	var stageMatches []map[string]interface{}
 	for _, otherKey := range sortedTemplateKeys(templateDetails) {
 		val := templateDetails[otherKey]
 		if strings.HasPrefix(otherKey, stagePrefix) && val["IsActive"] == variables.Active {
@@ -213,9 +214,12 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 				parts[2] == "Client:"+msg.Client &&
 				parts[3] == "Channel:"+msg.Channel &&
 				parts[4] == "Vendor:"+msg.Vendor {
-				return val, msg.Vendor, nil
+				stageMatches = append(stageMatches, val)
 			}
 		}
+	}
+	if len(stageMatches) > 0 {
+		return lowestTemplateID(stageMatches), msg.Vendor, nil
 	}
 
 	explicitVendor := strings.TrimSpace(msg.Vendor)
@@ -248,13 +252,17 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 }
 
 func firstActiveForPrefix(templates map[string]map[string]interface{}, prefix string) (map[string]interface{}, bool) {
+	var matches []map[string]interface{}
 	for _, key := range sortedTemplateKeys(templates) {
-		if strings.HasPrefix(key, prefix) && templates[key]["IsActive"] == variables.Active {
-			return templates[key], true
+		if strings.HasPrefix(key, prefix+"|Id:") && templates[key]["IsActive"] == variables.Active {
+			matches = append(matches, templates[key])
 		}
 	}
 
-	return nil, false
+	if len(matches) == 0 {
+		return nil, false
+	}
+	return lowestTemplateID(matches), true
 }
 
 func IsVendorActive(client, vendor, channel string) bool {

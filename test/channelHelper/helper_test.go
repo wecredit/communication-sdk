@@ -188,11 +188,11 @@ func TestFetchTemplateDataDoesNotCrossVendorWhenVendorExplicit(t *testing.T) {
 func TestFetchTemplateDataSelectsLowestIDForMultiActiveStage(t *testing.T) {
 	msg := sdkModels.CommApiRequestBody{ProcessName: "P", Stage: 1, Client: "wecredit", Channel: "SMS", Vendor: "SINCH"}
 	base := map[string]interface{}{"IsActive": variables.Active, "Client": "wecredit", "Channel": "SMS", "Vendor": "SINCH", "Process": "P"}
-	first := map[string]interface{}{"TemplateName": "first"}
+	first := map[string]interface{}{"Id": int64(1), "TemplateName": "first"}
 	for key, value := range base {
 		first[key] = value
 	}
-	second := map[string]interface{}{"TemplateName": "second"}
+	second := map[string]interface{}{"Id": int64(2), "TemplateName": "second"}
 	for key, value := range base {
 		second[key] = value
 	}
@@ -206,6 +206,17 @@ func TestFetchTemplateDataSelectsLowestIDForMultiActiveStage(t *testing.T) {
 	}
 	if data["TemplateName"] != "first" {
 		t.Fatalf("selected %v, want lowest-ID template", data["TemplateName"])
+	}
+}
+
+func TestFetchTemplateDataDoesNotMatchVendorPrefix(t *testing.T) {
+	msg := sdkModels.CommApiRequestBody{ProcessName: "P", Stage: 1, Client: "wecredit", Channel: "SMS", Vendor: "SINCH"}
+	key := "Process:P|Stage:1.00|Client:wecredit|Channel:SMS|Vendor:SINCH2"
+	templates := map[string]map[string]interface{}{
+		key: {"IsActive": variables.Active, "Vendor": "SINCH2", "TemplateText": "wrong vendor"},
+	}
+	if _, _, err := channelHelper.FetchTemplateData(msg, templates); err == nil {
+		t.Fatal("expected no template for SINCH when only SINCH2 is active")
 	}
 }
 
