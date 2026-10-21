@@ -47,7 +47,7 @@ func (b *TokenBucket) Wait(ctx context.Context) error {
 			<-ctx.Done()
 			return ctx.Err()
 		}
-		
+
 		b.mu.Lock()
 		now := time.Now()
 		elapsed := now.Sub(b.last).Seconds()
@@ -145,7 +145,7 @@ var (
 	overridesMu       sync.RWMutex
 	lastGoodOverrides map[string]float64
 	lastGoodRaw       string
-	defaultRPS        = 50.0
+	defaultRPS        = 10.0
 	approvedCapsRaw   string
 	taskSlots         = 1
 
@@ -432,7 +432,7 @@ func InitFromConfig(overridesRaw, capsRaw, defaultRaw, taskSlotsRaw string) erro
 	lastGoodOverrides = ParseOverrides(overridesRaw)
 	lastGoodRaw = overridesRaw
 	approvedCapsRaw = capsRaw
-	defaultRPS = positiveFloat(defaultRaw, 50)
+	defaultRPS = positiveFloat(defaultRaw, 10)
 	taskSlots = slots
 	return nil
 }
@@ -500,7 +500,7 @@ func ResetForTest() {
 	lastGoodOverrides = nil
 	lastGoodRaw = ""
 	approvedCapsRaw = ""
-	defaultRPS = 50
+	defaultRPS = 10
 	taskSlots = 1
 	overridesMu.Unlock()
 	redisMu.Lock()
