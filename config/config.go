@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"reflect"
@@ -318,14 +319,35 @@ func applyRuntimeTuningFromAppConfig() error {
 	if err := ratelimit.ValidateOverridesAgainstCaps(candidate.ProviderRPSOverrides, candidate.ProviderRPSApprovedCaps); err != nil {
 		utils.Error(fmt.Errorf("AppConfig provider RPS values invalid; keeping code/environment defaults: %w", err))
 		candidate = fallback
-		if fallbackErr := ratelimit.ValidateOverridesAgainstCaps(fallback.ProviderRPSOverrides, fallback.ProviderRPSApprovedCaps); fallbackErr != nil {
+		if fallbackErr := validateProviderRPSConfig(fallback); fallbackErr != nil {
+			return fmt.Errorf("invalid fallback provider RPS configuration: %w", fallbackErr)
+		}
+	} else if err := validateProviderRPSDefault(candidate.ProviderRPSDefault); err != nil {
+		utils.Error(fmt.Errorf("AppConfig provider RPS default invalid; keeping code/environment defaults: %w", err))
+		candidate = fallback
+		if fallbackErr := validateProviderRPSConfig(fallback); fallbackErr != nil {
 			return fmt.Errorf("invalid fallback provider RPS configuration: %w", fallbackErr)
 		}
 	}
-	
+
 	Configs = candidate
 	utils.SetLogLevel(Configs.LogLevel)
 	procs := positiveConfigInt(Configs.GoMaxProcs, 1)
 	runtime.GOMAXPROCS(int(procs))
+	return nil
+}
+
+func validateProviderRPSConfig(configs models.Config) error {
+	if err := ratelimit.ValidateOverridesAgainstCaps(configs.ProviderRPSOverrides, configs.ProviderRPSApprovedCaps); err != nil {
+		return err
+	}
+	return validateProviderRPSDefault(configs.ProviderRPSDefault)
+}
+
+func validateProviderRPSDefault(raw string) error {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("invalid PROVIDER_RPS_DEFAULT %q", raw)
+	}
 	return nil
 }

@@ -19,11 +19,13 @@ type TokenBucket struct {
 	burst      float64
 	tokens     float64
 	last       time.Time
+	zeroRate   bool
 }
 
 func newTokenBucket(rps float64) *TokenBucket {
-	if rps <= 0 {
-		rps = 50
+	zeroRate := rps <= 0
+	if zeroRate {
+		rps = 0
 	}
 	burst := rps
 	if burst < 1 {
@@ -34,12 +36,18 @@ func newTokenBucket(rps float64) *TokenBucket {
 		burst:      burst,
 		tokens:     burst,
 		last:       time.Now(),
+		zeroRate:   zeroRate,
 	}
 }
 
 // Wait blocks until one token is available or ctx is cancelled.
 func (b *TokenBucket) Wait(ctx context.Context) error {
 	for {
+		if b.zeroRate {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		
 		b.mu.Lock()
 		now := time.Now()
 		elapsed := now.Sub(b.last).Seconds()
@@ -91,6 +99,10 @@ if tokens == nil or ts == nil then
   ts = now_ms
 end
 
+-- Never move the shared clock backward when a task's clock is behind.
+if now_ms < ts then
+  now_ms = ts
+end
 local elapsed = (now_ms - ts) / 1000.0
 if elapsed < 0 then
   elapsed = 0
@@ -229,7 +241,7 @@ func waitRedis(ctx context.Context, rdb *redis.Client, key string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		
+
 		waitMs, err := takeRedis(ctx, rdb, key, rate, burst)
 		if err != nil {
 			return err
@@ -238,7 +250,7 @@ func waitRedis(ctx context.Context, rdb *redis.Client, key string) error {
 		if waitMs <= 0 {
 			return nil
 		}
-		
+
 		wait := time.Duration(waitMs) * time.Millisecond
 		timer := time.NewTimer(wait)
 		select {
@@ -410,7 +422,7 @@ func InitFromConfig(overridesRaw, capsRaw, defaultRaw, taskSlotsRaw string) erro
 	if err := ValidateOverridesAgainstCaps(overridesRaw, capsRaw); err != nil {
 		return err
 	}
-	
+
 	slots := int(positiveFloat(taskSlotsRaw, 1))
 	if slots < 1 {
 		slots = 1

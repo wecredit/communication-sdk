@@ -214,27 +214,27 @@ type Config struct {
 	CreditSeaSinchSmsApiUserName   string `envconfig:"CREDITSEA_SINCH_SMS_API_USERNAME"`
 	CreditSeaSinchSmsApiPassword   string `envconfig:"CREDITSEA_SINCH_SMS_API_PASSWORD"`
 	CreditSeaSinchSmsApiSender     string `envconfig:"CREDITSEA_SINCH_SMS_API_SENDER"`
-	ConsumerDefaultClientWorkers   string `default:"5"`
-	ConsumerClientWorkerOverrides  string
-	ConsumerChannelWorkerOverrides string `default:"wecredit:sms:60,wecredit:whatsapp:60,zapcash:rcs:20,zapcash:whatsapp:20,zapcash:push:20"`
-	ConsumerClientBufferSize       string `default:"200"`
-	GoMaxProcs                     string `default:"1"`
-	LogLevel                       string `default:"info"`
-	SMSWorkers                     string
-	WhatsAppWorkers                string
+	ConsumerDefaultClientWorkers   string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
+	ConsumerClientWorkerOverrides  string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
+	ConsumerChannelWorkerOverrides string `envconfig:"CONSUMER_CHANNEL_WORKER_OVERRIDES" default:"wecredit:sms:60,wecredit:whatsapp:60,zapcash:rcs:20,zapcash:whatsapp:20,zapcash:push:20"`
+	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"200"`
+	GoMaxProcs                     string `envconfig:"GOMAXPROCS" default:"1"`
+	LogLevel                       string `envconfig:"LOG_LEVEL" default:"info"`
+	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
+	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
 
 	// Per-provider SMS, WhatsApp, and IVR outbound rate limits. Numbers are
 	// client TOTALS shared across ECS tasks via Redis (see PROVIDER_RPS_TASK_SLOTS).
 	// Overrides format: vendor:client:channel:rps | vendor:client:rps | vendor:rps.
-	ProviderRPSDefault   string `default:"10"`
-	ProviderRPSOverrides string `default:"times:wecredit:sms:120,times:wecredit:whatsapp:120,sinch:wecredit:sms:120,sinch:wecredit:whatsapp:120,pinnacle:wecredit:sms:40,pinnacle:wecredit:whatsapp:40,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
+	ProviderRPSDefault   string `envconfig:"PROVIDER_RPS_DEFAULT" default:"10"`
+	ProviderRPSOverrides string `envconfig:"PROVIDER_RPS_OVERRIDES" default:"times:wecredit:sms:120,times:wecredit:whatsapp:120,sinch:wecredit:sms:120,sinch:wecredit:whatsapp:120,pinnacle:wecredit:sms:40,pinnacle:wecredit:whatsapp:40,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 	// ProviderRPSTaskSlots must equal ECS autoscaling max. Redis-error fallback
 	// uses floor(client_total / slots) per task.
-	ProviderRPSTaskSlots string `default:"2"`
+	ProviderRPSTaskSlots string `envconfig:"PROVIDER_RPS_TASK_SLOTS" default:"2"`
 	// ProviderRPSApprovedCaps ceilings for guardrail (same key shapes as overrides).
 	// Client totals: Times/Sinch 120 SMS+WA, Pinnacle 40 SMS+WA, Vapio SMS 100.
 	// AppConfig overrides this fallback so operational rate changes need no task-definition revision.
-	ProviderRPSApprovedCaps string `default:"sinch:wecredit:whatsapp:120,times:wecredit:whatsapp:120,sinch:wecredit:sms:120,times:wecredit:sms:120,pinnacle:wecredit:whatsapp:40,pinnacle:wecredit:sms:40,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
+	ProviderRPSApprovedCaps string `envconfig:"PROVIDER_RPS_APPROVED_CAPS" default:"sinch:wecredit:whatsapp:120,times:wecredit:whatsapp:120,sinch:wecredit:sms:120,times:wecredit:sms:120,pinnacle:wecredit:whatsapp:40,pinnacle:wecredit:sms:40,vapio:wecredit:sms:100,pinnacle:zapcash:ivr:50"`
 
 	// Sinch Email API Variables
 	SinchEmailApiUrl   string `envconfig:"SINCH_EMAIL_API_URL"`
