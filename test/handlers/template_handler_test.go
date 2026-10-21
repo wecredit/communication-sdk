@@ -103,6 +103,28 @@ func TestGetTemplateByIDRejectsInvalidID(t *testing.T) {
 	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_TEMPLATE_ID")
 }
 
+func TestDeleteTemplateRequiresExactMarketingRole(t *testing.T) {
+	for _, role := range []string{"marketing_wecredit", "marketing_zapcash", "zapcash.marketing", "wecredit.marketing"} {
+		t.Run(role, func(t *testing.T) {
+			context, recorder := newTemplateContext("/templates/id/1")
+			context.Params = gin.Params{{Key: "id", Value: "1"}}
+			middleware.SetCommAdminRole(context, role)
+			handlers.NewTemplateHandler(nil).DeleteTemplate(context)
+			assertTemplateError(t, recorder, http.StatusForbidden, "FORBIDDEN")
+		})
+	}
+}
+
+func TestSetTemplatesActiveRejectsDuplicateIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPut, "/templates/active-state", strings.NewReader(`{"ids":[1,1],"isActive":false}`))
+	middleware.SetCommAdminScope(context, middleware.CommAdminScope{Unrestricted: true})
+	handlers.NewTemplateHandler(nil).SetTemplatesActive(context)
+	assertTemplateError(t, recorder, http.StatusBadRequest, "INVALID_REQUEST")
+}
+
 func TestAddTemplateRejectsNonAllowlistedFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

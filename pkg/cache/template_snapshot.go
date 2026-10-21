@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -29,18 +30,22 @@ var installedTemplateSnapshot atomic.Pointer[TemplateSnapshot]
 func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot, error) {
 	templates := make(map[string]map[string]interface{}, len(rows))
 	findings := make([]TemplateFinding, 0)
-	activeKeys := make(map[string]int)
+	activeRows := make([]apiModels.Templatedetails, 0, len(rows))
 
 	for _, row := range rows {
 		if row.Id <= 0 {
 			return nil, fmt.Errorf("template snapshot contains invalid Id %d", row.Id)
 		}
-		// The runtime cache resolves only active templates. Inactive historical or
-		// alternate rows may legitimately share a stage resolution tuple and must
-		// not block startup or compete with the active row.
+		// Runtime resolution can now retain multiple active rows for a resolution
+		// tuple; include Id in every cache key so none overwrite another.
 		if !row.IsActive {
 			continue
 		}
+		activeRows = append(activeRows, row)
+	}
+
+	sort.Slice(activeRows, func(i, j int) bool { return activeRows[i].Id < activeRows[j].Id })
+	for _, row := range activeRows {
 
 		process := strings.TrimSpace(row.Process)
 		client := strings.TrimSpace(row.Client)
@@ -56,9 +61,9 @@ func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot,
 			}
 		}
 
-		cacheKey := fmt.Sprintf("Process:%s|Stage:<nil>|Id:%d|Client:%s|Channel:%s|Vendor:%s", process, row.Id, client, channel, vendor)
-		if row.Stage != nil {
-			cacheKey = fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
+		cacheKey := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
+		if _, exists := templates[cacheKey]; exists {
+			cacheKey += fmt.Sprintf("|Id:%d", row.Id)
 		}
 
 		if _, exists := templates[cacheKey]; exists {
@@ -67,17 +72,10 @@ func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot,
 
 		templates[cacheKey] = templateCacheData(row)
 
-		resolutionKey, reason := activeTemplateResolutionKey(row, stage, client, channel, vendor)
+		_, reason := activeTemplateResolutionKey(row, stage, client, channel, vendor)
 		if reason != "" {
 			findings = append(findings, TemplateFinding{TemplateID: row.Id, Channel: channel, Reason: reason})
-			continue
 		}
-
-		if existingID, exists := activeKeys[resolutionKey]; exists {
-			return nil, fmt.Errorf("active templates %d and %d share resolution key %q", existingID, row.Id, resolutionKey)
-		}
-
-		activeKeys[resolutionKey] = row.Id
 	}
 
 	return &TemplateSnapshot{Templates: templates, Findings: findings}, nil

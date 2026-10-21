@@ -185,6 +185,30 @@ func TestFetchTemplateDataDoesNotCrossVendorWhenVendorExplicit(t *testing.T) {
 	}
 }
 
+func TestFetchTemplateDataSelectsLowestIDForMultiActiveStage(t *testing.T) {
+	msg := sdkModels.CommApiRequestBody{ProcessName: "P", Stage: 1, Client: "wecredit", Channel: "SMS", Vendor: "SINCH"}
+	base := map[string]interface{}{"IsActive": variables.Active, "Client": "wecredit", "Channel": "SMS", "Vendor": "SINCH", "Process": "P"}
+	first := map[string]interface{}{"TemplateName": "first"}
+	for key, value := range base {
+		first[key] = value
+	}
+	second := map[string]interface{}{"TemplateName": "second"}
+	for key, value := range base {
+		second[key] = value
+	}
+	templates := map[string]map[string]interface{}{
+		"Process:P|Stage:1.00|Client:wecredit|Channel:SMS|Vendor:SINCH|Id:2": second,
+		"Process:P|Stage:1.00|Client:wecredit|Channel:SMS|Vendor:SINCH|Id:1": first,
+	}
+	data, _, err := channelHelper.FetchTemplateData(msg, templates)
+	if err != nil {
+		t.Fatalf("FetchTemplateData() error = %v", err)
+	}
+	if data["TemplateName"] != "first" {
+		t.Fatalf("selected %v, want lowest-ID template", data["TemplateName"])
+	}
+}
+
 func TestFetchTemplateDataSameVendorStageFallback(t *testing.T) {
 	msg := sdkModels.CommApiRequestBody{
 		ProcessName: "nurture",
