@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/joho/godotenv"
-	env "github.com/wecredit/communication-sdk/sdk/constant"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
@@ -19,7 +19,7 @@ const (
 	NOLOGS
 )
 
-var logLevel = INFO
+var logLevel atomic.Int32
 var Logger = log.New(os.Stdout, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
 
 func init() {
@@ -46,50 +46,54 @@ func init() {
 	   	Logger = log.New(multiWriter, "LOG: ", log.Ldate|log.Ltime|log.Lshortfile)
 	*/
 
-	// Set log level
-	level := env.LOG_LEVEL
-	switch strings.ToUpper(level) {
-	case variables.Debug:
-		logLevel = DEBUG
-	case variables.Info:
-		logLevel = INFO
-	case variables.Warn:
-		logLevel = WARN
-	case variables.Error:
-		logLevel = ERROR
-	case variables.NoLogs:
-		logLevel = NOLOGS
-	default:
-		logLevel = INFO // Default to INFO if not set
-	}
-
+	level := variables.Info
+	SetLogLevel(level)
 	Logger.Printf("Logger initialized with level: %s", strings.ToUpper(level))
+}
+
+// SetLogLevel applies a runtime log level, including values loaded from AppConfig.
+func SetLogLevel(raw string) {
+	level := strings.ToUpper(strings.TrimSpace(raw))
+	switch level {
+	case variables.Debug:
+		logLevel.Store(DEBUG)
+	case variables.Info, "":
+		logLevel.Store(INFO)
+	case variables.Warn:
+		logLevel.Store(WARN)
+	case variables.Error:
+		logLevel.Store(ERROR)
+	case variables.NoLogs:
+		logLevel.Store(NOLOGS)
+	default:
+		logLevel.Store(INFO)
+	}
 }
 
 // Error logs an error message
 func Error(err error) {
-	if logLevel <= ERROR {
+	if logLevel.Load() <= ERROR {
 		Logger.Println("ERROR:", err)
 	}
 }
 
 // Warn logs a warning message
 func Warn(message string) {
-	if logLevel <= WARN {
+	if logLevel.Load() <= WARN {
 		Logger.Println("WARN:", message)
 	}
 }
 
 // Info logs an informational message
 func Info(message string) {
-	if logLevel <= INFO {
+	if logLevel.Load() <= INFO {
 		Logger.Println("INFO:", message)
 	}
 }
 
 // Debug logs a debug message
 func Debug(message string) {
-	if logLevel <= DEBUG {
+	if logLevel.Load() <= DEBUG {
 		Logger.Println("DEBUG:", message)
 	}
 }

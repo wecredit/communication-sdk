@@ -288,10 +288,6 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 				return err
 			}
 
-			if err := validateActiveUniqueness(tx, saved); err != nil {
-				return err
-			}
-
 			now := adminNow()
 			saved.UpdatedOn = &now
 			saved.UpdatedBy = actorUsername
@@ -326,6 +322,76 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 
 	publishTemplateInvalidation(invalidationVersion)
 	return &saved, nil
+}
+
+// SetTemplatesActive atomically changes active state for the supplied templates.
+func (s *TemplateService) SetTemplatesActive(ids []int, active bool, actorUsername string, allowedClients []string, unrestricted bool) error {
+	if len(ids) == 0 {
+		return errors.New("at least one template ID is required")
+	}
+
+	if !unrestricted && len(allowedClients) == 0 {
+		return errors.New("client scope is required")
+	}
+
+	var invalidationVersion int64
+	err := s.WriteDB.Connection(func(conn *gorm.DB) error {
+		var writeLock string
+		defer func() { releaseTemplateWriteLock(conn, writeLock) }()
+		var err error
+		writeLock, err = acquireTemplateWriteLock(conn)
+		if err != nil {
+			return err
+		}
+
+		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
+			query := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
+				Clauses(clause.Locking{Strength: "UPDATE"}).Where("Id IN ?", ids)
+			if !unrestricted {
+				query = query.Where("Client IN ?", allowedClients)
+			}
+			var rows []apiModels.Templatedetails
+			if err := query.Find(&rows).Error; err != nil {
+				return fmt.Errorf("load templates for bulk status update: %w", err)
+			}
+
+			if len(rows) != len(ids) {
+				return ErrTemplateNotFound
+			}
+
+			now := adminNow()
+			changed := false
+			for _, row := range rows {
+				if row.IsActive != active {
+					changed = true
+				}
+			}
+
+			if !changed {
+				return nil
+			}
+
+			update := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id IN ?", ids)
+			if !unrestricted {
+				update = update.Where("Client IN ?", allowedClients)
+			}
+			
+			result := update.Updates(map[string]interface{}{"IsActive": active, "UpdatedOn": now, "UpdatedBy": actorUsername})
+			if result.Error != nil {
+				return fmt.Errorf("update template active state: %w", result.Error)
+			}
+
+			invalidationVersion, err = configurationcache.IncrementTemplateVersion(tx, config.Configs.ConfigurationVersionTable)
+			return err
+		})
+	})
+
+	if err != nil {
+		return err
+	}
+
+	publishTemplateInvalidation(invalidationVersion)
+	return nil
 }
 
 // DeleteTemplate deletes a template

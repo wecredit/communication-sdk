@@ -33,7 +33,7 @@ var ivrVoiceIDPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 var (
 	ErrTemplateNotFound   = errors.New("template not found")
-	ErrTemplateConflict   = errors.New("active template conflicts with an existing resolution key")
+	ErrTemplateConflict   = errors.New("active template conflicts with an existing resolution key") // retained for legacy bulk-import response compatibility
 	ErrTemplateDuplicate  = errors.New("an identical template already exists")
 	ErrTemplateValidation = errors.New("template validation failed")
 	ErrTemplateBusy       = errors.New("template mutation is temporarily busy")
@@ -340,71 +340,6 @@ func validateStagePrerequisites(db *gorm.DB, template apiModels.Templatedetails)
 }
 
 // validateActiveUniqueness validates the active uniqueness
-func validateActiveUniqueness(db *gorm.DB, template apiModels.Templatedetails) error {
-	if !template.IsActive {
-		return nil
-	}
-
-	query := db.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("IsActive = ?", true)
-	if template.Id != 0 {
-		query = query.Where("Id <> ?", template.Id)
-	}
-
-	mode := templateResolutionMode(template)
-	query = query.Where("Client = ? AND Channel = ? AND Vendor = ?", template.Client, template.Channel, template.Vendor)
-
-	switch mode {
-	case ResolutionModeStage:
-		query = query.Where("Stage IS NOT NULL").Where("Process = ? AND Stage = ?", template.Process, *template.Stage)
-	case ResolutionModeReference:
-		query = query.Where("Stage IS NULL").Where("LOWER(TRIM(Process)) = LOWER(TRIM(?))", template.Process)
-		switch template.Channel {
-		case "SMS":
-			query = query.Where("DltTemplateId = ?", template.DltTemplateId)
-		case "WHATSAPP":
-			// Active uniqueness includes AppId so one TemplateName can have multiple
-			// WABA apps (equal-distribution / throughput). Empty AppId matches empty.
-			// Match the cache identity: both fields are case-insensitive and
-			// whitespace-insensitive, even with a case-sensitive DB collation.
-			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
-
-			appID := strings.TrimSpace(template.AppId)
-			if appID == "" {
-				query = query.Where("(AppId IS NULL OR TRIM(AppId) = '')")
-			} else {
-				query = query.Where("LOWER(TRIM(AppId)) = LOWER(TRIM(?))", appID)
-			}
-
-		case "RCS", "EMAIL", "PUSH", "IVR":
-			query = query.Where("LOWER(TRIM(TemplateName)) = LOWER(TRIM(?))", template.TemplateName)
-		}
-	}
-
-	// A locking read is deliberate here. UpdateTemplateById loads the row before
-	// acquiring the advisory lock, so a plain SELECT would reuse an older
-	// REPEATABLE READ snapshot and could miss a competing commit made while
-	// GET_LOCK was waiting. InnoDB locking reads use the latest committed state.
-	var existing struct {
-		Id int `gorm:"column:Id"`
-	}
-
-	err := query.
-		Select("Id").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Limit(1).
-		Take(&existing).Error
-
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-
-	if err != nil {
-		return fmt.Errorf("check active template uniqueness: %w", err)
-	}
-
-	return ErrTemplateConflict
-}
-
 func templateResolutionMode(template apiModels.Templatedetails) string {
 	if template.Stage != nil {
 		return ResolutionModeStage

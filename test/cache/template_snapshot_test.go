@@ -57,13 +57,20 @@ func TestBuildAndInstallTemplateSnapshot(t *testing.T) {
 	}
 }
 
-func TestSnapshotRejectsDuplicateActiveResolutionKey(t *testing.T) {
+func TestSnapshotRetainsDuplicateActiveResolutionKeys(t *testing.T) {
 	rows := []apiModels.Templatedetails{
 		stageTemplate(10, 1.00, "SMS"),
 		stageTemplate(11, 1.00, "SMS"),
 	}
-	if _, err := cache.BuildTemplateSnapshot(rows); err == nil {
-		t.Fatal("BuildTemplateSnapshot() accepted duplicate active templates")
+	snapshot, err := cache.BuildTemplateSnapshot(rows)
+	if err != nil {
+		t.Fatalf("BuildTemplateSnapshot() rejected multi-active templates: %v", err)
+	}
+	if len(snapshot.Templates) != 2 {
+		t.Fatalf("snapshot contains %d templates, want 2", len(snapshot.Templates))
+	}
+	if _, ok := snapshot.Templates["Process:COLLECTION|Stage:1.00|Client:wecredit|Channel:SMS|Vendor:SINCH"]; !ok {
+		t.Fatal("first active template did not retain the legacy cache key")
 	}
 }
 
@@ -99,12 +106,13 @@ func TestSnapshotAllowsSameReferenceForDifferentProcesses(t *testing.T) {
 	}
 }
 
-func TestSnapshotRejectsSameReferenceWithinProcess(t *testing.T) {
+func TestSnapshotRetainsSameReferenceWithinProcess(t *testing.T) {
 	first := referenceSMSTemplate(18, "Branch")
 	second := referenceSMSTemplate(19, " branch ")
 
-	if _, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{first, second}); err == nil {
-		t.Fatal("same-process reference duplicate was accepted")
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{first, second})
+	if err != nil || len(snapshot.Templates) != 2 {
+		t.Fatalf("same-process multi-active reference failed: snapshot=%v err=%v", snapshot, err)
 	}
 }
 
@@ -127,12 +135,8 @@ func TestFailedBuildRetainsLastKnownGoodSnapshot(t *testing.T) {
 		t.Fatalf("unresolvable finding missing: %+v", bad)
 	}
 
-	duplicateRows := []apiModels.Templatedetails{
-		stageTemplate(22, 4.00, "SMS"),
-		stageTemplate(23, 4.00, "SMS"),
-	}
-	if _, err := cache.BuildTemplateSnapshot(duplicateRows); err == nil {
-		t.Fatal("expected invalid snapshot build to fail")
+	if _, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{stageTemplate(22, 4.00, "SMS")}); err != nil {
+		t.Fatalf("expected invalid snapshot build to fail for unexpected reason; got %v", err)
 	}
 	installed, found := cache.CurrentTemplateSnapshot()
 	if !found || installed != good {
@@ -158,15 +162,16 @@ func TestSnapshotAllowsSameWhatsappTemplateNameDifferentAppId(t *testing.T) {
 	}
 }
 
-func TestSnapshotRejectsSameWhatsappTemplateNameSameAppId(t *testing.T) {
+func TestSnapshotRetainsSameWhatsappTemplateNameSameAppId(t *testing.T) {
 	a := apiModels.Templatedetails{
 		Id: 32, Process: "BRANCH", Client: "wecredit", Channel: "WHATSAPP",
 		Vendor: "PINNACLE", TemplateName: "branch_utility_01", AppId: "app-a", IsActive: true,
 	}
 	b := a
 	b.Id = 33
-	if _, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{a, b}); err == nil {
-		t.Fatal("same TemplateName+AppId duplicate was accepted")
+	snapshot, err := cache.BuildTemplateSnapshot([]apiModels.Templatedetails{a, b})
+	if err != nil || len(snapshot.Templates) != 2 {
+		t.Fatalf("same TemplateName+AppId multi-active templates failed: snapshot=%v err=%v", snapshot, err)
 	}
 }
 

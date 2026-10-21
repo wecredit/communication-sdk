@@ -256,7 +256,7 @@ func writeBulkImportParseError(c *gin.Context, err error) {
 		writeTemplateError(c, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", err.Error())
 		return
 	}
-	
+
 	writeTemplateError(c, http.StatusBadRequest, "INVALID_CSV", err.Error())
 }
 
@@ -308,6 +308,11 @@ func (h *TemplateHandler) UpdateTemplateById(c *gin.Context) {
 }
 
 func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
+	if middleware.CommAdminRole(c) != "marketing" {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "template deletion is restricted to the Marketing role")
+		return
+	}
+
 	id, err := parseTemplateID(c.Param("id"))
 	if err != nil {
 		writeTemplateError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", err.Error())
@@ -331,6 +336,53 @@ func (h *TemplateHandler) DeleteTemplate(c *gin.Context) {
 	}
 
 	writeTemplateSuccess(c, http.StatusOK, gin.H{"id": id}, "Template deleted successfully", nil)
+}
+
+func (h *TemplateHandler) SetTemplatesActive(c *gin.Context) {
+	var request apiModels.TemplateBulkStatusRequest
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", fmt.Sprintf("request body is invalid: %v", err))
+		return
+	}
+
+	if err := ensureJSONBodyEnded(decoder); err != nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST_BODY", err.Error())
+		return
+	}
+
+	if len(request.IDs) == 0 || len(request.IDs) > maxTemplatePageSize || request.IsActive == nil {
+		writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", "ids must contain 1 to 100 template IDs and isActive is required")
+		return
+	}
+
+	seen := make(map[int]struct{}, len(request.IDs))
+	for _, id := range request.IDs {
+		if id <= 0 {
+			writeTemplateError(c, http.StatusBadRequest, "INVALID_TEMPLATE_ID", "template IDs must be positive integers")
+			return
+		}
+
+		if _, exists := seen[id]; exists {
+			writeTemplateError(c, http.StatusBadRequest, "INVALID_REQUEST", "template IDs must be unique")
+			return
+		}
+		seen[id] = struct{}{}
+	}
+
+	scope, ok := middleware.GetCommAdminScope(c)
+	if !ok {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
+	}
+
+	if err := h.Service.SetTemplatesActive(request.IDs, *request.IsActive, middleware.CommAdminUsername(c), scope.AllowedClients, scope.Unrestricted); err != nil {
+		writeTemplateServiceError(c, err)
+		return
+	}
+
+	writeTemplateSuccess(c, http.StatusOK, gin.H{"ids": request.IDs, "isActive": *request.IsActive}, "Template statuses updated successfully", nil)
 }
 
 func parseTemplatePagination(c *gin.Context) (int, int, error) {
