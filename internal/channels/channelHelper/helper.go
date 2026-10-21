@@ -2,6 +2,7 @@ package channelHelper
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -50,7 +51,8 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 	wantAppID := strings.TrimSpace(msg.AppId)
 
 	var matches []map[string]interface{}
-	for _, val := range templateDetails {
+	for _, key := range sortedTemplateKeys(templateDetails) {
+		val := templateDetails[key]
 		if val["IsActive"] != variables.Active {
 			continue
 		}
@@ -80,7 +82,7 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		if !strings.EqualFold(strings.TrimSpace(rowProcess), process) {
 			continue
 		}
-		
+
 		// WA: when payload AppId is set, disambiguate multi-AppId same TemplateName.
 		if channel == "WHATSAPP" && wantAppID != "" {
 			rowAppID, _ := val["AppId"].(string)
@@ -105,10 +107,61 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		}
 		return matches[0], resolvedVendor, nil
 	default:
-		// WA without AppId and multiple AppId rows: ambiguous — caller should stamp AppId.
+		// Multiple active rows are safe when they share one AppId; otherwise the
+		// caller must stamp AppId to select the intended WhatsApp account.
+		if channel != "WHATSAPP" {
+			return lowestTemplateID(matches), vendor, nil
+		}
+
+		if wantAppID != "" {
+			return lowestTemplateID(matches), vendor, nil
+		}
+
+		appIDs := make(map[string]struct{}, len(matches))
+		for _, match := range matches {
+			appID, _ := match["AppId"].(string)
+			appIDs[strings.ToLower(strings.TrimSpace(appID))] = struct{}{}
+		}
+
+		if len(appIDs) == 1 {
+			return lowestTemplateID(matches), vendor, nil
+		}
 		return nil, vendor, fmt.Errorf("multiple active templates found for reference: %s, Process: %s, Client: %s, Channel: %s, Vendor: %s",
 			templateRef, process, client, channel, vendor)
 	}
+}
+
+func lowestTemplateID(matches []map[string]interface{}) map[string]interface{} {
+	sort.SliceStable(matches, func(i, j int) bool {
+		return templateID(matches[i]) < templateID(matches[j])
+	})
+	return matches[0]
+}
+
+func templateID(row map[string]interface{}) int64 {
+	switch id := row["Id"].(type) {
+	case int:
+		return int64(id)
+	case int64:
+		return id
+	case float64:
+		return int64(id)
+	case string:
+		parsed, _ := strconv.ParseInt(id, 10, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func sortedTemplateKeys(templates map[string]map[string]interface{}) []string {
+	keys := make([]string, 0, len(templates))
+	for key := range templates {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+	return keys
 }
 
 func templateMatchesSMSReference(row map[string]interface{}, templateRef string) bool {
@@ -135,7 +188,11 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		return nil, msg.Vendor, fmt.Errorf("invalid template Stage: %w", err)
 	}
 
-	if data, ok := templateDetails[key]; ok && data["IsActive"] == variables.Active { // Check if template is active  //TODO: Check if any stage has an active and inactive template then active gets sent.
+	if data, ok := templateDetails[key]; ok && data["IsActive"] == variables.Active {
+		return data, msg.Vendor, nil
+	}
+
+	if data, ok := firstActiveForPrefix(templateDetails, key); ok {
 		return data, msg.Vendor, nil
 	}
 
@@ -148,16 +205,21 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		"No exact template found for Stage %.2f; Trying stage fallback within stage %s for vendor %s, channel %s...",
 		msg.Stage, stageWhole, msg.Vendor, msg.Channel))
 
-	for otherKey, val := range templateDetails {
+	var stageMatches []map[string]interface{}
+	for _, otherKey := range sortedTemplateKeys(templateDetails) {
+		val := templateDetails[otherKey]
 		if strings.HasPrefix(otherKey, stagePrefix) && val["IsActive"] == variables.Active {
 			parts := strings.Split(otherKey, "|")
-			if len(parts) == 5 &&
+			if len(parts) >= 5 &&
 				parts[2] == "Client:"+msg.Client &&
 				parts[3] == "Channel:"+msg.Channel &&
 				parts[4] == "Vendor:"+msg.Vendor {
-				return val, msg.Vendor, nil
+				stageMatches = append(stageMatches, val)
 			}
 		}
+	}
+	if len(stageMatches) > 0 {
+		return lowestTemplateID(stageMatches), msg.Vendor, nil
 	}
 
 	explicitVendor := strings.TrimSpace(msg.Vendor)
@@ -172,10 +234,11 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 		msg.ProcessName, msg.Stage, msg.Client, msg.Channel))
 	prefix := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:",
 		msg.ProcessName, canonicalStage, msg.Client, msg.Channel)
-	for otherKey, val := range templateDetails {
+	for _, otherKey := range sortedTemplateKeys(templateDetails) {
+		val := templateDetails[otherKey]
 		if strings.HasPrefix(otherKey, prefix) && val["IsActive"] == variables.Active {
 			parts := strings.Split(otherKey, "|")
-			if len(parts) == 5 {
+			if len(parts) >= 5 {
 				vendor := strings.TrimPrefix(parts[4], "Vendor:")
 				if IsVendorActive(msg.Client, vendor, msg.Channel) {
 					return val, vendor, nil
@@ -186,6 +249,20 @@ func FetchTemplateData(msg sdkModels.CommApiRequestBody, templateDetails map[str
 
 	return nil, "", fmt.Errorf("no fallback template found for Process: %s, Stage: %.2f, Client: %s, Channel: %s",
 		msg.ProcessName, msg.Stage, msg.Client, msg.Channel)
+}
+
+func firstActiveForPrefix(templates map[string]map[string]interface{}, prefix string) (map[string]interface{}, bool) {
+	var matches []map[string]interface{}
+	for _, key := range sortedTemplateKeys(templates) {
+		if strings.HasPrefix(key, prefix+"|Id:") && templates[key]["IsActive"] == variables.Active {
+			matches = append(matches, templates[key])
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, false
+	}
+	return lowestTemplateID(matches), true
 }
 
 func IsVendorActive(client, vendor, channel string) bool {

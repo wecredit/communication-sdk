@@ -11,6 +11,7 @@ import (
 var ErrCommIdentitySecretNotConfigured = errors.New("COMM_IDENTITY_SECRET is not configured")
 
 const commAdminScopeContextKey = "commAdminScope"
+const commAdminRoleContextKey = "commAdminRole"
 
 func NewCommAdminScopeMiddleware(cfg CommScopeConfig, identitySecret string) (gin.HandlerFunc, error) {
 	if identitySecret == "" {
@@ -47,8 +48,21 @@ func NewCommAdminScopeMiddleware(cfg CommScopeConfig, identitySecret string) (gi
 
 		scope.Username = username
 		c.Set(commAdminScopeContextKey, scope)
+		c.Set(commAdminRoleContextKey, strings.ToLower(role))
 		c.Next()
 	}, nil
+}
+
+// CommAdminRole returns the verified, normalized role from the signed identity.
+func CommAdminRole(c *gin.Context) string {
+	role, _ := c.Get(commAdminRoleContextKey)
+	value, _ := role.(string)
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// SetCommAdminRole sets the normalized role for tests and trusted internal handlers.
+func SetCommAdminRole(c *gin.Context, role string) {
+	c.Set(commAdminRoleContextKey, strings.ToLower(strings.TrimSpace(role)))
 }
 
 // CommAdminUsername returns the verified admin username from the request scope.

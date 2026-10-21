@@ -6,6 +6,12 @@ import (
 	"fmt"
 )
 
+// TemplateBulkStatusRequest changes the active state of multiple templates.
+type TemplateBulkStatusRequest struct {
+	IDs      []int `json:"ids"`
+	IsActive *bool `json:"isActive"`
+}
+
 // NullableFloat64 distinguishes an omitted stage from an explicit JSON null.
 // This is temporary compatibility for the legacy endpoint; the versioned API
 // will expose stages as canonical decimal strings.
