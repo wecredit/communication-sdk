@@ -107,13 +107,50 @@ func FetchTemplateDataByReference(msg sdkModels.CommApiRequestBody, templateDeta
 		}
 		return matches[0], resolvedVendor, nil
 	default:
-		// Prefer the lowest template Id for duplicate active references. WhatsApp
-		// with distinct AppIds remains ambiguous unless the caller stamps AppId.
-		if channel != "WHATSAPP" || wantAppID != "" {
-			return matches[0], vendor, nil
+		// Multiple active rows are safe when they share one AppId; otherwise the
+		// caller must stamp AppId to select the intended WhatsApp account.
+		if channel != "WHATSAPP" {
+			return lowestTemplateID(matches), vendor, nil
+		}
+		
+		if wantAppID != "" {
+			return lowestTemplateID(matches), vendor, nil
+		}
+
+		appIDs := make(map[string]struct{}, len(matches))
+		for _, match := range matches {
+			appID, _ := match["AppId"].(string)
+			appIDs[strings.ToLower(strings.TrimSpace(appID))] = struct{}{}
+		}
+		
+		if len(appIDs) == 1 {
+			return lowestTemplateID(matches), vendor, nil
 		}
 		return nil, vendor, fmt.Errorf("multiple active templates found for reference: %s, Process: %s, Client: %s, Channel: %s, Vendor: %s",
 			templateRef, process, client, channel, vendor)
+	}
+}
+
+func lowestTemplateID(matches []map[string]interface{}) map[string]interface{} {
+	sort.SliceStable(matches, func(i, j int) bool {
+		return templateID(matches[i]) < templateID(matches[j])
+	})
+	return matches[0]
+}
+
+func templateID(row map[string]interface{}) int64 {
+	switch id := row["Id"].(type) {
+	case int:
+		return int64(id)
+	case int64:
+		return id
+	case float64:
+		return int64(id)
+	case string:
+		parsed, _ := strconv.ParseInt(id, 10, 64)
+		return parsed
+	default:
+		return 0
 	}
 }
 

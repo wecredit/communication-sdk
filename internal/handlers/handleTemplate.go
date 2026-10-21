@@ -371,20 +371,13 @@ func (h *TemplateHandler) SetTemplatesActive(c *gin.Context) {
 		seen[id] = struct{}{}
 	}
 
-	for _, id := range request.IDs {
-		template, err := h.Service.GetTemplateByID(uint(id))
-		if err != nil {
-			writeTemplateServiceError(c, err)
-			return
-		}
-
-		if err := middleware.EnforceClientAccess(c, template.Client); err != nil {
-			writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
-			return
-		}
+	scope, ok := middleware.GetCommAdminScope(c)
+	if !ok {
+		writeTemplateError(c, http.StatusForbidden, "FORBIDDEN", "access denied for this client")
+		return
 	}
 
-	if err := h.Service.SetTemplatesActive(request.IDs, *request.IsActive, middleware.CommAdminUsername(c)); err != nil {
+	if err := h.Service.SetTemplatesActive(request.IDs, *request.IsActive, middleware.CommAdminUsername(c), scope.AllowedClients, scope.Unrestricted); err != nil {
 		writeTemplateServiceError(c, err)
 		return
 	}

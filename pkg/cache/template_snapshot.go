@@ -63,7 +63,7 @@ func BuildTemplateSnapshot(rows []apiModels.Templatedetails) (*TemplateSnapshot,
 
 		cacheKey := fmt.Sprintf("Process:%s|Stage:%s|Client:%s|Channel:%s|Vendor:%s", process, stage, client, channel, vendor)
 		if _, exists := templates[cacheKey]; exists {
-			cacheKey += fmt.Sprintf("|Id:%d", row.Id)
+			cacheKey = fmt.Sprintf("%s|Id:%d", cacheKey, row.Id)
 		}
 
 		if _, exists := templates[cacheKey]; exists {

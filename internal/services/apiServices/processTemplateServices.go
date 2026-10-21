@@ -325,9 +325,13 @@ func (s *TemplateService) UpdateTemplateById(id int, updates apiModels.TemplateU
 }
 
 // SetTemplatesActive atomically changes active state for the supplied templates.
-func (s *TemplateService) SetTemplatesActive(ids []int, active bool, actorUsername string) error {
+func (s *TemplateService) SetTemplatesActive(ids []int, active bool, actorUsername string, allowedClients []string, unrestricted bool) error {
 	if len(ids) == 0 {
 		return errors.New("at least one template ID is required")
+	}
+
+	if !unrestricted && len(allowedClients) == 0 {
+		return errors.New("client scope is required")
 	}
 
 	var invalidationVersion int64
@@ -341,9 +345,13 @@ func (s *TemplateService) SetTemplatesActive(ids []int, active bool, actorUserna
 		}
 
 		return conn.Session(&gorm.Session{NewDB: true}).Transaction(func(tx *gorm.DB) error {
+			query := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
+				Clauses(clause.Locking{Strength: "UPDATE"}).Where("Id IN ?", ids)
+			if !unrestricted {
+				query = query.Where("Client IN ?", allowedClients)
+			}
 			var rows []apiModels.Templatedetails
-			if err := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
-				Clauses(clause.Locking{Strength: "UPDATE"}).Where("Id IN ?", ids).Find(&rows).Error; err != nil {
+			if err := query.Find(&rows).Error; err != nil {
 				return fmt.Errorf("load templates for bulk status update: %w", err)
 			}
 
@@ -363,8 +371,12 @@ func (s *TemplateService) SetTemplatesActive(ids []int, active bool, actorUserna
 				return nil
 			}
 
-			result := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).
-				Where("Id IN ?", ids).Updates(map[string]interface{}{"IsActive": active, "UpdatedOn": now, "UpdatedBy": actorUsername})
+			update := tx.Session(&gorm.Session{NewDB: true}).Table(config.Configs.TemplateDetailsTable).Where("Id IN ?", ids)
+			if !unrestricted {
+				update = update.Where("Client IN ?", allowedClients)
+			}
+			
+			result := update.Updates(map[string]interface{}{"IsActive": active, "UpdatedOn": now, "UpdatedBy": actorUsername})
 			if result.Error != nil {
 				return fmt.Errorf("update template active state: %w", result.Error)
 			}

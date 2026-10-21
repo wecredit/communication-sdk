@@ -293,3 +293,32 @@ func TestFetchTemplateDataByReferenceDisambiguatesWhatsappAppId(t *testing.T) {
 		t.Fatalf("error = %v, want multiple-active without AppId", err)
 	}
 }
+
+func TestFetchTemplateDataByReferenceAllowsSameWhatsappAppId(t *testing.T) {
+	base := map[string]interface{}{
+		"IsActive": variables.Active, "TemplateName": "tpl_wa",
+		"Client": "wecredit", "Channel": "WHATSAPP", "Vendor": "PINNACLE", "Process": "camp_a",
+		"AppId": "same-app",
+	}
+	first := make(map[string]interface{}, len(base)+2)
+	for key, value := range base {
+		first[key] = value
+	}
+	first["Id"], first["TemplateText"] = int64(2), "first"
+	second := make(map[string]interface{}, len(base)+2)
+	for key, value := range base {
+		second[key] = value
+	}
+	second["Id"], second["TemplateText"] = int64(10), "second"
+
+	msg := sdkModels.CommApiRequestBody{
+		ProcessName: "camp_a", Client: "wecredit", Channel: "WHATSAPP", Vendor: "PINNACLE", TemplateReference: "tpl_wa",
+	}
+	data, _, err := channelHelper.FetchTemplateDataByReference(msg, map[string]map[string]interface{}{"Id:10": second, "Id:2": first})
+	if err != nil {
+		t.Fatalf("same-AppId duplicates should resolve: %v", err)
+	}
+	if data["TemplateText"] != "first" {
+		t.Fatalf("selected %v, want lowest-ID template", data["TemplateText"])
+	}
+}
