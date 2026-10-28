@@ -9,6 +9,7 @@ import (
 
 func TestGetPinnacleUtilityPayloadKeepsBlankBodySlots(t *testing.T) {
 	payload := pinnacleWhatsappPayload.GetPinnacleUtilityPayload(extapimodels.WhatsappRequestBody{
+		Client:             "zapcash",
 		Mobile:             "9876543210",
 		TemplateName:       "due_date_d_0_utility_01",
 		TemplateVariables:  "CustomerName,DueDate,TotalPayableAmount",
@@ -69,6 +70,14 @@ func TestGetPinnacleUtilityPayloadKeepsBlankBodySlots(t *testing.T) {
 	}
 	if len(params) != 3 || params[0]["text"] != "Asha" || params[1]["text"] != "" || params[2]["text"] != "2026-10-12" {
 		t.Fatalf("empty CSV segment shifted DueDate: %#v", params)
+	}
+	button, ok = findComponent(components, "button")
+	if !ok {
+		t.Fatal("utility payload is missing URL button")
+	}
+	buttonParams = button["parameters"].([]map[string]interface{})
+	if buttonParams[0]["type"] != "payload" || buttonParams[0]["payload"] != "https://pay.example" {
+		t.Fatalf("utility URL without WABA = %#v", buttonParams[0])
 	}
 }
 
