@@ -120,7 +120,7 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 	}
 
 	waba := strings.TrimSpace(pinnacleApiModel.WabaNumber)
-	if waba == "" {
+	if waba == "" && strings.EqualFold(strings.TrimSpace(pinnacleApiModel.Client), "zapcash") {
 		waba = strings.TrimSpace(config.Configs.PinnacleZapcashWabaId)
 	}
 

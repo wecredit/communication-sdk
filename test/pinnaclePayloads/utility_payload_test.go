@@ -3,6 +3,7 @@ package pinnaclePayloads_test
 import (
 	"testing"
 
+	"github.com/wecredit/communication-sdk/config"
 	pinnacleWhatsappPayload "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 )
@@ -79,6 +80,23 @@ func TestGetPinnacleUtilityPayloadKeepsBlankBodySlots(t *testing.T) {
 	if buttonParams[0]["type"] != "payload" || buttonParams[0]["payload"] != "https://pay.example" {
 		t.Fatalf("utility URL without WABA = %#v", buttonParams[0])
 	}
+
+	config.Configs.PinnacleZapcashWabaId = "zapcash-waba"
+	payload = pinnacleWhatsappPayload.GetPinnacleUtilityPayload(extapimodels.WhatsappRequestBody{
+		Client:     "wecredit",
+		ButtonLink: "https://pay.example",
+	})
+	template = payload["template"].(map[string]interface{})
+	components = template["components"].([]map[string]interface{})
+	button, ok = findComponent(components, "button")
+	if !ok {
+		t.Fatal("utility payload is missing URL button")
+	}
+	buttonParams = button["parameters"].([]map[string]interface{})
+	if buttonParams[0]["type"] != "payload" || buttonParams[0]["payload"] != "https://pay.example" {
+		t.Fatalf("non-ZapCash utility URL inherited ZapCash WABA: %#v", buttonParams[0])
+	}
+	config.Configs.PinnacleZapcashWabaId = ""
 }
 
 func findComponent(components []map[string]interface{}, want string) (map[string]interface{}, bool) {
