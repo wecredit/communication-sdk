@@ -26,6 +26,9 @@ func TestGetPinnaclePayloadRoutesByProcessLikeHermis(t *testing.T) {
 		Process:      "BRANCH",
 		TemplateName: "branch_marketing_july_02",
 		Mobile:       "7014850582",
+		WabaNumber:   "waba-1",
+		CampaignId:   "4",
+		CtaId:        "1",
 		ButtonLink:   "https://branch.co/<mobile>",
 		ImageUrl:     "https://whatsappdata.s3.ap-south-1.amazonaws.com/userMedia/branch_marketing.png",
 	})
@@ -34,6 +37,14 @@ func TestGetPinnaclePayloadRoutesByProcessLikeHermis(t *testing.T) {
 	}
 	if _, hasHeader := componentType(marketing, "header"); !hasHeader {
 		t.Fatalf("BRANCH + ImageUrl must attach IMAGE header via media payload")
+	}
+	button, ok := componentType(marketing, "button")
+	if !ok {
+		t.Fatal("media payload is missing URL button")
+	}
+	buttonParams, ok := button["parameters"].([]map[string]interface{})
+	if !ok || len(buttonParams) != 1 || buttonParams[0]["type"] != "text" || buttonParams[0]["text"] != "cta/waba-1/7014850582/4/1/https://branch.co/7014850582" {
+		t.Fatalf("media URL button parameter = %#v", button["parameters"])
 	}
 }
 

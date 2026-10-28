@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,53 +73,22 @@ func main() {
 	}
 	fmt.Println("\nClient Created:", client)
 
-	// Uncomment the stages that have a ZapCash template for this channel.
-	// Stages 8 and 10 and stages 13–15 are intentionally not configured for PUSH.
-	stages := []float64{
-		// 1.01,
-		// 1.02,
-		// 1.03,
-		// 2.01,
-		// 2.02,
-		// 2.03,
-		// 3.01,
-		// 3.02,
-		// 3.03,
-		// 4.01,
-		// 4.02,
-		// 4.03,
-		// 5.01,
-		// 5.02,
-		// 5.03,
-		// 6.01,
-		// 6.02,
-		// 6.03,
-		// 7.01,
-		// 7.02,
-		// 7.03,
-		// 9.01,
-		// 9.02,
-		// 9.03,
-		// 11.01,
-		// 11.02,
-		// 11.03,
-		// 12.01,
-		// 12.02,
-		// 12.03,
-		// 12.04,
-		// 12.05,
-		// 12.06,
-		// 12.07, 12.08, 12.09,
-		// 12.10, 12.11, 12.12, 12.13, 12.14, 12.15, 12.16,
-		// 12.17, 12.18, 12.19, 12.20, 12.21, 12.22, 12.23, 12.24,
-		// 12.25, 12.26, 12.27, 12.28, 12.29, 12.30,
-		// 12.31,
-		// 13.01,
+	vendor := optionalEnv("ZAPCASH_TEST_VENDOR")
+	stages, err := zapCashTestStages(channel, optionalEnv("ZAPCASH_TEST_STAGES"), vendor)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Testing %d active ZapCash %s template stage(s)", len(stages), channel)
+	paymentLink := ""
+	if channel == "WHATSAPP" {
+		paymentLink = optionalEnv("ZAPCASH_TEST_PAYMENT_LINK")
+		if paymentLink == "" {
+			log.Print("ZAPCASH_TEST_PAYMENT_LINK is empty; payment-link stages will use each template's configured button URL")
+		}
 	}
 
 	// Empty vendor lets the consumer assign the active vendor for this client and channel.
 	// Set ZAPCASH_TEST_VENDOR only when the test must pin one vendor.
-	vendor := optionalEnv("ZAPCASH_TEST_VENDOR")
 	runID := time.Now().UTC().Format("20060102T150405.000000000")
 	for _, stage := range stages {
 		eventID := fmt.Sprintf("test-%s-v1-%s-%.2f", strings.ToLower(channel), runID, stage)
@@ -146,7 +117,7 @@ func main() {
 			TodayPayableAmount: "90000",
 			SavingAmount:       "10000",
 			BounceCharge:       "5000",
-			PaymentLink:        "https://www.google.com",
+			PaymentLink:        paymentLink,
 		}
 
 		response, err := client.Send(request)
@@ -154,6 +125,69 @@ func main() {
 			log.Printf("Failed to send %s for stage %.2f: %v", channel, stage, err)
 			continue
 		}
-		log.Printf("Sent %s successfully for stage %.2f eventId=%s: %+v\n", channel, stage, eventID, response)
+		log.Printf("Queued %s test for stage %.2f eventId=%s: %+v\n", channel, stage, eventID, response)
 	}
+}
+
+func zapCashTestStages(channel, override, vendor string) ([]float64, error) {
+	if strings.TrimSpace(override) != "" {
+		return parseZapCashTestStages(override)
+	}
+
+	switch channel {
+	case "PUSH", "IVR", "RCS", "WHATSAPP", "SMS", "EMAIL":
+	default:
+		return nil, fmt.Errorf("unsupported test channel %q", channel)
+	}
+
+	table := strings.TrimSpace(config.Configs.TemplateDetailsTable)
+	if table == "" {
+		return nil, fmt.Errorf("TEMPLATE_TABLE must be configured to discover active %s test stages", channel)
+	}
+	if database.DBtechRead == nil {
+		return nil, fmt.Errorf("Tech read database is unavailable; set ZAPCASH_TEST_STAGES to provide explicit stages")
+	}
+
+	type templateStage struct {
+		Stage float64 `gorm:"column:Stage"`
+	}
+	var rows []templateStage
+	query := database.DBtechRead.Table(table).
+		Distinct("Stage").
+		Where("Client = ? AND Process = ? AND Channel = ? AND IsActive = ?", "zapcash", "ZAPCASH", channel, true)
+	if strings.TrimSpace(vendor) != "" {
+		query = query.Where("Vendor = ?", vendor)
+	}
+	if err := query.Order("Stage ASC").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("discover active ZapCash %s template stages: %w", channel, err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no active ZapCash templates found for %s (vendor %q); set ZAPCASH_TEST_STAGES to specify stages", channel, vendor)
+	}
+	stages := make([]float64, 0, len(rows))
+	for _, row := range rows {
+		stages = append(stages, row.Stage)
+	}
+	return stages, nil
+}
+
+func parseZapCashTestStages(csv string) ([]float64, error) {
+	parts := strings.Split(csv, ",")
+	stages := make([]float64, 0, len(parts))
+	seen := make(map[float64]struct{}, len(parts))
+	for _, part := range parts {
+		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
+		if err != nil || value <= 0 || value > 13.99 || math.Abs(value*100-math.Round(value*100)) > 1e-8 || int(math.Round(value*100))%100 == 0 {
+			return nil, fmt.Errorf("invalid ZAPCASH_TEST_STAGES value %q; use comma-separated stage values such as 1.01,11.01,13.01", strings.TrimSpace(part))
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		stages = append(stages, value)
+	}
+	if len(stages) == 0 {
+		return nil, fmt.Errorf("ZAPCASH_TEST_STAGES contains no stage values")
+	}
+	return stages, nil
 }
