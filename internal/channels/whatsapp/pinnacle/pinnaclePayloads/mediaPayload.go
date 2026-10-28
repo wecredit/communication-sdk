@@ -143,8 +143,8 @@ func GetPinnacleMediaPayload(pinnacleApiModel extapimodels.WhatsappRequestBody) 
 		"sub_type": "url",
 		"parameters": []map[string]interface{}{
 			{
-				"type":    "payload",
-				"payload": buttonPayload,
+				"type": "text",
+				"text": buttonPayload,
 			},
 		},
 	})
