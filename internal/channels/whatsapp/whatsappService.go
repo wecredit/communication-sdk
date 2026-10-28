@@ -88,7 +88,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	stageInt := int(msg.Stage)
 	if paymentLinkStages[stageInt] && msg.PaymentLink != "" {
 		requestBody.ButtonLink = msg.PaymentLink
-		utils.Debug(fmt.Sprintf("Updated button link with payment link for stage %d and mobile: %s: %s", stageInt, msg.Mobile, msg.PaymentLink))
+		utils.Debug(fmt.Sprintf("Using request payment link for WhatsApp stage %d", stageInt))
 	}
 
 	var response extapimodels.WhatsappResponse
