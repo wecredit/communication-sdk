@@ -149,7 +149,7 @@ func zapCashTestStages(channel, override, vendor string) ([]float64, error) {
 	}
 
 	type templateStage struct {
-		Stage float64 `gorm:"column:Stage"`
+		Stage *float64 `gorm:"column:Stage"`
 	}
 	var rows []templateStage
 	query := database.DBtechRead.Table(table).
@@ -166,7 +166,12 @@ func zapCashTestStages(channel, override, vendor string) ([]float64, error) {
 	}
 	stages := make([]float64, 0, len(rows))
 	for _, row := range rows {
-		stages = append(stages, row.Stage)
+		if row.Stage != nil {
+			stages = append(stages, *row.Stage)
+		}
+	}
+	if len(stages) == 0 {
+		return nil, fmt.Errorf("no active ZapCash templates with a non-NULL stage found for %s (vendor %q); set ZAPCASH_TEST_STAGES to specify stages", channel, vendor)
 	}
 	return stages, nil
 }
@@ -177,7 +182,7 @@ func parseZapCashTestStages(csv string) ([]float64, error) {
 	seen := make(map[float64]struct{}, len(parts))
 	for _, part := range parts {
 		value, err := strconv.ParseFloat(strings.TrimSpace(part), 64)
-		if err != nil || value <= 0 || value > 13.99 || math.Abs(value*100-math.Round(value*100)) > 1e-8 || int(math.Round(value*100))%100 == 0 {
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 || value > 13.99 || math.Abs(value*100-math.Round(value*100)) > 1e-8 || int(math.Round(value*100))%100 == 0 {
 			return nil, fmt.Errorf("invalid ZAPCASH_TEST_STAGES value %q; use comma-separated stage values such as 1.01,11.01,13.01", strings.TrimSpace(part))
 		}
 		if _, exists := seen[value]; exists {

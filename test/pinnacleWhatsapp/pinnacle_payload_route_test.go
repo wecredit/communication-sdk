@@ -43,7 +43,7 @@ func TestGetPinnaclePayloadRoutesByProcessLikeHermis(t *testing.T) {
 		t.Fatal("media payload is missing URL button")
 	}
 	buttonParams, ok := button["parameters"].([]map[string]interface{})
-	if !ok || len(buttonParams) != 1 || buttonParams[0]["type"] != "text" || buttonParams[0]["text"] != "cta/waba-1/7014850582/4/1/https://branch.co/7014850582" {
+	if !ok || len(buttonParams) != 1 || buttonParams[0]["type"] != "payload" || buttonParams[0]["payload"] != "cta/waba-1/7014850582/4/1/https://branch.co/7014850582" {
 		t.Fatalf("media URL button parameter = %#v", button["parameters"])
 	}
 }

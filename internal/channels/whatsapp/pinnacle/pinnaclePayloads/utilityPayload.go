@@ -120,8 +120,8 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 	}
 
 	waba := strings.TrimSpace(pinnacleApiModel.WabaNumber)
-	if waba == "" {
-		waba = config.Configs.PinnacleZapcashWabaId
+	if waba == "" && strings.EqualFold(strings.TrimSpace(pinnacleApiModel.Client), "zapcash") {
+		waba = strings.TrimSpace(config.Configs.PinnacleZapcashWabaId)
 	}
 
 	campaignID := strings.TrimSpace(pinnacleApiModel.CampaignId)
@@ -134,16 +134,17 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 		ctaID = "1"
 	}
 
-	// Add the button component
+	// Add the button component (hermis CTA path when WABA is known)
+	buttonPayload := buttonURL
+	if waba != "" {
+		buttonPayload = fmt.Sprintf("cta/%s/%s/%s/%s/%s", waba, pinnacleApiModel.Mobile, campaignID, ctaID, buttonURL)
+	}
 	components = append(components, map[string]interface{}{
 		"type":     "button",
 		"index":    "0",
 		"sub_type": "url",
 		"parameters": []map[string]interface{}{
-			{
-				"type": "text",
-				"text": fmt.Sprintf("cta/%s/%s/%s/%s/%s", waba, pinnacleApiModel.Mobile, campaignID, ctaID, buttonURL),
-			},
+			pinnacleButtonURLParameter(pinnacleApiModel.Client, buttonPayload),
 		},
 	})
 
@@ -185,4 +186,11 @@ func GetPinnacleUtilityPayload(pinnacleApiModel extapimodels.WhatsappRequestBody
 	}
 
 	return templatePayload
+}
+
+func pinnacleButtonURLParameter(client, value string) map[string]interface{} {
+	if strings.EqualFold(strings.TrimSpace(client), "zapcash") {
+		return map[string]interface{}{"type": "text", "text": value}
+	}
+	return map[string]interface{}{"type": "payload", "payload": value}
 }
