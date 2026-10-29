@@ -11,6 +11,7 @@ import (
 	"time"
 
 	redislib "github.com/redis/go-redis/v9"
+	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	commredis "github.com/wecredit/communication-sdk/internal/redis"
@@ -80,7 +81,7 @@ func Start(ctx context.Context) error {
 	if database.DBMarketing == nil {
 		return fmt.Errorf("async persistence configured but Marketing database is unavailable")
 	}
-	if err := verifyRedisSafety(ctx, runtime.redis); err != nil {
+	if err := VerifyRedisSafety(ctx, runtime.redis, config.Configs.RedisAddress); err != nil {
 		return err
 	}
 
@@ -494,15 +495,29 @@ func anyAsyncConfigured() bool {
 	return false
 }
 
-func verifyRedisSafety(ctx context.Context, client *redislib.Client) error {
+// RedisSafetyClient is the small Redis command surface needed by the startup
+// safety check.
+type RedisSafetyClient interface {
+	Info(ctx context.Context, section ...string) *redislib.StringCmd
+	ConfigGet(ctx context.Context, parameter string) *redislib.MapStringStringCmd
+}
+
+// VerifyRedisSafety validates the stream recovery command version and eviction
+// behavior before async persistence starts. ElastiCache Serverless supports
+// XAUTOCLAIM but intentionally restricts CONFIG and fixes maxmemory-policy to
+// volatile-lru. The commwrite streams have no TTL and are additionally bounded
+// by the configured stream budgets, so only that AWS-managed endpoint skips the
+// node-based noeviction check.
+func VerifyRedisSafety(ctx context.Context, client RedisSafetyClient, address string) error {
 	info, err := client.Info(ctx, "server").Result()
 	if err != nil {
 		return fmt.Errorf("verify Redis version: %w", err)
 	}
 	version := ""
 	for _, line := range strings.Split(info, "\n") {
-		if strings.HasPrefix(line, "redis_version:") {
-			version = strings.TrimSpace(strings.TrimPrefix(line, "redis_version:"))
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "redis_version:") || strings.HasPrefix(line, "valkey_version:") {
+			version = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
 			break
 		}
 	}
@@ -515,6 +530,10 @@ func verifyRedisSafety(ctx context.Context, client *redislib.Client) error {
 	if majorErr != nil || minorErr != nil || major < 6 || (major == 6 && minor < 2) {
 		return fmt.Errorf("Redis %s does not support XAUTOCLAIM; require >=6.2", version)
 	}
+	if isElastiCacheServerlessAddress(address) {
+		utils.Warn("commwrite Redis safety: ElastiCache Serverless uses AWS-managed volatile-lru; CONFIG GET is unavailable; relying on non-expiring streams and configured stream budgets")
+		return nil
+	}
 	policy, err := client.ConfigGet(ctx, "maxmemory-policy").Result()
 	if err != nil {
 		return fmt.Errorf("verify Redis maxmemory-policy: %w", err)
@@ -523,6 +542,17 @@ func verifyRedisSafety(ctx context.Context, client *redislib.Client) error {
 		return fmt.Errorf("Redis maxmemory-policy=%q; async persistence requires noeviction", policy["maxmemory-policy"])
 	}
 	return nil
+}
+
+func isElastiCacheServerlessAddress(address string) bool {
+	host := strings.ToLower(strings.TrimSpace(address))
+	host = strings.TrimPrefix(host, "rediss://")
+	host = strings.TrimPrefix(host, "redis://")
+	if separator := strings.LastIndex(host, ":"); separator >= 0 {
+		host = host[:separator]
+	}
+	return strings.Contains(host, ".serverless.") &&
+		(strings.HasSuffix(host, ".cache.amazonaws.com") || strings.HasSuffix(host, ".cache.amazonaws.com.cn"))
 }
 
 func retryReason(err error) string {
