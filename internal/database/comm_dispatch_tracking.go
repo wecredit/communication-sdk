@@ -68,13 +68,9 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 	}
 	_ = sourceTable // kept in signature for callers; locking path removed
 
-	source := clampTracking(row.Source, trackingSourceMax)
-	channel := clampTracking(row.Channel, trackingChannelMax)
-	if source == "" || row.SourceRowId == 0 || channel == "" {
-		return fmt.Errorf("source, sourceRowId, and channel are required")
-	}
-	if row.Outcome != DispatchTrackingSent && row.Outcome != DispatchTrackingFailed && row.Outcome != DispatchTrackingSkippedDuplicate {
-		return fmt.Errorf("invalid tracking outcome %q", row.Outcome)
+	normalized, err := NormalizeCommDispatchTrackingRow(row)
+	if err != nil {
+		return err
 	}
 
 	query := fmt.Sprintf(`INSERT INTO %s (
@@ -84,18 +80,18 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), SYSDATETIME())`, tableName)
 
 	result := db.Exec(query,
-		source,
-		row.SourceRowId,
-		channel,
-		nullIfBlank(clampTracking(row.Client, trackingClientMax)),
-		nullIfBlank(clampTracking(row.Vendor, trackingVendorMax)),
-		nullIfBlank(clampTracking(row.Process, trackingProcessMax)),
-		nullIfBlank(clampTracking(row.EventId, trackingEventIdMax)),
-		nullIfBlank(clampTracking(row.CommId, trackingCommIdMax)),
-		nullIfBlank(clampTracking(row.TransactionId, trackingTxnIdMax)),
-		row.Outcome,
-		nullIfBlank(sanitizeTrackingError(row.ErrorMessage)),
-		nullIfBlank(clampTracking(row.TemplateReference, trackingTemplateMax)),
+		normalized.Source,
+		normalized.SourceRowId,
+		normalized.Channel,
+		nullIfBlank(normalized.Client),
+		nullIfBlank(normalized.Vendor),
+		nullIfBlank(normalized.Process),
+		nullIfBlank(normalized.EventId),
+		nullIfBlank(normalized.CommId),
+		nullIfBlank(normalized.TransactionId),
+		normalized.Outcome,
+		nullIfBlank(normalized.ErrorMessage),
+		nullIfBlank(normalized.TemplateReference),
 	)
 	if result.Error != nil {
 		if isSQLServerUniqueViolation(result.Error) {
@@ -106,6 +102,31 @@ func InsertCommDispatchTracking(db *gorm.DB, sourceTable, tableName string, row 
 
 	utils.Info(fmt.Sprintf("inserted dispatch tracking sourceRowId=%d outcome=%s", row.SourceRowId, row.Outcome))
 	return nil
+}
+
+// NormalizeCommDispatchTrackingRow applies the same validation, length limits,
+// and error redaction to synchronous inserts and Redis-backed batch inserts.
+func NormalizeCommDispatchTrackingRow(row CommDispatchTrackingRow) (CommDispatchTrackingRow, error) {
+	row.Source = clampTracking(row.Source, trackingSourceMax)
+	row.Channel = clampTracking(row.Channel, trackingChannelMax)
+	if row.Source == "" || row.SourceRowId == 0 || row.Channel == "" {
+		return CommDispatchTrackingRow{}, fmt.Errorf("source, sourceRowId, and channel are required")
+	}
+
+	if row.Outcome != DispatchTrackingSent && row.Outcome != DispatchTrackingFailed && row.Outcome != DispatchTrackingSkippedDuplicate {
+		return CommDispatchTrackingRow{}, fmt.Errorf("invalid tracking outcome %q", row.Outcome)
+	}
+
+	row.Client = clampTracking(row.Client, trackingClientMax)
+	row.Vendor = clampTracking(row.Vendor, trackingVendorMax)
+	row.Process = clampTracking(row.Process, trackingProcessMax)
+	row.EventId = clampTracking(row.EventId, trackingEventIdMax)
+	row.CommId = clampTracking(row.CommId, trackingCommIdMax)
+	row.TransactionId = clampTracking(row.TransactionId, trackingTxnIdMax)
+	row.ErrorMessage = sanitizeTrackingError(row.ErrorMessage)
+	row.TemplateReference = clampTracking(row.TemplateReference, trackingTemplateMax)
+
+	return row, nil
 }
 
 // CommWhatsappMarketingOutputExists reports whether any output row exists for a marketing input id.
@@ -127,7 +148,7 @@ func CommWhatsappMarketingOutputExists(db *gorm.DB, tableName string, sourceRowI
 		`SELECT TOP (1) 1 FROM %s WITH (NOLOCK) WHERE SourceRowId = ?`,
 		tableName,
 	)
-	
+
 	if err := db.Raw(query, sourceRowId).Scan(&exists).Error; err != nil {
 		return false, fmt.Errorf("check whatsapp marketing output sourceRowId=%d: %w", sourceRowId, err)
 	}
