@@ -160,9 +160,11 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 	response.IsSent = outcome.IsSentDerived(response.Outcome)
 
 	var terminalSealErr error
-	if err := channelHelper.SealRedisTerminalResult(msg, response.TransactionId, response.TransactionId, response.Outcome, response.ResponseMessage, hitAt); err != nil {
-		utils.Error(fmt.Errorf("failed to seal Redis SMS terminal result: %v", err))
-		terminalSealErr = err
+	if outcome.IsTerminal(response.Outcome) {
+		if err := channelHelper.SealRedisTerminalResult(msg, response.TransactionId, response.TransactionId, response.Outcome, response.ResponseMessage, hitAt); err != nil {
+			utils.Error(fmt.Errorf("failed to seal Redis SMS terminal result: %v", err))
+			terminalSealErr = err
+		}
 	}
 
 	if response.Outcome == outcome.Submitted {

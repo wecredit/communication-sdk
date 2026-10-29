@@ -25,8 +25,15 @@ type Producer struct {
 
 type producerRedis interface {
 	XLen(context.Context, string) *redis.IntCmd
-	XAdd(context.Context, *redis.XAddArgs) *redis.StringCmd
+	Eval(context.Context, string, []string, ...interface{}) *redis.Cmd
 }
+
+const cappedXAddScript = `
+if redis.call("XLEN", KEYS[1]) >= tonumber(ARGV[1]) then
+  return false
+end
+return redis.call("XADD", KEYS[1], "*", unpack(ARGV, 2))
+`
 
 func NewProducer(client producerRedis) *Producer {
 	return &Producer{redis: client, paused: make(map[string]bool), alerted: make(map[string]bool)}
@@ -124,7 +131,19 @@ func (p *Producer) Enqueue(ctx context.Context, record Record) (string, error) {
 		return "", err
 	}
 
-	id, err := p.redis.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: record.streamValues()}).Result()
+	limit := (budget*80 + 99) / 100
+	values := record.streamValues()
+	args := make([]interface{}, 1, 1+len(values)*2)
+	args[0] = limit
+	for key, value := range values {
+		args = append(args, key, value)
+	}
+
+	id, err := p.redis.Eval(ctx, cappedXAddScript, []string{stream}, args...).Text()
+	if err == redis.Nil {
+		_ = p.applyHighWater(record.Client, record.Channel, stream, limit, budget)
+		return "", ErrStreamHighWater
+	}
 	if err != nil {
 		metrics.CountByReason("CommWriteXAddFailure", channelKey(record.Client, record.Channel), "xadd", 1)
 		return "", fmt.Errorf("XADD %s: %w", stream, err)

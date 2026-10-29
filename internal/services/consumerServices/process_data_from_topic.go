@@ -1467,6 +1467,7 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 						utils.Error(fmt.Errorf("async marketing SMS replay persistence failed: %v", persistErr))
 						return false, false
 					}
+					database.InsertRow(data.Client, config.Configs.SmsOutputTable, replayResult.DBData)
 
 					deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 					if !deleted {

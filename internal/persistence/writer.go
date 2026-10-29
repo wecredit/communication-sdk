@@ -45,6 +45,12 @@ end
 return 0
 `)
 
+var moveToPoisonScript = redislib.NewScript(`
+redis.call("XADD", KEYS[2], "*", unpack(ARGV, 3))
+redis.call("XACK", KEYS[1], ARGV[1], ARGV[2])
+return redis.call("XDEL", KEYS[1], ARGV[2])
+`)
+
 type Runtime struct {
 	ctx   context.Context
 	redis *redislib.Client
@@ -422,12 +428,13 @@ func (r *Runtime) moveToPoison(stream, lane string, message redislib.XMessage, c
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := r.redis.TxPipelined(ctx, func(pipe redislib.Pipeliner) error {
-		pipe.XAdd(ctx, &redislib.XAddArgs{Stream: PoisonStreamKey(lane), Values: values})
-		pipe.XAck(ctx, stream, writerGroup, message.ID)
-		pipe.XDel(ctx, stream, message.ID)
-		return nil
-	})
+	args := make([]interface{}, 2, 2+len(values)*2)
+	args[0] = writerGroup
+	args[1] = message.ID
+	for key, value := range values {
+		args = append(args, key, value)
+	}
+	_, err := moveToPoisonScript.Run(ctx, r.redis, []string{stream, PoisonStreamKey(lane)}, args...).Result()
 	if err != nil {
 		metrics.CountByReason("CommWritePoisonPreservationFailure", lane, "redis", 1)
 		return err

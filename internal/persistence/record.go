@@ -62,11 +62,10 @@ func MarketingSMSRecord(data sdkModels.CommApiRequestBody, output map[string]int
 		outcome = strings.ToUpper(mapString(output, "Outcome"))
 	}
 
-	if outcome == "SUBMITTED" {
+	switch outcome {
+	case "SUBMITTED", "ALREADY_DONE", "SENT":
 		outcome = "SENT"
-	}
-
-	if outcome == "REJECTED" || outcome == "" {
+	case "FAILED_FINAL", "SKIPPED", "REJECTED", "FAILED", "":
 		outcome = "FAILED"
 	}
 
@@ -131,8 +130,8 @@ func MarketingWhatsappRecord(data sdkModels.CommApiRequestBody, output map[strin
 		Tag2:              strings.TrimSpace(data.Tag2),
 		DynamicMobile:     strings.TrimSpace(data.DynamicMobile),
 		VariablesValue:    strings.TrimSpace(data.TemplateVariableValues),
-		RawPayload:        mapString(output, "RawPayload"),
-		RawResponse:       mapString(output, "RawResponse"),
+		RawPayload:        mapRawString(output, "RawPayload"),
+		RawResponse:       mapRawString(output, "RawResponse"),
 	}
 
 	if !data.ScheduledAt.IsZero() {
@@ -180,6 +179,7 @@ func (r Record) streamValues() map[string]interface{} {
 
 func recordFromMessage(message redislib.XMessage) (Record, error) {
 	value := func(key string) string { return strings.TrimSpace(fmt.Sprint(message.Values[key])) }
+	rawValue := func(key string) string { return fmt.Sprint(message.Values[key]) }
 	sourceRowID, err := strconv.ParseInt(value("source_row_id"), 10, 64)
 	if err != nil || sourceRowID < 1 {
 		return Record{}, fmt.Errorf("invalid source_row_id %q", value("source_row_id"))
@@ -204,7 +204,7 @@ func recordFromMessage(message redislib.XMessage) (Record, error) {
 		TemplateReference: value("template_reference"), HitAt: hitAt, Mobile: value("mobile"),
 		AppID: value("app_id"), IsSent: isSent, Tag1: value("tag1"), Tag2: value("tag2"),
 		DynamicMobile: value("dynamic_mobile"), VariablesValue: value("variables_value"),
-		RawPayload: value("raw_payload"), RawResponse: value("raw_response"),
+		RawPayload: rawValue("raw_payload"), RawResponse: rawValue("raw_response"),
 	}
 
 	if raw := value("scheduled_at"); raw != "" {
@@ -233,6 +233,13 @@ func mapString(values map[string]interface{}, key string) string {
 	}
 
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func mapRawString(values map[string]interface{}, key string) string {
+	if values == nil || values[key] == nil {
+		return ""
+	}
+	return fmt.Sprint(values[key])
 }
 
 func mapBool(values map[string]interface{}, key string) bool {

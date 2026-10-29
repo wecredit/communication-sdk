@@ -3,7 +3,9 @@ package persistence_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 )
 
 type fakeProducerRedis struct {
+	mu      sync.Mutex
 	length  int64
 	xaddID  string
 	xaddErr error
@@ -22,12 +25,23 @@ type fakeProducerRedis struct {
 }
 
 func (f *fakeProducerRedis) XLen(context.Context, string) *redislib.IntCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return redislib.NewIntResult(f.length, nil)
 }
 
-func (f *fakeProducerRedis) XAdd(context.Context, *redislib.XAddArgs) *redislib.StringCmd {
+func (f *fakeProducerRedis) Eval(_ context.Context, _ string, _ []string, args ...interface{}) *redislib.Cmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	limit, _ := args[0].(int64)
+	if f.length >= limit {
+		return redislib.NewCmdResult(nil, redislib.Nil)
+	}
 	f.xadds++
-	return redislib.NewStringResult(f.xaddID, f.xaddErr)
+	if f.xaddErr == nil {
+		f.length++
+	}
+	return redislib.NewCmdResult(f.xaddID, f.xaddErr)
 }
 
 func TestAsyncEnabledRequiresFlagAndBudget(t *testing.T) {
@@ -68,6 +82,40 @@ func TestMarketingSMSRecordUsesTerminalProviderIdentity(t *testing.T) {
 	}
 }
 
+func TestMarketingSMSRecordNormalizesTerminalOutcomes(t *testing.T) {
+	hitAt := time.Date(2026, 10, 29, 10, 30, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	for input, want := range map[string]string{
+		"FAILED_FINAL": "FAILED", "SKIPPED": "FAILED", "ALREADY_DONE": "SENT",
+	} {
+		t.Run(input, func(t *testing.T) {
+			record, err := persistence.MarketingSMSRecord(sdkModels.CommApiRequestBody{
+				Source: "marketing", SourceRowId: 42, Client: "wecredit", Channel: "SMS",
+			}, nil, redisModels.MobileChannelRedisData{Outcome: input, HitAt: hitAt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.Outcome != want {
+				t.Fatalf("outcome = %q, want %q", record.Outcome, want)
+			}
+		})
+	}
+}
+
+func TestMarketingWhatsappRecordPreservesRawBoundaryWhitespace(t *testing.T) {
+	hitAt := time.Date(2026, 10, 29, 10, 30, 0, 0, time.UTC)
+	record, err := persistence.MarketingWhatsappRecord(sdkModels.CommApiRequestBody{
+		SourceRowId: 42, Client: "wecredit", Channel: "WHATSAPP",
+	}, map[string]interface{}{
+		"RawPayload": "  payload\n", "RawResponse": "\tresponse  ",
+	}, redisModels.MobileChannelRedisData{Outcome: "submitted", HitAt: hitAt.Format(time.RFC3339Nano)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.RawPayload != "  payload\n" || record.RawResponse != "\tresponse  " {
+		t.Fatalf("raw values changed: payload=%q response=%q", record.RawPayload, record.RawResponse)
+	}
+}
+
 func TestProducerPausesAtEightyPercentAndResumesAtSixty(t *testing.T) {
 	old := config.Configs
 	t.Cleanup(func() { config.Configs = old })
@@ -105,6 +153,40 @@ func TestProducerReturnsXAddFailure(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected XADD failure")
+	}
+}
+
+func TestProducerAtomicallyCapsConcurrentEnqueue(t *testing.T) {
+	old := config.Configs
+	t.Cleanup(func() { config.Configs = old })
+	config.Configs.CommWriteStreamBudgetOverrides = "wecredit:sms:10"
+	fake := &fakeProducerRedis{xaddID: "1-0"}
+	producer := persistence.NewProducer(fake)
+	record := persistence.Record{Client: "wecredit", Channel: "sms", HitAt: time.Now()}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := producer.Enqueue(context.Background(), record)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	accepted := 0
+	for err := range errs {
+		if err == nil {
+			accepted++
+		} else if !errors.Is(err, persistence.ErrStreamHighWater) {
+			t.Fatal(fmt.Errorf("unexpected enqueue error: %w", err))
+		}
+	}
+	if accepted != 8 || fake.length != 8 {
+		t.Fatalf("accepted=%d length=%d, want atomic 80%% cap of 8", accepted, fake.length)
 	}
 }
 
