@@ -24,6 +24,23 @@ type fakeProducerRedis struct {
 	xadds   int
 }
 
+type fakeRedisSafetyClient struct {
+	info        string
+	infoErr     error
+	policy      map[string]string
+	configErr   error
+	configCalls int
+}
+
+func (f *fakeRedisSafetyClient) Info(context.Context, ...string) *redislib.StringCmd {
+	return redislib.NewStringResult(f.info, f.infoErr)
+}
+
+func (f *fakeRedisSafetyClient) ConfigGet(context.Context, string) *redislib.MapStringStringCmd {
+	f.configCalls++
+	return redislib.NewMapStringStringResult(f.policy, f.configErr)
+}
+
 func (f *fakeProducerRedis) XLen(context.Context, string) *redislib.IntCmd {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -55,6 +72,64 @@ func TestAsyncEnabledRequiresFlagAndBudget(t *testing.T) {
 	config.Configs.CommWriteStreamBudgetOverrides = ""
 	if persistence.AsyncEnabled("wecredit", "sms") {
 		t.Fatal("async write must stay off without a verified stream budget")
+	}
+}
+
+func TestVerifyRedisSafetyAcceptsElastiCacheServerlessWithoutConfigGet(t *testing.T) {
+	client := &fakeRedisSafetyClient{
+		info:      "# Server\r\nvalkey_version:8.1.0\r\n",
+		configErr: errors.New("ERR unknown command 'config'"),
+	}
+	err := persistence.VerifyRedisSafety(
+		context.Background(),
+		client,
+		"nurture-engine-example.serverless.aps1.cache.amazonaws.com:6379",
+	)
+	if err != nil {
+		t.Fatalf("ElastiCache Serverless safety check failed: %v", err)
+	}
+	if client.configCalls != 0 {
+		t.Fatalf("CONFIG GET calls = %d, want 0 for ElastiCache Serverless", client.configCalls)
+	}
+}
+
+func TestVerifyRedisSafetyKeepsStrictPolicyCheckForOtherRedis(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		policy  string
+		wantErr bool
+	}{
+		{name: "noeviction", policy: "noeviction"},
+		{name: "volatile lru", policy: "volatile-lru", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeRedisSafetyClient{
+				info:   "# Server\r\nredis_version:7.2.0\r\n",
+				policy: map[string]string{"maxmemory-policy": test.policy},
+			}
+			err := persistence.VerifyRedisSafety(context.Background(), client, "localhost:6379")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v, wantErr=%t", err, test.wantErr)
+			}
+			if client.configCalls != 1 {
+				t.Fatalf("CONFIG GET calls = %d, want 1", client.configCalls)
+			}
+		})
+	}
+}
+
+func TestVerifyRedisSafetyRejectsOldServerlessEngine(t *testing.T) {
+	client := &fakeRedisSafetyClient{info: "# Server\r\nredis_version:6.0.0\r\n"}
+	err := persistence.VerifyRedisSafety(
+		context.Background(),
+		client,
+		"cache.serverless.aps1.cache.amazonaws.com:6379",
+	)
+	if err == nil || !strings.Contains(err.Error(), "require >=6.2") {
+		t.Fatalf("error = %v, want version rejection", err)
+	}
+	if client.configCalls != 0 {
+		t.Fatalf("CONFIG GET calls = %d, want 0 after version rejection", client.configCalls)
 	}
 }
 
