@@ -117,7 +117,8 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 
 	var response extapimodels.SmsResponse
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
-	utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v\n", msg.Channel, msg.CommId, shouldHitVendor))
+	// Hot-path per-message routing logging is intentionally disabled; aggregate outcomes remain.
+	// utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v\n", msg.Channel, msg.CommId, shouldHitVendor))
 
 	if !shouldHitVendor {
 		response.Outcome = outcome.Skipped
@@ -128,6 +129,7 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 		return buildSmsResult(msg, req, response)
 	}
 
+	hitAt := time.Now()
 	switch msg.Vendor {
 	case variables.TIMES:
 		response = timesSms.HitTimesSmsApi(req)
@@ -157,12 +159,15 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 	}
 	response.IsSent = outcome.IsSentDerived(response.Outcome)
 
-	if err := channelHelper.UpdateRedisTransactionId(msg, response.TransactionId); err != nil {
-		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
+	var terminalSealErr error
+	if err := channelHelper.SealRedisTerminalResult(msg, response.TransactionId, response.TransactionId, response.Outcome, response.ResponseMessage, hitAt); err != nil {
+		utils.Error(fmt.Errorf("failed to seal Redis SMS terminal result: %v", err))
+		terminalSealErr = err
 	}
 
 	if response.Outcome == outcome.Submitted {
-		utils.Info(fmt.Sprintf("SMS submitted for Process: %s CommId: %s via %s", msg.ProcessName, msg.CommId, msg.Vendor))
+		// Hot-path success logging is intentionally disabled; aggregate provider metrics remain.
+		// utils.Info(fmt.Sprintf("SMS submitted for Process: %s CommId: %s via %s", msg.ProcessName, msg.CommId, msg.Vendor))
 
 		if smspolicy.IsRegulatedMarketingSMS(msg.Source, msg.SourceRowId, msg.Channel) {
 			metrics.Count("wecredit_sms_sent_total", msg.Vendor, msg.Client, 1)
@@ -174,7 +179,12 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 	}
 	metrics.Count("SmsProviderOutcome_"+response.Outcome, msg.Vendor, msg.Client, 1)
 
-	return buildSmsResult(msg, req, response)
+	result, err := buildSmsResult(msg, req, response)
+	if terminalSealErr != nil {
+		return result, fmt.Errorf("seal SMS terminal result: %w", terminalSealErr)
+	}
+
+	return result, err
 }
 
 func smsRequestFromMessage(msg sdkModels.CommApiRequestBody) extapimodels.SmsRequestBody {

@@ -102,6 +102,28 @@ func TestPushClaimUpdateRequiresExistingJSONClaim(t *testing.T) {
 	}
 }
 
+func TestSealTerminalResultExtendsLegacyValue(t *testing.T) {
+	client, _ := newClaimRedis(t)
+	hash := "CommIdempotentKeyValMap"
+	if err := client.HSet(context.Background(), hash, "marketing-42", "legacy-provider-id").Err(); err != nil {
+		t.Fatal(err)
+	}
+	hitAt := time.Date(2026, 10, 28, 10, 30, 0, 123000000, time.UTC)
+	if err := redis.SealTerminalResult(client, hash, "marketing-42", "provider-42", "provider-42", "submitted", "", hitAt); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := redis.GetTerminalResult(client, hash, "marketing-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TransactionId != "provider-42" || stored.ProviderMessageID != "provider-42" || stored.Outcome != "submitted" {
+		t.Fatalf("terminal result = %+v", stored)
+	}
+	if stored.HitAt != hitAt.Format(time.RFC3339Nano) {
+		t.Fatalf("HitAt = %q, want %q", stored.HitAt, hitAt.Format(time.RFC3339Nano))
+	}
+}
+
 func claimJSON(t *testing.T, data redisModels.MobileChannelRedisData) string {
 	t.Helper()
 	raw, err := json.Marshal(data)
