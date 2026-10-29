@@ -241,12 +241,13 @@ func StoreDataInRedis(query string, db *gorm.DB, RDB *redis.Client, redisKey str
 	pipe := RDB.Pipeline()
 	// Execute the query and fetch the result
 	var result []string
-	utils.Info("Running dedupe query..")
+	// Hot-path dedupe success logging is intentionally disabled; Redis failures remain visible.
+	// utils.Info("Running dedupe query..")
 	err := db.Raw(query).Scan(&result).Error
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %v", err) // You might want to handle this differently
 	}
-	utils.Info("Dedupe query execution completed.")
+	// utils.Info("Dedupe query execution completed.")
 
 	// // Store the JSON data in Redis
 	ctx := context.Background()
@@ -257,7 +258,8 @@ func StoreDataInRedis(query string, db *gorm.DB, RDB *redis.Client, redisKey str
 		return fmt.Errorf("failed to store data in Redis: %v", err) // You might want to handle this differently
 	}
 
-	utils.Info(fmt.Sprintf("Data successfully stored in Redis under key '%s': ", redisKey))
+	// Hot-path Redis write success logging is intentionally disabled; failures remain visible.
+	// utils.Info(fmt.Sprintf("Data successfully stored in Redis under key '%s': ", redisKey))
 	return nil
 }
 
@@ -294,7 +296,8 @@ func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redi
 	ctx := context.Background()
 	val, err := rdb.HGet(ctx, CommIdempotentKey, redisKey).Result()
 	if err == redis.Nil {
-		utils.Info(fmt.Sprintf("[redis]: %s does not exist. Proceed for communication", redisKey))
+		// Hot-path Redis miss logging is intentionally disabled; Redis errors remain visible.
+		// utils.Info(fmt.Sprintf("[redis]: %s does not exist. Proceed for communication", redisKey))
 		return false, "", "", nil
 	}
 	if err != nil {
@@ -304,13 +307,14 @@ func GetMobileDataFromRedis(CommIdempotentKey string, redisKey string, rdb *redi
 	// Try to parse as JSON first (new format)
 	var data redisModels.MobileChannelRedisData
 	if err := json.Unmarshal([]byte(val), &data); err == nil {
-		utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s, ErrorMessage: %s", redisKey, data.TransactionId, data.ErrorMessage))
+		// Hot-path terminal-hit logging is intentionally disabled; aggregate outcomes remain.
+		// utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s, ErrorMessage: %s", redisKey, data.TransactionId, data.ErrorMessage))
 		return true, data.TransactionId, data.ErrorMessage, nil
 	}
 
 	// Fallback to old format (single string value)
 	// If it's not JSON, treat it as the old format where everything was stored as transactionId
-	utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s", redisKey, val))
+	// utils.Debug(fmt.Sprintf("[redis]: %s exists. TransactionId: %s", redisKey, val))
 	return true, val, "", nil
 }
 
@@ -327,7 +331,8 @@ func SetMobileChannelKey(RDB *redis.Client, commIdempotentKey, redisKey string) 
 		utils.Info(fmt.Sprintf("Key %s already exists in hash %s", redisKey, commIdempotentKey))
 		return fmt.Errorf("key %s already exists in redis", redisKey)
 	}
-	utils.Info(fmt.Sprintf("Key %s created in hash %s with blank value", redisKey, commIdempotentKey))
+	// Hot-path claim success logging is intentionally disabled; claim failures remain visible.
+	// utils.Info(fmt.Sprintf("Key %s created in hash %s with blank value", redisKey, commIdempotentKey))
 	return nil
 }
 
@@ -479,7 +484,8 @@ func UpdateMobileChannelValue(RDB *redis.Client, commIdempotentKey, redisKey, re
 		utils.Error(fmt.Errorf("failed to update value for key %s in redis: %v", redisKey, err))
 		return err
 	}
-	utils.Info(fmt.Sprintf("Key %s in hash %s updated with value %s", redisKey, commIdempotentKey, responseId))
+	// Hot-path terminal update logging is intentionally disabled; failures remain visible.
+	// utils.Info(fmt.Sprintf("Key %s in hash %s updated with value %s", redisKey, commIdempotentKey, responseId))
 	return nil
 }
 
@@ -496,6 +502,49 @@ func UpdateTransactionId(RDB *redis.Client, commIdempotentKey, redisKey, transac
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 	return RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err()
+}
+
+// SealTerminalResult extends the existing terminal JSON without changing the
+// hash key, field identity, or lifecycle. Legacy scalar values are decoded as
+// transactionId by getMobileChannelRedisData and become JSON on the first seal.
+func SealTerminalResult(RDB *redis.Client, commIdempotentKey, redisKey, transactionID, providerMessageID, outcome, errorMessage string, hitAt time.Time) error {
+	if hitAt.IsZero() {
+		return fmt.Errorf("terminal HitAt is required")
+	}
+
+	ctx := context.Background()
+	data, err := getMobileChannelRedisData(ctx, RDB, commIdempotentKey, redisKey)
+	if err != nil {
+		return err
+	}
+
+	data.TransactionId = strings.TrimSpace(transactionID)
+	data.ProviderMessageID = strings.TrimSpace(providerMessageID)
+	if data.ProviderMessageID == "" {
+		data.ProviderMessageID = data.TransactionId
+	}
+
+	data.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+	data.Outcome = strings.TrimSpace(outcome)
+	data.ErrorMessage = strings.TrimSpace(errorMessage)
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal terminal result: %w", err)
+	}
+
+	if err := RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err(); err != nil {
+		return fmt.Errorf("seal terminal result for %s: %w", redisKey, err)
+	}
+
+	return nil
+}
+
+// GetTerminalResult returns the backward-compatible terminal envelope used by
+// asynchronous persistence redelivery. A legacy scalar has no HitAt; the
+// persistence lane stamps it when it durably enqueues the database write.
+func GetTerminalResult(RDB *redis.Client, commIdempotentKey, redisKey string) (redisModels.MobileChannelRedisData, error) {
+	return getMobileChannelRedisData(context.Background(), RDB, commIdempotentKey, redisKey)
 }
 
 func UpdatePushTransactionID(RDB *redis.Client, commIdempotentKey, redisKey, claimID, transactionId string) error {
@@ -641,7 +690,8 @@ func UpdateErrorMessage(RDB *redis.Client, commIdempotentKey, redisKey, errorMes
 		utils.Error(fmt.Errorf("failed to update errorMessage for key %s in redis: %v", redisKey, err))
 		return err
 	}
-	utils.Info(fmt.Sprintf("Key %s in hash %s updated with errorMessage %s", redisKey, commIdempotentKey, errorMessage))
+	// Hot-path success logging is intentionally disabled; failures above remain visible.
+	// utils.Info(fmt.Sprintf("Key %s in hash %s updated with errorMessage %s", redisKey, commIdempotentKey, errorMessage))
 	return nil
 }
 

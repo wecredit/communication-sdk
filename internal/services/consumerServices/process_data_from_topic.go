@@ -29,6 +29,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/metrics"
 	"github.com/wecredit/communication-sdk/internal/models/awsModels"
+	"github.com/wecredit/communication-sdk/internal/persistence"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/internal/services/monitoring"
@@ -254,9 +255,17 @@ func ConsumerService(_ string) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	go handleShutdown(cancel)
+	if err := persistence.Start(ctx); err != nil {
+		// Async flags remain effectively off when writers cannot start; the
+		// synchronous persistence path continues unchanged.
+		utils.Error(fmt.Errorf("commwrite writers disabled: %v", err))
+	}
+	defer func() {
+		cancel()
+		persistence.Wait()
+	}()
 
 	queueURLs := ConsumerQueueURLs()
 	if len(queueURLs) == 0 {
@@ -652,7 +661,15 @@ func startClientWorker(ctx context.Context, poolKey string, handler *ClientRouti
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
 		}
+		startedAt := time.Now()
 		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		metrics.ValueByChannel(
+			"ClientWorkerHoldMilliseconds",
+			"Milliseconds",
+			strings.ToLower(strings.TrimSpace(msgWrapper.Payload.Client)),
+			strings.ToUpper(strings.TrimSpace(msgWrapper.Payload.Channel)),
+			float64(time.Since(startedAt).Milliseconds()),
+		)
 		// Note: Message deletion is handled inside processMessage and channel handlers
 		// Only delete here if processMessage explicitly indicates it should be deleted
 		// but wasn't already deleted (e.g., on fatal errors)
@@ -767,7 +784,8 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return false, deleted // Return false to indicate processing failed
 	}
 
-	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
+	// Hot-path per-message processing logging is intentionally disabled; failures and minute metrics remain.
+	// utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
 
 	// ZapCash single-hop: sdk.Send no longer claims Redis or writes *InputAuditTable.
 	// That claim runs on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through
@@ -1128,6 +1146,13 @@ type MarketingWhatsappDependencies struct {
 
 // handleMarketingWhatsapp handles marketing WhatsApp dispatch.
 func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
+	if marketingAsyncActive(data.Client, data.Channel) {
+		if err := persistence.CanAccept(ctx, data.Client, data.Channel); err != nil {
+			utils.Error(fmt.Errorf("marketing WhatsApp async persistence paused: %v", err))
+			return false, false
+		}
+	}
+
 	deps := MarketingWhatsappDependencies{
 		Claim:  claimOrSkipMarketingDispatch,
 		Assign: AssignVendor,
@@ -1141,6 +1166,22 @@ func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestB
 			return nil
 		},
 		WriteOutput: func(payload sdkModels.CommApiRequestBody, output map[string]interface{}) error {
+			if marketingAsyncActive(payload.Client, payload.Channel) {
+				persistErr := enqueueMarketingWhatsapp(ctx, payload, output)
+				if persistErr != nil {
+					return persistErr
+				}
+
+				// The MySQL audit remains best-effort/off-caller. Only the Marketing
+				// output gate moves to the durable stream.
+				database.InsertRow(
+					payload.Client,
+					config.Configs.WhatsappOutputTable,
+					MapMarketingWhatsappMysqlOutput(payload, output),
+				)
+				return nil
+			}
+
 			// Marketing SQL Server output still gates ACK. The MySQL audit insert is log-only.
 			_, marketingErr := RunParallelSMSPostSendWrites(
 				func() error {
@@ -1401,6 +1442,12 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	var deleted bool
 	var delErr error
 	marketing := isMarketingSMSDispatch(data)
+	if marketing && marketingAsyncActive(data.Client, data.Channel) {
+		if err := persistence.CanAccept(ctx, data.Client, data.Channel); err != nil {
+			utils.Error(fmt.Errorf("marketing SMS async persistence paused: %v", err))
+			return false, false
+		}
+	}
 
 	if marketing {
 		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingDispatch(data)
@@ -1414,6 +1461,20 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 			// Redis state is a redelivery and must repair both audit sinks before ACK.
 			if strings.TrimSpace(redisTxn) != "" || strings.TrimSpace(redisErr) != "" {
 				replayResult := sms.TerminalReplayResult(data, redisTxn, redisErr)
+				if marketingAsyncActive(data.Client, data.Channel) {
+					persistErr := enqueueMarketingSMS(ctx, data, replayResult.DBData)
+					if persistErr != nil {
+						utils.Error(fmt.Errorf("async marketing SMS replay persistence failed: %v", persistErr))
+						return false, false
+					}
+					database.InsertRow(data.Client, config.Configs.SmsOutputTable, replayResult.DBData)
+
+					deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+					if !deleted {
+						utils.Error(fmt.Errorf("failed to delete async replayed marketing SMS: %v", delErr))
+					}
+					return true, deleted
+				}
 				_, trackingErr := RunParallelSMSPostSendWrites(
 					func() error {
 						database.InsertRow(data.Client, config.Configs.SmsOutputTable, replayResult.DBData)
@@ -1436,8 +1497,20 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 
 		if campaignDuplicate {
-			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate,
-				"", campaignDuplicateError(data)); trackErr != nil {
+			duplicateError := campaignDuplicateError(data)
+			if updErr := channelHelper.UpdateRedisErrorMessage(data, duplicateError); updErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record campaign-duplicate SMS in Redis: %v", data.Client, data.EventId, updErr))
+				return false, false
+			}
+			if marketingAsyncActive(data.Client, data.Channel) {
+				persistErr := enqueueMarketingSMS(ctx, data, map[string]interface{}{
+					"Outcome": database.DispatchTrackingSkippedDuplicate, "ResponseMessage": duplicateError,
+				})
+				if persistErr != nil {
+					utils.Error(fmt.Errorf("async campaign-duplicate SMS persistence failed: %v", persistErr))
+					return false, false
+				}
+			} else if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingSkippedDuplicate, "", duplicateError); trackErr != nil {
 				return false, false
 			}
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
@@ -1452,11 +1525,18 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	if !AssignVendor(&data) {
 		if marketing {
-			if updErr := channelHelper.UpdateRedisErrorMessage(data, "requested vendor is not active"); updErr != nil {
+			const inactiveVendorError = "requested vendor is not active"
+			if updErr := channelHelper.UpdateRedisErrorMessage(data, inactiveVendorError); updErr != nil {
 				utils.Error(fmt.Errorf("[Client:%s EventId:%s] failed to record inactive vendor in redis: %v", data.Client, data.EventId, updErr))
 				return false, false
 			}
-			if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", "requested vendor is not active"); trackErr != nil {
+			if marketingAsyncActive(data.Client, data.Channel) {
+				persistErr := enqueueMarketingSMS(ctx, data, map[string]interface{}{"ResponseMessage": inactiveVendorError})
+				if persistErr != nil {
+					utils.Error(fmt.Errorf("async inactive-vendor SMS persistence failed: %v", persistErr))
+					return false, false
+				}
+			} else if trackErr := recordMarketingSMSTracking(data, database.DispatchTrackingFailed, "", inactiveVendorError); trackErr != nil {
 				return false, false
 			}
 		}
@@ -1475,7 +1555,13 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending SMS: %v", data.Client, data.CommId, err))
 		if marketing && result.AckSQS {
-			if trackErr := recordMarketingSMSTrackingFromSend(data, result, err); trackErr != nil {
+			if marketingAsyncActive(data.Client, data.Channel) {
+				if persistErr := enqueueMarketingSMS(ctx, data, result.DBData); persistErr != nil {
+					utils.Error(fmt.Errorf("async terminal SMS persistence failed: %v", persistErr))
+					return false, false
+				}
+				database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+			} else if trackErr := recordMarketingSMSTrackingFromSend(data, result, err); trackErr != nil {
 				return false, false
 			}
 		}
@@ -1515,6 +1601,21 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// Compliance failures stay terminal only after Marketing SQL Server tracking
 	// is stored. The MySQL audit insert is log-only and does not gate ACK.
 	if marketing && result.AckSQS && isWeCreditSMSComplianceFailure(result) {
+		if marketingAsyncActive(data.Client, data.Channel) {
+			persistErr := enqueueMarketingSMS(ctx, data, result.DBData)
+			if persistErr != nil {
+				utils.Error(fmt.Errorf("async compliance SMS persistence failed: %v", persistErr))
+				releaseMarketingDispatchClaims(data)
+				return false, false
+			}
+
+			database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete async compliance SMS: %v", delErr))
+			}
+			return true, deleted
+		}
 		_, trackingErr := RunParallelSMSPostSendWrites(
 			func() error {
 				database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
@@ -1545,19 +1646,29 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 
 	outputWritten := false
 	if marketing && result.AckSQS {
-		_, trackingErr := RunParallelSMSPostSendWrites(
-			func() error {
-				database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
-				return nil
-			},
-			func() error {
-				return recordMarketingSMSTrackingFromSend(data, result, nil)
-			},
-		)
-		outputWritten = true
-		if trackingErr != nil {
-			logSMSPostSendPersistenceFailure(data, nil, trackingErr)
-			return false, false
+		if marketingAsyncActive(data.Client, data.Channel) {
+			persistErr := enqueueMarketingSMS(ctx, data, result.DBData)
+			if persistErr != nil {
+				utils.Error(fmt.Errorf("async marketing SMS persistence failed: %v", persistErr))
+				return false, false
+			}
+			database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+			outputWritten = true
+		} else {
+			_, trackingErr := RunParallelSMSPostSendWrites(
+				func() error {
+					database.InsertRow(data.Client, config.Configs.SmsOutputTable, result.DBData)
+					return nil
+				},
+				func() error {
+					return recordMarketingSMSTrackingFromSend(data, result, nil)
+				},
+			)
+			outputWritten = true
+			if trackingErr != nil {
+				logSMSPostSendPersistenceFailure(data, nil, trackingErr)
+				return false, false
+			}
 		}
 	} else if marketing && !result.AckSQS {
 		releaseMarketingDispatchClaims(data)
@@ -1715,7 +1826,8 @@ func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg
 			ReceiptHandle: msg.ReceiptHandle,
 		})
 		if err == nil {
-			utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message successfully deleted from SQS on attempt %d", data.Client, data.CommId, i))
+			// Hot-path SQS delete success logging is intentionally disabled; delete failures remain visible.
+			// utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message successfully deleted from SQS on attempt %d", data.Client, data.CommId, i))
 			return true, nil
 		}
 
@@ -1744,7 +1856,8 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 	if requestedVendor != "" {
 		data.Vendor = requestedVendor
 		if channelHelper.IsVendorActive(data.Client, requestedVendor, data.Channel) {
-			utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+			// Hot-path vendor routing logging is intentionally disabled; routing failures remain visible.
+			// utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 			return true
 		}
 		utils.Error(fmt.Errorf("requested vendor is not active for client: %s, channel: %s, commId: %s", data.Client, data.Channel, data.CommId))
@@ -1759,7 +1872,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 		data.Vendor = variables.FCM
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
-		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+		// utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
 	return true
 }
@@ -2273,4 +2386,95 @@ func recordMarketingSMSTracking(data sdkModels.CommApiRequestBody, outcome, tran
 		return err
 	}
 	return nil
+}
+
+func marketingAsyncActive(client, channel string) bool {
+	return persistence.AsyncEnabled(client, channel) && persistence.WriterActive(client, channel)
+}
+
+func enqueueMarketingSMS(ctx context.Context, data sdkModels.CommApiRequestBody, output map[string]interface{}) error {
+	terminal, err := channelHelper.GetRedisTerminalResult(data)
+	if err != nil {
+		return fmt.Errorf("read sealed SMS terminal: %w", err)
+	}
+
+	record, err := persistence.MarketingSMSRecord(data, output, terminal)
+	if errors.Is(err, persistence.ErrMissingHitAt) {
+		hitAt := time.Now()
+		terminal.TransactionId = firstNonBlankPersistenceValue(terminal.TransactionId, fmt.Sprint(output["TransactionId"]))
+		terminal.ProviderMessageID = firstNonBlankPersistenceValue(terminal.ProviderMessageID, terminal.TransactionId)
+		terminal.Outcome = strings.TrimSpace(terminal.Outcome)
+		if terminal.Outcome == "" {
+			terminal.Outcome = strings.TrimSpace(fmt.Sprint(output["Outcome"]))
+		}
+
+		if terminal.Outcome == "" {
+			if terminal.TransactionId != "" {
+				terminal.Outcome = "submitted"
+			} else {
+				terminal.Outcome = "rejected"
+			}
+		}
+
+		terminal.ErrorMessage = firstNonBlankPersistenceValue(terminal.ErrorMessage, fmt.Sprint(output["ResponseMessage"]))
+		if sealErr := channelHelper.SealRedisTerminalResult(data, terminal.TransactionId, terminal.ProviderMessageID, terminal.Outcome, terminal.ErrorMessage, hitAt); sealErr != nil {
+			return fmt.Errorf("seal SMS terminal timestamp: %w", sealErr)
+		}
+
+		terminal.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+		record, err = persistence.MarketingSMSRecord(data, output, terminal)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	_, err = persistence.Enqueue(ctx, record)
+	return err
+}
+
+func enqueueMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, output map[string]interface{}) error {
+	terminal, err := channelHelper.GetRedisTerminalResult(data)
+	if err != nil {
+		return fmt.Errorf("read sealed WhatsApp terminal: %w", err)
+	}
+
+	record, err := persistence.MarketingWhatsappRecord(data, output, terminal)
+	if errors.Is(err, persistence.ErrMissingHitAt) {
+		hitAt := time.Now()
+		terminal.TransactionId = firstNonBlankPersistenceValue(terminal.TransactionId, fmt.Sprint(output["TransactionId"]))
+		terminal.ProviderMessageID = firstNonBlankPersistenceValue(terminal.ProviderMessageID, terminal.TransactionId)
+		if terminal.Outcome == "" {
+			if terminal.TransactionId != "" {
+				terminal.Outcome = "submitted"
+			} else {
+				terminal.Outcome = "rejected"
+			}
+		}
+
+		terminal.ErrorMessage = firstNonBlankPersistenceValue(terminal.ErrorMessage, fmt.Sprint(output["ResponseMessage"]))
+		if sealErr := channelHelper.SealRedisTerminalResult(data, terminal.TransactionId, terminal.ProviderMessageID, terminal.Outcome, terminal.ErrorMessage, hitAt); sealErr != nil {
+			return fmt.Errorf("seal WhatsApp terminal timestamp: %w", sealErr)
+		}
+
+		terminal.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+		record, err = persistence.MarketingWhatsappRecord(data, output, terminal)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	_, err = persistence.Enqueue(ctx, record)
+	return err
+}
+
+func firstNonBlankPersistenceValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" && value != "<nil>" {
+			return value
+		}
+	}
+
+	return ""
 }
