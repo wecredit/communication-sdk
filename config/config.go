@@ -241,6 +241,7 @@ func positiveConfigInt(raw string, fallback int) int64 {
 func applyRuntimeTuningFromAppConfig() error {
 	fallback := Configs
 	candidate := Configs
+	appConfigValues := make(map[string]string)
 	db := database.DBtechWrite
 	if db == nil {
 		db = database.DBtechRead
@@ -262,17 +263,11 @@ func applyRuntimeTuningFromAppConfig() error {
 		var rows []appConfigRow
 		keys := []string{
 			"PROVIDER_RPS_OVERRIDES",
-			"PROVIDER_RPS_APPROVED_CAPS",
-			"PROVIDER_RPS_DEFAULT",
-			"PROVIDER_RPS_TASK_SLOTS",
-			"CONSUMER_DEFAULT_CLIENT_WORKERS",
 			"CONSUMER_CLIENT_WORKER_OVERRIDES",
 			"CONSUMER_CHANNEL_WORKER_OVERRIDES",
-			"CONSUMER_CLIENT_BUFFER_SIZE",
-			"SMS_WORKERS",
-			"WHATSAPP_WORKERS",
-			"GOMAXPROCS",
 			"LOG_LEVEL",
+			"COMM_ASYNC_WRITE_CHANNELS",
+			"COMM_WRITE_STREAM_BUDGET_OVERRIDES",
 		}
 
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
@@ -293,37 +288,51 @@ func applyRuntimeTuningFromAppConfig() error {
 				}
 			}
 
+			appConfigValues = byKey
+			for _, key := range keys {
+				value, exists := byKey[key]
+				if !exists {
+					utils.Warn("runtime_tuning_missing key=" + key + " source=fallback")
+					continue
+				}
+				if strings.TrimSpace(value) != "" {
+					if envValue, envExists := os.LookupEnv(key); envExists && strings.TrimSpace(envValue) != "" {
+						utils.Warn("runtime_tuning_duplicate_source key=" + key + " winner=appconfig action=remove_env_from_task_definition")
+					}
+				}
+			}
+
 			ApplyAppConfigValues(&candidate, byKey)
 		}
 	}
 
 	if err := ratelimit.ValidateOverridesAgainstCaps(candidate.ProviderRPSOverrides, candidate.ProviderRPSApprovedCaps); err != nil {
-		utils.Error(fmt.Errorf("AppConfig provider RPS values invalid; keeping code/environment defaults: %w", err))
+		utils.Error(fmt.Errorf("runtime provider RPS values invalid; keeping code/environment defaults: %w", err))
 		candidate = fallback
 		if fallbackErr := validateProviderRPSConfig(fallback); fallbackErr != nil {
 			return fmt.Errorf("invalid fallback provider RPS configuration: %w", fallbackErr)
 		}
 	} else if err := validateProviderRPSDefault(candidate.ProviderRPSDefault); err != nil {
-		utils.Error(fmt.Errorf("AppConfig provider RPS default invalid; keeping code/environment defaults: %w", err))
+		utils.Error(fmt.Errorf("runtime provider RPS default invalid; keeping code/environment defaults: %w", err))
 		candidate = fallback
 		if fallbackErr := validateProviderRPSConfig(fallback); fallbackErr != nil {
 			return fmt.Errorf("invalid fallback provider RPS configuration: %w", fallbackErr)
 		}
 	}
 	if !validPositiveConfigInt(candidate.ProviderRPSTaskSlots) {
-		utils.Error(fmt.Errorf("AppConfig PROVIDER_RPS_TASK_SLOTS invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV PROVIDER_RPS_TASK_SLOTS invalid; keeping code/environment default"))
 		candidate.ProviderRPSTaskSlots = fallback.ProviderRPSTaskSlots
 	}
 	if !validPositiveConfigInt(candidate.ConsumerDefaultClientWorkers) {
-		utils.Error(fmt.Errorf("AppConfig CONSUMER_DEFAULT_CLIENT_WORKERS invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV CONSUMER_DEFAULT_CLIENT_WORKERS invalid; keeping code/environment default"))
 		candidate.ConsumerDefaultClientWorkers = fallback.ConsumerDefaultClientWorkers
 	}
 	if !validPositiveConfigInt(candidate.ConsumerClientBufferSize) {
-		utils.Error(fmt.Errorf("AppConfig CONSUMER_CLIENT_BUFFER_SIZE invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV CONSUMER_CLIENT_BUFFER_SIZE invalid; keeping code/environment default"))
 		candidate.ConsumerClientBufferSize = fallback.ConsumerClientBufferSize
 	}
 	if !validPositiveConfigInt(candidate.GoMaxProcs) {
-		utils.Error(fmt.Errorf("AppConfig GOMAXPROCS invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV GOMAXPROCS invalid; keeping code/environment default"))
 		candidate.GoMaxProcs = fallback.GoMaxProcs
 	}
 	if err := validateWorkerOverrides(candidate.ConsumerClientWorkerOverrides, false); err != nil {
@@ -335,19 +344,55 @@ func applyRuntimeTuningFromAppConfig() error {
 		candidate.ConsumerChannelWorkerOverrides = fallback.ConsumerChannelWorkerOverrides
 	}
 	if candidate.SMSWorkers != "" && !validPositiveConfigInt(candidate.SMSWorkers) {
-		utils.Error(fmt.Errorf("AppConfig SMS_WORKERS invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV SMS_WORKERS invalid; keeping code/environment default"))
 		candidate.SMSWorkers = fallback.SMSWorkers
 	}
 	if candidate.WhatsAppWorkers != "" && !validPositiveConfigInt(candidate.WhatsAppWorkers) {
-		utils.Error(fmt.Errorf("AppConfig WHATSAPP_WORKERS invalid; keeping code/environment default"))
+		utils.Error(fmt.Errorf("ENV WHATSAPP_WORKERS invalid; keeping code/environment default"))
 		candidate.WhatsAppWorkers = fallback.WhatsAppWorkers
 	}
 
+	if err := validateAsyncWriteChannels(candidate.CommAsyncWriteChannels); err != nil {
+		utils.Error(fmt.Errorf("AppConfig COMM_ASYNC_WRITE_CHANNELS invalid; keeping environment/default: %w", err))
+		candidate.CommAsyncWriteChannels = fallback.CommAsyncWriteChannels
+	}
+
+	if err := validateStreamBudgets(candidate.CommWriteStreamBudgetOverrides); err != nil {
+		utils.Error(fmt.Errorf("AppConfig COMM_WRITE_STREAM_BUDGET_OVERRIDES invalid; keeping environment/default: %w", err))
+		candidate.CommWriteStreamBudgetOverrides = fallback.CommWriteStreamBudgetOverrides
+	}
+
 	Configs = candidate
+	logResolvedRuntimeTuning(Configs, appConfigValues)
 	utils.SetLogLevel(Configs.LogLevel)
 	procs := positiveConfigInt(Configs.GoMaxProcs, 1)
 	runtime.GOMAXPROCS(int(procs))
 	return nil
+}
+
+func logResolvedRuntimeTuning(resolved models.Config, appValues map[string]string) {
+	source := func(key, value string) string {
+		if raw, ok := appValues[key]; ok && strings.TrimSpace(raw) != "" && value == strings.TrimSpace(raw) {
+			return "appconfig"
+		}
+		return "env_or_default"
+	}
+
+	utils.Info(fmt.Sprintf(
+		"runtime_tuning_resolved provider_overrides=%q[%s] provider_caps=%q[%s] provider_default=%s[%s] task_slots=%s[%s] default_workers=%s[%s] client_workers=%q[%s] channel_workers=%q[%s] buffer=%s[%s] gomaxprocs=%s[%s] log_level=%s[%s] async_writes=%q[%s] stream_budgets=%q[%s]",
+		resolved.ProviderRPSOverrides, source("PROVIDER_RPS_OVERRIDES", resolved.ProviderRPSOverrides),
+		resolved.ProviderRPSApprovedCaps, source("PROVIDER_RPS_APPROVED_CAPS", resolved.ProviderRPSApprovedCaps),
+		resolved.ProviderRPSDefault, source("PROVIDER_RPS_DEFAULT", resolved.ProviderRPSDefault),
+		resolved.ProviderRPSTaskSlots, source("PROVIDER_RPS_TASK_SLOTS", resolved.ProviderRPSTaskSlots),
+		resolved.ConsumerDefaultClientWorkers, source("CONSUMER_DEFAULT_CLIENT_WORKERS", resolved.ConsumerDefaultClientWorkers),
+		resolved.ConsumerClientWorkerOverrides, source("CONSUMER_CLIENT_WORKER_OVERRIDES", resolved.ConsumerClientWorkerOverrides),
+		resolved.ConsumerChannelWorkerOverrides, source("CONSUMER_CHANNEL_WORKER_OVERRIDES", resolved.ConsumerChannelWorkerOverrides),
+		resolved.ConsumerClientBufferSize, source("CONSUMER_CLIENT_BUFFER_SIZE", resolved.ConsumerClientBufferSize),
+		resolved.GoMaxProcs, source("GOMAXPROCS", resolved.GoMaxProcs),
+		resolved.LogLevel, source("LOG_LEVEL", resolved.LogLevel),
+		resolved.CommAsyncWriteChannels, source("COMM_ASYNC_WRITE_CHANNELS", resolved.CommAsyncWriteChannels),
+		resolved.CommWriteStreamBudgetOverrides, source("COMM_WRITE_STREAM_BUDGET_OVERRIDES", resolved.CommWriteStreamBudgetOverrides),
+	))
 }
 
 // ApplyAppConfigValues overlays nonblank central tuning values onto a config.
@@ -361,17 +406,11 @@ func ApplyAppConfigValues(candidate *models.Config, values map[string]string) {
 		}
 	}
 	apply("PROVIDER_RPS_OVERRIDES", &candidate.ProviderRPSOverrides)
-	apply("PROVIDER_RPS_APPROVED_CAPS", &candidate.ProviderRPSApprovedCaps)
-	apply("PROVIDER_RPS_DEFAULT", &candidate.ProviderRPSDefault)
-	apply("PROVIDER_RPS_TASK_SLOTS", &candidate.ProviderRPSTaskSlots)
-	apply("CONSUMER_DEFAULT_CLIENT_WORKERS", &candidate.ConsumerDefaultClientWorkers)
 	apply("CONSUMER_CLIENT_WORKER_OVERRIDES", &candidate.ConsumerClientWorkerOverrides)
 	apply("CONSUMER_CHANNEL_WORKER_OVERRIDES", &candidate.ConsumerChannelWorkerOverrides)
-	apply("CONSUMER_CLIENT_BUFFER_SIZE", &candidate.ConsumerClientBufferSize)
-	apply("SMS_WORKERS", &candidate.SMSWorkers)
-	apply("WHATSAPP_WORKERS", &candidate.WhatsAppWorkers)
-	apply("GOMAXPROCS", &candidate.GoMaxProcs)
 	apply("LOG_LEVEL", &candidate.LogLevel)
+	apply("COMM_ASYNC_WRITE_CHANNELS", &candidate.CommAsyncWriteChannels)
+	apply("COMM_WRITE_STREAM_BUDGET_OVERRIDES", &candidate.CommWriteStreamBudgetOverrides)
 }
 
 func validPositiveConfigInt(raw string) bool {
@@ -393,6 +432,36 @@ func validateWorkerOverrides(raw string, channelScoped bool) error {
 			return fmt.Errorf("invalid worker override %q", entry)
 		}
 	}
+	return nil
+}
+
+func validateAsyncWriteChannels(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return fmt.Errorf("invalid async-write channel %q", entry)
+		}
+	}
+
+	return nil
+}
+
+func validateStreamBudgets(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || !validPositiveConfigInt(parts[2]) {
+			return fmt.Errorf("invalid stream budget %q", entry)
+		}
+	}
+
 	return nil
 }
 
