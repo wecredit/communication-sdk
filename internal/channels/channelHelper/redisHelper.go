@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/utils"
@@ -187,6 +189,27 @@ func UpdateRedisTransactionId(msg sdkModels.CommApiRequestBody, transactionId st
 		return err
 	}
 	return nil
+}
+
+// SealRedisTerminalResult records the provider-attempt timestamp and provider
+// identity in the existing idempotency field. It does not alter key lifetime.
+func SealRedisTerminalResult(msg sdkModels.CommApiRequestBody, transactionID, providerMessageID, outcome, errorMessage string, hitAt time.Time) error {
+	redisKey := GenerateRedisKeyForRequest(msg)
+	err := redis.SealTerminalResult(redis.RDB, config.Configs.CommIdempotentKey, redisKey, transactionID, providerMessageID, outcome, errorMessage, hitAt)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis terminal seal for redisKey %s failed: %v", redisKey, err))
+		return err
+	}
+
+	return nil
+}
+
+// GetRedisTerminalResult reads the existing terminal envelope. Legacy scalar
+// values are returned without HitAt so the persistence lane can stamp the same
+// completion time the previous synchronous insert would have used.
+func GetRedisTerminalResult(msg sdkModels.CommApiRequestBody) (redisModels.MobileChannelRedisData, error) {
+	redisKey := GenerateRedisKeyForRequest(msg)
+	return redis.GetTerminalResult(redis.RDB, config.Configs.CommIdempotentKey, redisKey)
 }
 
 // UpdateRedisErrorMessage updates the errorMessage in Redis with standardized error handling.

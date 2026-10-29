@@ -220,6 +220,12 @@ type Config struct {
 	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"200"`
 	GoMaxProcs                     string `envconfig:"GOMAXPROCS" default:"1"`
 	LogLevel                       string `envconfig:"LOG_LEVEL" default:"info"`
+	// CommAsyncWriteChannels is the only async persistence control. Entries use
+	// client:channel, for example wecredit:sms,wecredit:whatsapp. Blank is off.
+	CommAsyncWriteChannels string `envconfig:"COMM_ASYNC_WRITE_CHANNELS"`
+	// CommWriteStreamBudgetOverrides supplies the verified maximum stream-entry
+	// budget per client/channel. Async enablement requires a positive budget.
+	CommWriteStreamBudgetOverrides string `envconfig:"COMM_WRITE_STREAM_BUDGET_OVERRIDES"`
 	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
 	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
 

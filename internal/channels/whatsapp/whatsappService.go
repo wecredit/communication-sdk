@@ -67,7 +67,8 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 		requestBody.DynamicMobile = msg.Mobile
 	}
 
-	utils.Debug("Fetching WHATSAPP process data from cache")
+	// Hot-path cache lookup logging is intentionally disabled; cache failures remain visible.
+	// utils.Debug("Fetching WHATSAPP process data from cache")
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
 		utils.Error(fmt.Errorf("template data not found in cache"))
@@ -95,10 +96,13 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
-	utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
+	// Hot-path per-message routing logging is intentionally disabled; aggregate outcomes remain.
+	// utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
 
+	var hitAt time.Time
 	if shouldHitVendor {
-		started := time.Now()
+		hitAt = time.Now()
+		started := hitAt
 		switch msg.Vendor {
 		case variables.TIMES:
 			response = timesWhatsapp.HitTimesWhatsappApi(requestBody)
@@ -118,8 +122,17 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	// delete message then insert in the database.
 
 	// Step 2: Once you have responseId, update the value of transactionId in redis
-	if err := channelHelper.UpdateRedisTransactionId(msg, response.TransactionId); err != nil {
-		utils.Error(fmt.Errorf("failed to update Redis transactionId: %v", err))
+	var terminalSealErr error
+	if !hitAt.IsZero() {
+		outcome := "rejected"
+		if response.IsSent {
+			outcome = "submitted"
+		}
+
+		if err := channelHelper.SealRedisTerminalResult(msg, response.TransactionId, response.TransactionId, outcome, response.ResponseMessage, hitAt); err != nil {
+			utils.Error(fmt.Errorf("failed to seal Redis WhatsApp terminal result: %v", err))
+			terminalSealErr = err
+		}
 	}
 
 	response.CommId = msg.CommId
@@ -135,7 +148,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	if dbMappedData == nil {
 		dbMappedData = map[string]interface{}{}
 	}
-
 	// Persist the AppId actually used for send (TemplateDetails, else request overlay).
 	if appID := strings.TrimSpace(requestBody.AppId); appID != "" {
 		dbMappedData["AppId"] = appID
@@ -152,9 +164,14 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	}
 
 	if shouldHitVendor && response.IsSent {
-		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		// Hot-path success logging is intentionally disabled; aggregate vendor metrics remain.
+		// utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
 		if msg.Client == variables.CreditSea {
 			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
+		}
+
+		if terminalSealErr != nil {
+			return result, fmt.Errorf("seal WhatsApp terminal result: %w", terminalSealErr)
 		}
 		return result, nil
 	}
@@ -168,6 +185,10 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	}
 
 	utils.Info(fmt.Sprintf("WhatsApp not sent for Process: %s on %s through %s as shouldHitVendor is false or response.IsSent is false", msg.ProcessName, msg.Mobile, msg.Vendor))
+	if terminalSealErr != nil {
+		return result, fmt.Errorf("seal WhatsApp terminal result: %w", terminalSealErr)
+	}
+
 	return result, nil // terminal, but not provider-accepted
 
 	// if err := database.InsertData(config.Configs.WhatsappOutputTable, database.DBtech, dbMappedData); err != nil {
