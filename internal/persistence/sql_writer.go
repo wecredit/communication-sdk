@@ -13,10 +13,18 @@ import (
 
 const sqlStatementTimeout = 30 * time.Second
 
+const (
+	smsBatchLimit           = 140
+	whatsappBatchLimit      = 70
+	smsColumnCount          = 13
+	whatsappColumnCount     = 21
+	sqlServerParameterLimit = 2100
+)
+
 var safeTableName = regexp.MustCompile(`^[A-Za-z0-9_\.\[\]]+$`)
 var marketingLocation = time.FixedZone("IST", 5*60*60+30*60)
 
-func writeRecords(db *gorm.DB, records []Record) error {
+func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -26,9 +34,9 @@ func writeRecords(db *gorm.DB, records []Record) error {
 	deduped := dedupeRecords(records)
 	switch deduped[0].Mapper {
 	case MapperMarketingSMS:
-		return writeMarketingSMS(db, deduped)
+		return writeMarketingSMS(ctx, db, deduped)
 	case MapperMarketingWhatsapp:
-		return writeMarketingWhatsapp(db, deduped)
+		return writeMarketingWhatsapp(ctx, db, deduped)
 	default:
 		return fmt.Errorf("unsupported persistence mapper %q", deduped[0].Mapper)
 	}
@@ -51,17 +59,16 @@ func dedupeRecords(records []Record) []Record {
 	return result
 }
 
-func writeMarketingSMS(db *gorm.DB, records []Record) error {
+func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error {
 	table, err := approvedTable(config.Configs.CommDispatchTrackingTable)
 	if err != nil {
 		return err
 	}
-	const columns = 13
-	if len(records)*columns > 2100 {
+	if len(records) > smsBatchLimit || len(records)*smsColumnCount > sqlServerParameterLimit {
 		return fmt.Errorf("SMS persistence batch exceeds SQL Server parameter limit")
 	}
 	rows := make([]string, 0, len(records))
-	args := make([]interface{}, 0, len(records)*columns)
+	args := make([]interface{}, 0, len(records)*smsColumnCount)
 	for _, record := range records {
 		if record.Mapper != MapperMarketingSMS || record.SourceRowID < 1 || record.Source == "" || record.HitAt.IsZero() {
 			return fmt.Errorf("invalid SMS persistence record")
@@ -84,20 +91,19 @@ WHERE NOT EXISTS (
       AND existing.SourceRowId = v.SourceRowId
       AND existing.Channel = v.Channel
 )`, table, strings.Join(rows, ","), table)
-	return executeBatch(db, query, args)
+	return executeBatch(ctx, db, query, args)
 }
 
-func writeMarketingWhatsapp(db *gorm.DB, records []Record) error {
+func writeMarketingWhatsapp(ctx context.Context, db *gorm.DB, records []Record) error {
 	table, err := approvedTable(config.Configs.CommWhatsappMarketingOutputTable)
 	if err != nil {
 		return err
 	}
-	const columns = 21
-	if len(records)*columns > 2100 {
+	if len(records) > whatsappBatchLimit || len(records)*whatsappColumnCount > sqlServerParameterLimit {
 		return fmt.Errorf("WhatsApp persistence batch exceeds SQL Server parameter limit")
 	}
 	rows := make([]string, 0, len(records))
-	args := make([]interface{}, 0, len(records)*columns)
+	args := make([]interface{}, 0, len(records)*whatsappColumnCount)
 	for _, record := range records {
 		if record.Mapper != MapperMarketingWhatsapp || record.SourceRowID < 1 || record.HitAt.IsZero() {
 			return fmt.Errorf("invalid WhatsApp persistence record")
@@ -119,15 +125,31 @@ FROM (VALUES %s) AS v(SourceRowId, EventId, CommId, Mobile, Vendor, Process, Cli
 WHERE NOT EXISTS (
     SELECT 1 FROM %s AS existing WHERE existing.SourceRowId = v.SourceRowId
 )`, table, strings.Join(rows, ","), table)
-	return executeBatch(db, query, args)
+	return executeBatch(ctx, db, query, args)
 }
 
-func executeBatch(db *gorm.DB, query string, args []interface{}) error {
-	ctx, cancel := context.WithTimeout(context.Background(), sqlStatementTimeout)
+func executeBatch(parent context.Context, db *gorm.DB, query string, args []interface{}) error {
+	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
 	defer cancel()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return tx.Exec(query, args...).Error
 	})
+}
+
+// BatchLimit exposes the stable per-mapper read/write ceiling for startup and
+// black-box tests. It does not alter the Redis record contract.
+func BatchLimit(mapper string) int64 {
+	if mapper == MapperMarketingSMS {
+		return smsBatchLimit
+	}
+	return whatsappBatchLimit
+}
+
+func BatchParameterCount(mapper string) int {
+	if mapper == MapperMarketingSMS {
+		return smsBatchLimit * smsColumnCount
+	}
+	return whatsappBatchLimit * whatsappColumnCount
 }
 
 func approvedTable(table string) (string, error) {

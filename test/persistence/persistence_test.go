@@ -32,6 +32,38 @@ type fakeRedisSafetyClient struct {
 	configCalls int
 }
 
+type fakeBusinessLockRedis struct {
+	mu     sync.Mutex
+	owners map[string]string
+}
+
+func (f *fakeBusinessLockRedis) SetNX(_ context.Context, key string, value interface{}, _ time.Duration) *redislib.BoolCmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.owners == nil {
+		f.owners = make(map[string]string)
+	}
+	if _, exists := f.owners[key]; exists {
+		return redislib.NewBoolResult(false, nil)
+	}
+	f.owners[key] = fmt.Sprint(value)
+	return redislib.NewBoolResult(true, nil)
+}
+
+func (f *fakeBusinessLockRedis) Eval(_ context.Context, script string, keys []string, args ...interface{}) *redislib.Cmd {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := keys[0]
+	token := fmt.Sprint(args[0])
+	if f.owners[key] != token {
+		return redislib.NewCmdResult(int64(0), nil)
+	}
+	if strings.Contains(script, "DEL") {
+		delete(f.owners, key)
+	}
+	return redislib.NewCmdResult(int64(1), nil)
+}
+
 func (f *fakeRedisSafetyClient) Info(context.Context, ...string) *redislib.StringCmd {
 	return redislib.NewStringResult(f.info, f.infoErr)
 }
@@ -273,6 +305,154 @@ func TestStreamAndPoisonKeysShareRedisClusterSlot(t *testing.T) {
 	}
 	if poison != "commwrite:{wecredit:sms}:poison" {
 		t.Fatalf("poison key = %q", poison)
+	}
+}
+
+func TestWaitForCapacityPausesUntilResumeThreshold(t *testing.T) {
+	old := config.Configs
+	t.Cleanup(func() { config.Configs = old })
+	config.Configs.CommWriteStreamBudgetOverrides = "wecredit:sms:100"
+	fake := &fakeProducerRedis{length: 80, xaddID: "1-0"}
+	producer := persistence.NewProducer(fake)
+	restore := persistence.SetAdmissionVerifyIntervalForTest(10 * time.Millisecond)
+	t.Cleanup(restore)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- producer.WaitForCapacity(ctx, "wecredit", "sms") }()
+	select {
+	case err := <-done:
+		t.Fatalf("paused admission returned early: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	fake.mu.Lock()
+	fake.length = 60
+	fake.mu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+}
+
+func TestWaitForCapacityHonorsCancellation(t *testing.T) {
+	old := config.Configs
+	t.Cleanup(func() { config.Configs = old })
+	config.Configs.CommWriteStreamBudgetOverrides = "wecredit:sms:100"
+	producer := persistence.NewProducer(&fakeProducerRedis{length: 80})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := producer.WaitForCapacity(ctx, "wecredit", "sms"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context cancellation", err)
+	}
+}
+
+func TestBatchLimitsStayBelowSQLServerParameterLimit(t *testing.T) {
+	if got := persistence.BatchLimit(persistence.MapperMarketingSMS); got != 140 {
+		t.Fatalf("SMS batch = %d, want 140", got)
+	}
+	if got := persistence.BatchParameterCount(persistence.MapperMarketingSMS); got != 1820 || got > 2100 {
+		t.Fatalf("SMS parameters = %d, want 1820 and <=2100", got)
+	}
+	if got := persistence.BatchLimit(persistence.MapperMarketingWhatsapp); got != 70 {
+		t.Fatalf("WhatsApp batch = %d, want 70", got)
+	}
+	if got := persistence.BatchParameterCount(persistence.MapperMarketingWhatsapp); got != 1470 || got > 2100 {
+		t.Fatalf("WhatsApp parameters = %d, want 1470 and <=2100", got)
+	}
+}
+
+func TestBusinessLockKeysUseLaneAndNonPIIIdentity(t *testing.T) {
+	whatsapp := persistence.BusinessLockKeyForTest("wecredit:whatsapp", persistence.Record{
+		Mapper: persistence.MapperMarketingWhatsapp, SourceRowID: 42,
+	})
+	if whatsapp != "commwrite:lock:{wecredit:whatsapp}:42" {
+		t.Fatalf("WhatsApp lock key = %q", whatsapp)
+	}
+	sms := persistence.BusinessLockKeyForTest("wecredit:sms", persistence.Record{
+		Mapper: persistence.MapperMarketingSMS, Source: "secret-source", SourceRowID: 42, Channel: "SMS",
+	})
+	if !strings.HasPrefix(sms, "commwrite:lock:{wecredit:sms}:") || strings.Contains(sms, "secret-source") || strings.Contains(sms, ":42") {
+		t.Fatalf("SMS lock key exposed identity: %q", sms)
+	}
+}
+
+func TestBusinessLockOwnershipProtectsRenewAndRelease(t *testing.T) {
+	client := &fakeBusinessLockRedis{}
+	ctx := context.Background()
+	if ok, err := persistence.AcquireBusinessLockForTest(ctx, client, "key", "owner-a"); err != nil || !ok {
+		t.Fatalf("acquire owner-a ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.AcquireBusinessLockForTest(ctx, client, "key", "owner-b"); err != nil || ok {
+		t.Fatalf("duplicate acquire ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.RenewBusinessLockForTest(ctx, client, "key", "owner-b"); err != nil || ok {
+		t.Fatalf("wrong-token renew ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.ReleaseBusinessLockForTest(ctx, client, "key", "owner-b"); err != nil || ok {
+		t.Fatalf("wrong-token release ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.RenewBusinessLockForTest(ctx, client, "key", "owner-a"); err != nil || !ok {
+		t.Fatalf("owner renew ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.ReleaseBusinessLockForTest(ctx, client, "key", "owner-a"); err != nil || !ok {
+		t.Fatalf("owner release ok=%t err=%v", ok, err)
+	}
+	if ok, err := persistence.AcquireBusinessLockForTest(ctx, client, "key", "owner-b"); err != nil || !ok {
+		t.Fatalf("reacquire after release ok=%t err=%v", ok, err)
+	}
+}
+
+func TestBusinessLocksAllowDifferentIdentitiesConcurrently(t *testing.T) {
+	client := &fakeBusinessLockRedis{}
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	results := make(chan bool, 2)
+	for _, key := range []string{"key-a", "key-b"} {
+		wg.Add(1)
+		go func(lockKey string) {
+			defer wg.Done()
+			ok, _ := persistence.AcquireBusinessLockForTest(ctx, client, lockKey, lockKey+"-owner")
+			results <- ok
+		}(key)
+	}
+	wg.Wait()
+	close(results)
+	for ok := range results {
+		if !ok {
+			t.Fatal("distinct identities should acquire concurrently")
+		}
+	}
+}
+
+func TestAutoClaimContinuesAcrossEmptyCursorPage(t *testing.T) {
+	if !persistence.ContinueAutoClaimForTest("0-0", "123-0", false) {
+		t.Fatal("XAUTOCLAIM must continue when Redis advances an empty page cursor")
+	}
+	if persistence.ContinueAutoClaimForTest("123-0", "0-0", false) {
+		t.Fatal("XAUTOCLAIM must stop only at the terminal cursor")
+	}
+	if persistence.ContinueAutoClaimForTest("123-0", "123-0", false) {
+		t.Fatal("XAUTOCLAIM must stop a non-advancing cursor")
+	}
+}
+
+func TestTransientSQLWriteRetriesImmediatelyWithBoundedAttempts(t *testing.T) {
+	var calls int
+	restore := persistence.SetWriteRecordsAttemptForTest(func(context.Context, []persistence.Record) error {
+		calls++
+		if calls < 3 {
+			return errors.New("deadlock victim")
+		}
+		return nil
+	}, time.Millisecond)
+	t.Cleanup(restore)
+
+	err := persistence.WriteRecordsWithRetryForTest(context.Background(), "wecredit:sms", []persistence.Record{{Mapper: persistence.MapperMarketingSMS}})
+	if err != nil {
+		t.Fatalf("retry did not recover: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("write attempts = %d, want 3", calls)
 	}
 }
 

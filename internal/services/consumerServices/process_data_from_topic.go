@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
 	"reflect"
@@ -45,6 +46,138 @@ type MessageWrapper struct {
 	Payload                sdkModels.CommApiRequestBody
 	QueueURL               string
 	RedriveMaxReceiveCount int
+	Visibility             *visibilityGuard
+}
+
+const receiveVisibilitySeconds = int64(300)
+
+var (
+	visibilityRenewEvery    = 120 * time.Second
+	visibilityRenewJitter   = 15 * time.Second
+	changeMessageVisibility = func(ctx context.Context, client *sqs.SQS, input *sqs.ChangeMessageVisibilityInput) error {
+		_, err := client.ChangeMessageVisibilityWithContext(ctx, input)
+		return err
+	}
+	receiveMessages = func(ctx context.Context, client *sqs.SQS, input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		return client.ReceiveMessageWithContext(ctx, input)
+	}
+)
+
+func SetVisibilityHeartbeatForTest(interval, jitter time.Duration, hook func(context.Context, *sqs.SQS, *sqs.ChangeMessageVisibilityInput) error) func() {
+	previousInterval := visibilityRenewEvery
+	previousJitter := visibilityRenewJitter
+	previousHook := changeMessageVisibility
+	visibilityRenewEvery = interval
+	visibilityRenewJitter = jitter
+	changeMessageVisibility = hook
+	return func() {
+		visibilityRenewEvery = previousInterval
+		visibilityRenewJitter = previousJitter
+		changeMessageVisibility = previousHook
+	}
+}
+
+func StartVisibilityGuardForTest(ctx context.Context, queueURL string, message *sqs.Message, lane string) func() {
+	guard := startVisibilityGuard(ctx, nil, queueURL, message, lane)
+	return guard.Stop
+}
+
+func StartVisibilityGuardControlsForTest(ctx context.Context, queueURL string, message *sqs.Message, lane string) (func(), func()) {
+	guard := startVisibilityGuard(ctx, nil, queueURL, message, lane)
+	return guard.Stop, guard.Release
+}
+
+func MessageWrapperWithVisibilityForTest(ctx context.Context, queueURL string, message *sqs.Message, lane string) MessageWrapper {
+	return MessageWrapper{Message: message, QueueURL: queueURL, Visibility: startVisibilityGuard(ctx, nil, queueURL, message, lane)}
+}
+
+func SetReceiveMessagesForTest(hook func(context.Context, *sqs.SQS, *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error)) func() {
+	previous := receiveMessages
+	receiveMessages = hook
+	return func() { receiveMessages = previous }
+}
+
+type visibilityGuard struct {
+	cancel   context.CancelFunc
+	done     chan struct{}
+	once     sync.Once
+	client   *sqs.SQS
+	queueURL string
+	message  *sqs.Message
+	lane     string
+}
+
+func startVisibilityGuard(_ context.Context, client *sqs.SQS, queueURL string, message *sqs.Message, lane string) *visibilityGuard {
+	// The heartbeat deliberately outlives the service context. Shutdown drains
+	// buffered messages with Release, while a provider call already in progress
+	// keeps its visibility until the worker finishes or panics.
+	ctx, cancel := context.WithCancel(context.Background())
+	guard := &visibilityGuard{
+		cancel: cancel, done: make(chan struct{}), client: client,
+		queueURL: queueURL, message: message, lane: lane,
+	}
+	go func() {
+		defer close(guard.done)
+		for {
+			interval := visibilityRenewEvery
+			if visibilityRenewJitter > 0 {
+				interval += time.Duration(rand.Int63n(int64(visibilityRenewJitter)*2+1)) - visibilityRenewJitter
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			case <-timer.C:
+			}
+			err := changeMessageVisibility(ctx, client, &sqs.ChangeMessageVisibilityInput{
+				QueueUrl: aws.String(queueURL), ReceiptHandle: message.ReceiptHandle,
+				VisibilityTimeout: aws.Int64(receiveVisibilitySeconds),
+			})
+			if err != nil {
+				metrics.CountByReason("CommWriteVisibilityExtension", lane, "failed", 1)
+				continue
+			}
+			metrics.CountByReason("CommWriteVisibilityExtension", lane, "extended", 1)
+		}
+	}()
+	return guard
+}
+
+func (g *visibilityGuard) Stop() {
+	if g == nil {
+		return
+	}
+	g.once.Do(func() {
+		g.cancel()
+		<-g.done
+	})
+}
+
+// Release abandons an unacknowledged message and makes it immediately visible.
+// It is used for buffered shutdown work and panic recovery; normal completion
+// uses Stop because the handler has already deleted or intentionally retained it.
+func (g *visibilityGuard) Release() {
+	if g == nil {
+		return
+	}
+	g.once.Do(func() {
+		g.cancel()
+		<-g.done
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := changeMessageVisibility(ctx, g.client, &sqs.ChangeMessageVisibilityInput{
+			QueueUrl: aws.String(g.queueURL), ReceiptHandle: g.message.ReceiptHandle,
+			VisibilityTimeout: aws.Int64(0),
+		})
+		if err != nil {
+			metrics.CountByReason("CommWriteVisibilityRelease", g.lane, "failed", 1)
+			return
+		}
+		metrics.CountByReason("CommWriteVisibilityRelease", g.lane, "released", 1)
+	})
 }
 
 type sqsQueueAttributesAPI interface {
@@ -297,45 +430,88 @@ func ConsumerService(_ string) {
 }
 
 func pollCommunicationQueue(ctx context.Context, queueURL string, redriveMaxReceiveCount int) {
+	admissionClient, admissionChannel := queuePersistenceLane(queueURL)
+	lane := strings.Trim(strings.ToLower(admissionClient+":"+admissionChannel), ":")
+	if lane == "" {
+		lane = "unclassified"
+	}
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			result, err := queue.SQSClient.ReceiveMessage(&sqs.ReceiveMessageInput{
-				QueueUrl:            aws.String(queueURL),
-				MaxNumberOfMessages: aws.Int64(10),
-				WaitTimeSeconds:     aws.Int64(10),
-				VisibilityTimeout:   aws.Int64(300),
-				AttributeNames:      []*string{aws.String("ApproximateReceiveCount"), aws.String("SentTimestamp")},
-			})
-			if err != nil {
-				utils.Error(fmt.Errorf("error receiving messages from %s: %v", queueURL, err))
-				continue
+		if admissionClient != "" && marketingAsyncActive(admissionClient, admissionChannel) {
+			if err := persistence.WaitForCapacity(ctx, admissionClient, admissionChannel); err != nil {
+				return
 			}
+		}
 
-			if len(result.Messages) == 0 {
-				continue
+		result, err := receiveMessages(ctx, queue.SQSClient, &sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(queueURL),
+			MaxNumberOfMessages: aws.Int64(10),
+			WaitTimeSeconds:     aws.Int64(10),
+			VisibilityTimeout:   aws.Int64(receiveVisibilitySeconds),
+			AttributeNames:      []*string{aws.String("ApproximateReceiveCount"), aws.String("SentTimestamp")},
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
 			}
+			utils.Error(fmt.Errorf("error receiving messages from %s: %v", queueURL, err))
+			continue
+		}
 
-			utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
+		if len(result.Messages) == 0 {
+			continue
+		}
 
-			for _, msg := range result.Messages {
-				routeMessageToClient(ctx, msg, queueURL, redriveMaxReceiveCount)
+		utils.Debug(fmt.Sprintf("[Consumer] Received %d messages from queue %s", len(result.Messages), queueURL))
+		guards := make([]*visibilityGuard, len(result.Messages))
+		for index, msg := range result.Messages {
+			guards[index] = startVisibilityGuard(ctx, queue.SQSClient, queueURL, msg, lane)
+		}
+
+		if admissionClient != "" && marketingAsyncActive(admissionClient, admissionChannel) {
+			if err := persistence.WaitForCapacity(ctx, admissionClient, admissionChannel); err != nil {
+				for _, guard := range guards {
+					guard.Release()
+				}
+				return
 			}
+		}
+
+		for index, msg := range result.Messages {
+			routeMessageToClient(ctx, msg, queueURL, redriveMaxReceiveCount, guards[index])
 		}
 	}
 }
 
-func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string, redriveMaxReceiveCount int) {
+func PollCommunicationQueueForTest(ctx context.Context, queueURL string) {
+	pollCommunicationQueue(ctx, queueURL, 0)
+}
+
+func queuePersistenceLane(queueURL string) (string, string) {
+	queueURL = strings.TrimSpace(queueURL)
+	if queueURL != "" && queueURL == strings.TrimSpace(config.Configs.AwsWeCreditSmsQueueUrl) {
+		return "wecredit", "sms"
+	}
+	if queueURL != "" && queueURL == strings.TrimSpace(config.Configs.AwsWeCreditWhatsappQueueUrl) {
+		return "wecredit", "whatsapp"
+	}
+	return "", ""
+}
+
+func QueuePersistenceLaneForTest(queueURL string) (string, string) {
+	return queuePersistenceLane(queueURL)
+}
+
+func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string, redriveMaxReceiveCount int, guard *visibilityGuard) {
 	defer func() {
 		if r := recover(); r != nil {
+			guard.Release()
 			utils.Error(fmt.Errorf("panic recovered in routeMessageToClient: %v", r))
 		}
 	}()
 
 	data, err := parseSQSCommPayload(*msg.Body)
 	if err != nil {
+		guard.Stop()
 		utils.Error(fmt.Errorf("failed to parse SQS message body: %v", err))
 		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, sdkModels.CommApiRequestBody{}); delErr != nil {
 			utils.Error(fmt.Errorf("failed to delete unparseable SQS message: %v", delErr))
@@ -345,6 +521,7 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 
 	client := strings.ToLower(data.Client)
 	if client == "" {
+		guard.Stop()
 		utils.Warn("Empty client found in payload. Skipping.")
 		if _, delErr := deleteMessage(ctx, queue.SQSClient, queueURL, msg, data); delErr != nil {
 			utils.Error(fmt.Errorf("failed to delete SQS message with empty client: %v", delErr))
@@ -379,12 +556,15 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 	handler.BufferFor(data.Channel, channelBufferCapacity(data.Channel, bufferSize))
 	clientMux.Unlock()
 
-	handler.Enqueue(ctx, data.Channel, MessageWrapper{
+	if !handler.Enqueue(ctx, data.Channel, MessageWrapper{
 		Message:                msg,
 		Payload:                data,
 		QueueURL:               queueURL,
 		RedriveMaxReceiveCount: redriveMaxReceiveCount,
-	})
+		Visibility:             guard,
+	}) {
+		guard.Release()
+	}
 }
 
 // parseSQSCommPayload accepts SNS→SQS envelopes (legacy) or raw CommApiRequestBody JSON (SQS-direct).
@@ -577,7 +757,7 @@ func (handler *ClientRoutine) wakeWaiters() {
 	handler.wake = make(chan struct{})
 }
 
-func (handler *ClientRoutine) Enqueue(ctx context.Context, channel string, message MessageWrapper) {
+func (handler *ClientRoutine) Enqueue(ctx context.Context, channel string, message MessageWrapper) bool {
 	// Keep the potentially blocking send out of clientMux. A full SMS buffer
 	// must not block WhatsApp handler lookup or buffer creation.
 	handler.buffersMu.RLock()
@@ -589,23 +769,61 @@ func (handler *ClientRoutine) Enqueue(ctx context.Context, channel string, messa
 		if !buffer.closed {
 			select {
 			case buffer.ch <- message:
+				return true
 			case <-ctx.Done():
+				return false
 			}
 		}
 	}
+	return false
 }
 
 func (handler *ClientRoutine) closeBuffers() {
 	handler.buffersMu.RLock()
-	defer handler.buffersMu.RUnlock()
+	guards := make([]*visibilityGuard, 0)
 	for _, buffer := range handler.buffers {
 		buffer.sendMu.Lock()
 		if !buffer.closed {
 			buffer.closed = true
 			close(buffer.ch)
+			for message := range buffer.ch {
+				guards = append(guards, message.Visibility)
+			}
 		}
 		buffer.sendMu.Unlock()
 	}
+	handler.buffersMu.RUnlock()
+	releaseVisibilityGuards(guards)
+}
+
+func releaseVisibilityGuards(guards []*visibilityGuard) {
+	if len(guards) == 0 {
+		return
+	}
+	workers := 10
+	if len(guards) < workers {
+		workers = len(guards)
+	}
+	jobs := make(chan *visibilityGuard)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for guard := range jobs {
+				guard.Release()
+			}
+		}()
+	}
+	for _, guard := range guards {
+		jobs <- guard
+	}
+	close(jobs)
+	wg.Wait()
+}
+
+func (handler *ClientRoutine) CloseForTest() {
+	handler.closeOnce.Do(handler.closeBuffers)
 }
 
 func (handler *ClientRoutine) buffersSnapshot() ([]*clientBuffer, <-chan struct{}) {
@@ -648,8 +866,10 @@ func (handler *ClientRoutine) Receive(ctx context.Context) (MessageWrapper, bool
 }
 
 func startClientWorker(ctx context.Context, poolKey string, handler *ClientRoutine, sqsClient *sqs.SQS, wg *sync.WaitGroup) {
+	var currentVisibility *visibilityGuard
 	defer func() {
 		if r := recover(); r != nil {
+			currentVisibility.Release()
 			utils.Error(fmt.Errorf("panic recovered in client worker [%s]: %v", poolKey, r))
 		}
 		wg.Done()
@@ -661,8 +881,21 @@ func startClientWorker(ctx context.Context, poolKey string, handler *ClientRouti
 			utils.Warn(fmt.Sprintf("Shutting down worker for pool: %s", poolKey))
 			return
 		}
+		currentVisibility = msgWrapper.Visibility
+		if marketingAsyncActive(msgWrapper.Payload.Client, msgWrapper.Payload.Channel) {
+			if err := persistence.CanAccept(ctx, msgWrapper.Payload.Client, msgWrapper.Payload.Channel); err != nil {
+				msgWrapper.Visibility.Release()
+				currentVisibility = nil
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+		}
 		startedAt := time.Now()
 		isMessageProcessed, deleted := processMessage(ctx, sqsClient, msgWrapper.QueueURL, msgWrapper)
+		msgWrapper.Visibility.Stop()
+		currentVisibility = nil
 		metrics.ValueByChannel(
 			"ClientWorkerHoldMilliseconds",
 			"Milliseconds",
@@ -1145,13 +1378,6 @@ type MarketingWhatsappDependencies struct {
 
 // handleMarketingWhatsapp handles marketing WhatsApp dispatch.
 func handleMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
-	if marketingAsyncActive(data.Client, data.Channel) {
-		if err := persistence.CanAccept(ctx, data.Client, data.Channel); err != nil {
-			utils.Error(fmt.Errorf("marketing WhatsApp async persistence paused: %v", err))
-			return false, false
-		}
-	}
-
 	deps := MarketingWhatsappDependencies{
 		Claim:  claimOrSkipMarketingDispatch,
 		Assign: AssignVendor,
@@ -1441,12 +1667,6 @@ func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	var deleted bool
 	var delErr error
 	marketing := isMarketingSMSDispatch(data)
-	if marketing && marketingAsyncActive(data.Client, data.Channel) {
-		if err := persistence.CanAccept(ctx, data.Client, data.Channel); err != nil {
-			utils.Error(fmt.Errorf("marketing SMS async persistence paused: %v", err))
-			return false, false
-		}
-	}
 
 	if marketing {
 		skipSend, campaignDuplicate, redisTxn, redisErr, claimErr := claimOrSkipMarketingDispatch(data)
@@ -2426,7 +2646,7 @@ func enqueueMarketingSMS(ctx context.Context, data sdkModels.CommApiRequestBody,
 		return err
 	}
 
-	_, err = persistence.Enqueue(ctx, record)
+	_, err = persistence.EnqueueDurably(ctx, record)
 	return err
 }
 
@@ -2462,7 +2682,7 @@ func enqueueMarketingWhatsapp(ctx context.Context, data sdkModels.CommApiRequest
 		return err
 	}
 
-	_, err = persistence.Enqueue(ctx, record)
+	_, err = persistence.EnqueueDurably(ctx, record)
 	return err
 }
 
