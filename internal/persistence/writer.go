@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	redislib "github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
@@ -19,32 +21,52 @@ import (
 )
 
 const (
-	writerGroup          = "commwrite-writers-v1"
-	writerBatchSize      = int64(70)
-	writerFirstReadBlock = 500 * time.Millisecond
-	writerBatchWindow    = 50 * time.Millisecond
-	writerClaimIdle      = 60 * time.Second
-	writerClaimEvery     = 30 * time.Second
-	writerMaxBackoff     = 30 * time.Second
-	writerMetricEvery    = time.Minute
-	writerLeaseTTL       = 15 * time.Second
-	writerLeaseRenew     = 5 * time.Second
-	writerLeaseRetry     = 2 * time.Second
+	writerGroup             = "commwrite-writers-v1"
+	writerFirstReadBlock    = 500 * time.Millisecond
+	writerBatchWindow       = 50 * time.Millisecond
+	writerClaimIdle         = 60 * time.Second
+	writerClaimEvery        = 30 * time.Second
+	writerMetricEvery       = time.Minute
+	writerLeaseTTL          = 15 * time.Second
+	writerLeaseRenew        = 5 * time.Second
+	writerLeaseRetry        = 2 * time.Second
+	writerBusinessLockTTL   = 120 * time.Second
+	writerBusinessLockRenew = 40 * time.Second
+	writerSQLMaxAttempts    = 3
 )
 
-var renewLeaseScript = redislib.NewScript(`
+var writerSQLRetryBase = time.Second
+var writeRecordsAttempt = func(ctx context.Context, records []Record) error {
+	return writeRecords(ctx, database.DBMarketing, records)
+}
+
+func SetWriteRecordsAttemptForTest(attempt func(context.Context, []Record) error, retryBase time.Duration) func() {
+	previousAttempt := writeRecordsAttempt
+	previousRetryBase := writerSQLRetryBase
+	writeRecordsAttempt = attempt
+	writerSQLRetryBase = retryBase
+	return func() {
+		writeRecordsAttempt = previousAttempt
+		writerSQLRetryBase = previousRetryBase
+	}
+}
+
+const renewOwnedLockLua = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("PEXPIRE", KEYS[1], ARGV[2])
 end
 return 0
-`)
+`
 
-var releaseLeaseScript = redislib.NewScript(`
+const releaseOwnedLockLua = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
 end
 return 0
-`)
+`
+
+var renewLeaseScript = redislib.NewScript(renewOwnedLockLua)
+var releaseLeaseScript = redislib.NewScript(releaseOwnedLockLua)
 
 var moveToPoisonScript = redislib.NewScript(`
 redis.call("XADD", KEYS[2], "*", unpack(ARGV, 3))
@@ -58,6 +80,37 @@ type Runtime struct {
 	wg    sync.WaitGroup
 	ready map[string]bool
 	mu    sync.RWMutex
+}
+
+type BusinessLockRedis interface {
+	SetNX(context.Context, string, interface{}, time.Duration) *redislib.BoolCmd
+	Eval(context.Context, string, []string, ...interface{}) *redislib.Cmd
+}
+
+func acquireBusinessLock(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	return client.SetNX(ctx, key, token, writerBusinessLockTTL).Result()
+}
+
+func renewBusinessLock(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	result, err := client.Eval(ctx, renewOwnedLockLua, []string{key}, token, writerBusinessLockTTL.Milliseconds()).Int()
+	return result == 1, err
+}
+
+func releaseBusinessLock(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	result, err := client.Eval(ctx, releaseOwnedLockLua, []string{key}, token).Int()
+	return result == 1, err
+}
+
+func AcquireBusinessLockForTest(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	return acquireBusinessLock(ctx, client, key, token)
+}
+
+func RenewBusinessLockForTest(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	return renewBusinessLock(ctx, client, key, token)
+}
+
+func ReleaseBusinessLockForTest(ctx context.Context, client BusinessLockRedis, key, token string) (bool, error) {
+	return releaseBusinessLock(ctx, client, key, token)
 }
 
 var defaultRuntime = &Runtime{ready: make(map[string]bool)}
@@ -112,6 +165,15 @@ func Start(ctx context.Context) error {
 }
 
 func validateRequestedAsyncConfiguration() error {
+	if err := config.ValidateCommWriteWorkerOverrides(config.Configs.CommWriteWorkerOverrides); err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(config.Configs.CommWriteWorkerOverrides, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) == 3 && !AsyncEnabled(parts[0], parts[1]) {
+			return fmt.Errorf("commwrite worker override requires enabled async lane %s:%s", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
 	requested := requestedAsyncChannels()
 	if len(requested) == 0 {
 		return nil
@@ -137,6 +199,23 @@ func WriterActive(client, channel string) bool {
 	defaultRuntime.mu.RLock()
 	defer defaultRuntime.mu.RUnlock()
 	return defaultRuntime.ready[channelKey(client, channel)]
+}
+
+func SetWriterActiveForTest(client, channel string, active bool) func() {
+	key := channelKey(client, channel)
+	defaultRuntime.mu.Lock()
+	previous, existed := defaultRuntime.ready[key]
+	defaultRuntime.ready[key] = active
+	defaultRuntime.mu.Unlock()
+	return func() {
+		defaultRuntime.mu.Lock()
+		defer defaultRuntime.mu.Unlock()
+		if existed {
+			defaultRuntime.ready[key] = previous
+		} else {
+			delete(defaultRuntime.ready, key)
+		}
+	}
 }
 
 func (r *Runtime) ensureGroup(ctx context.Context, stream string) error {
@@ -196,16 +275,33 @@ func (r *Runtime) runLeasedWriter(stream, lane, mapper, leaseKey, token string) 
 	}()
 
 	metrics.CountByReason("CommWriteLeaseAcquired", lane, "acquired", 1)
-	r.runWriter(ctx, stream, lane, mapper)
+	parts := strings.SplitN(lane, ":", 2)
+	workers, err := config.CommWriteWorkerCount(config.Configs.CommWriteWorkerOverrides, parts[0], parts[1])
+	if err != nil {
+		utils.Error(fmt.Errorf("commwrite worker configuration lane=%s: %w", lane, err))
+		workers = 1
+	}
+	instance := uuid.NewString()
+	var workersWG sync.WaitGroup
+	metrics.GaugeByChannel("CommWriteActiveWorkers", "Count", parts[0], parts[1], float64(workers))
+	for index := 0; index < workers; index++ {
+		workersWG.Add(1)
+		go func(workerIndex int) {
+			defer workersWG.Done()
+			consumer := writerConsumerName(lane, instance, workerIndex)
+			r.runWriter(ctx, stream, lane, mapper, consumer, workerIndex == 0)
+		}(index)
+	}
+	workersWG.Wait()
 	cancel()
 	<-renewDone
+	metrics.GaugeByChannel("CommWriteActiveWorkers", "Count", parts[0], parts[1], 0)
 	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer releaseCancel()
 	_, _ = releaseLeaseScript.Run(releaseCtx, r.redis, []string{leaseKey}, token).Result()
 }
 
-func (r *Runtime) runWriter(ctx context.Context, stream, lane, mapper string) {
-	consumer := writerConsumerName(lane)
+func (r *Runtime) runWriter(ctx context.Context, stream, lane, mapper, consumer string, coordinator bool) {
 	nextClaim := time.Now()
 	nextMetric := time.Now()
 	for {
@@ -213,17 +309,17 @@ func (r *Runtime) runWriter(ctx context.Context, stream, lane, mapper string) {
 			return
 		}
 		now := time.Now()
-		if !now.Before(nextMetric) {
+		if coordinator && !now.Before(nextMetric) {
 			r.emitStreamMetrics(ctx, stream, lane)
 			nextMetric = now.Add(writerMetricEvery)
 		}
-		if !now.Before(nextClaim) {
+		if coordinator && !now.Before(nextClaim) {
 			r.reclaimPending(ctx, stream, lane, mapper, consumer)
 			nextClaim = now.Add(writerClaimEvery)
 			continue
 		}
 
-		messages, err := r.readBatch(ctx, stream, consumer)
+		messages, err := r.readBatch(ctx, stream, consumer, mapper)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}
@@ -245,11 +341,12 @@ func (r *Runtime) runWriter(ctx context.Context, stream, lane, mapper string) {
 }
 
 func (r *Runtime) reclaimPending(ctx context.Context, stream, lane, mapper, consumer string) {
+	batchSize := BatchLimit(mapper)
 	start := "0-0"
 	for {
 		messages, next, err := r.redis.XAutoClaim(ctx, &redislib.XAutoClaimArgs{
 			Stream: stream, Group: writerGroup, Consumer: consumer,
-			MinIdle: writerClaimIdle, Start: start, Count: writerBatchSize,
+			MinIdle: writerClaimIdle, Start: start, Count: batchSize,
 		}).Result()
 		if isNoGroup(err) {
 			_ = r.ensureGroup(ctx, stream)
@@ -260,27 +357,43 @@ func (r *Runtime) reclaimPending(ctx context.Context, stream, lane, mapper, cons
 			return
 		}
 		if len(messages) > 0 {
+			metrics.CountByReason("CommWriteReclaimed", lane, "pending", len(messages))
 			r.processMessages(ctx, stream, lane, mapper, messages)
 		}
-		if len(messages) == 0 || next == "0-0" || ctx.Err() != nil {
+		if !continueAutoClaim(start, next, ctx.Err() != nil) {
+			if next == start && next != "0-0" {
+				metrics.CountByReason("CommWriteReclaimCursorStalled", lane, "same_cursor", 1)
+			}
 			return
 		}
+		// Redis may return an empty page while advancing past deleted PEL
+		// entries. Keep scanning the returned cursor so older live pending
+		// entries cannot remain stranded behind those holes.
 		start = next
 	}
 }
 
-func (r *Runtime) readBatch(ctx context.Context, stream, consumer string) ([]redislib.XMessage, error) {
-	messages, err := r.readGroup(ctx, stream, consumer, writerBatchSize, writerFirstReadBlock)
-	if err != nil || len(messages) == 0 || int64(len(messages)) >= writerBatchSize {
+func continueAutoClaim(start, next string, canceled bool) bool {
+	return !canceled && next != "0-0" && next != start
+}
+
+func ContinueAutoClaimForTest(start, next string, canceled bool) bool {
+	return continueAutoClaim(start, next, canceled)
+}
+
+func (r *Runtime) readBatch(ctx context.Context, stream, consumer, mapper string) ([]redislib.XMessage, error) {
+	batchSize := BatchLimit(mapper)
+	messages, err := r.readGroup(ctx, stream, consumer, batchSize, writerFirstReadBlock)
+	if err != nil || len(messages) == 0 || int64(len(messages)) >= batchSize {
 		return messages, err
 	}
 	deadline := time.Now().Add(writerBatchWindow)
-	for int64(len(messages)) < writerBatchSize {
+	for int64(len(messages)) < batchSize {
 		remaining := time.Until(deadline)
 		if remaining < time.Millisecond {
 			break
 		}
-		more, readErr := r.readGroup(ctx, stream, consumer, writerBatchSize-int64(len(messages)), remaining)
+		more, readErr := r.readGroup(ctx, stream, consumer, batchSize-int64(len(messages)), remaining)
 		if readErr == redislib.Nil {
 			break
 		}
@@ -311,8 +424,8 @@ func (r *Runtime) processMessages(ctx context.Context, stream, lane, mapper stri
 	if len(messages) == 0 {
 		return
 	}
-	records := make([]Record, 0, len(messages))
-	validMessages := make([]redislib.XMessage, 0, len(messages))
+	groupsByKey := make(map[string]*recordGroup, len(messages))
+	groups := make([]*recordGroup, 0, len(messages))
 	for _, message := range messages {
 		record, err := recordFromMessage(message)
 		if err != nil || record.Mapper != mapper {
@@ -324,87 +437,165 @@ func (r *Runtime) processMessages(ctx context.Context, stream, lane, mapper stri
 			}
 			continue
 		}
-		records = append(records, record)
-		validMessages = append(validMessages, message)
+		identity := businessIdentity(record)
+		group := groupsByKey[identity]
+		if group == nil {
+			group = &recordGroup{record: record, identity: identity}
+			groupsByKey[identity] = group
+			groups = append(groups, group)
+		}
+		group.messages = append(group.messages, message)
 	}
-	if len(records) == 0 {
+	if len(groups) == 0 {
 		return
 	}
-	started := time.Now()
-	backoff := time.Second
-	for {
-		err := writeRecords(database.DBMarketing, records)
-		if err == nil {
-			parts := strings.SplitN(lane, ":", 2)
-			metrics.ValueByChannel("CommWriteInsertMilliseconds", "Milliseconds", parts[0], parts[1], float64(time.Since(started).Milliseconds()))
-			r.ackAndDelete(stream, validMessages)
-			return
+
+	acquired := make([]*recordGroup, 0, len(groups))
+	for _, group := range groups {
+		group.lockKey = businessLockKey(lane, group.record)
+		group.token = uuid.NewString()
+		ok, err := acquireBusinessLock(ctx, r.redis, group.lockKey, group.token)
+		if err != nil {
+			metrics.CountByReason("CommWriteLockContention", lane, "redis_error", 1)
+			continue
 		}
-		if isDataError(err) && len(records) > 1 {
-			r.processIndividually(ctx, stream, lane, records, validMessages)
-			return
+		if !ok {
+			metrics.CountByReason("CommWriteLockContention", lane, "owned", 1)
+			continue
 		}
-		if isDataError(err) {
-			if moveErr := r.moveToPoison(stream, lane, validMessages[0], err); moveErr != nil {
-				utils.Error(fmt.Errorf("commwrite poison move lane=%s: %w", lane, moveErr))
-			}
-			return
-		}
-		metrics.CountByReason("CommWriteInsertRetry", lane, retryReason(err), 1)
-		utils.Error(fmt.Errorf("commwrite insert retry lane=%s: %w", lane, err))
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff):
-			if backoff < writerMaxBackoff {
-				backoff *= 2
-				if backoff > writerMaxBackoff {
-					backoff = writerMaxBackoff
-				}
-			}
-		}
+		acquired = append(acquired, group)
 	}
+	if len(acquired) == 0 {
+		return
+	}
+	defer r.releaseBusinessLocks(lane, acquired)
+	r.processLockedGroups(ctx, stream, lane, acquired)
 }
 
-func (r *Runtime) processIndividually(ctx context.Context, stream, lane string, records []Record, messages []redislib.XMessage) {
-	for i, record := range records {
-		backoff := time.Second
-		for {
-			err := writeRecords(database.DBMarketing, []Record{record})
-			if err == nil {
-				r.ackAndDelete(stream, []redislib.XMessage{messages[i]})
-				break
-			}
+type recordGroup struct {
+	record   Record
+	identity string
+	messages []redislib.XMessage
+	lockKey  string
+	token    string
+}
 
-			if isDataError(err) {
-				if moveErr := r.moveToPoison(stream, lane, messages[i], err); moveErr != nil {
-					utils.Error(fmt.Errorf("commwrite poison move lane=%s: %w", lane, moveErr))
-				}
-				break
-			}
-			metrics.CountByReason("CommWriteInsertRetry", lane, retryReason(err), 1)
+func (r *Runtime) processLockedGroups(parent context.Context, stream, lane string, groups []*recordGroup) {
+	ctx, cancel := context.WithCancel(parent)
+	renewDone := make(chan struct{})
+	go func() {
+		defer close(renewDone)
+		ticker := time.NewTicker(writerBusinessLockRenew)
+		defer ticker.Stop()
+		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(backoff):
-				if backoff < writerMaxBackoff {
-					backoff *= 2
-					if backoff > writerMaxBackoff {
-						backoff = writerMaxBackoff
-					}
+			case <-ticker.C:
+				if !r.renewBusinessLocks(ctx, lane, groups) {
+					cancel()
+					return
 				}
 			}
+		}
+	}()
+
+	records := make([]Record, 0, len(groups))
+	for _, group := range groups {
+		records = append(records, group.record)
+	}
+	started := time.Now()
+	err := writeRecordsWithRetry(ctx, lane, records)
+	if err == nil {
+		if r.renewBusinessLocks(ctx, lane, groups) {
+			allMessages := messagesForGroups(groups)
+			if ackErr := r.ackAndDelete(stream, allMessages); ackErr == nil {
+				metrics.CountByReason("CommWriteBatchSuccess", lane, "committed", 1)
+				parts := strings.SplitN(lane, ":", 2)
+				metrics.ValueByChannel("CommWriteInsertMilliseconds", "Milliseconds", parts[0], parts[1], float64(time.Since(started).Milliseconds()))
+			}
+		}
+		cancel()
+		<-renewDone
+		return
+	}
+
+	if isDataError(err) && len(groups) > 1 && ctx.Err() == nil {
+		for _, group := range groups {
+			r.processLockedGroup(ctx, stream, lane, group)
+		}
+	} else if isDataError(err) && ctx.Err() == nil {
+		r.poisonLockedGroup(ctx, stream, lane, groups[0], err)
+	}
+	cancel()
+	<-renewDone
+}
+
+func (r *Runtime) processLockedGroup(ctx context.Context, stream, lane string, group *recordGroup) {
+	err := writeRecordsWithRetry(ctx, lane, []Record{group.record})
+	if err == nil {
+		if r.renewBusinessLocks(ctx, lane, []*recordGroup{group}) {
+			if ackErr := r.ackAndDelete(stream, group.messages); ackErr == nil {
+				metrics.CountByReason("CommWriteBatchSuccess", lane, "isolated", 1)
+			}
+		}
+		return
+	}
+	if isDataError(err) && ctx.Err() == nil {
+		r.poisonLockedGroup(ctx, stream, lane, group, err)
+		return
+	}
+}
+
+func writeRecordsWithRetry(ctx context.Context, lane string, records []Record) error {
+	backoff := writerSQLRetryBase
+	var err error
+	for attempt := 1; attempt <= writerSQLMaxAttempts; attempt++ {
+		err = writeRecordsAttempt(ctx, records)
+		if err == nil || isDataError(err) || ctx.Err() != nil {
+			return err
+		}
+		metrics.CountByReason("CommWriteTransientRetry", lane, retryReason(err), 1)
+		if attempt == writerSQLMaxAttempts {
+			return err
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+		backoff *= 2
+	}
+	return err
+}
+
+func WriteRecordsWithRetryForTest(ctx context.Context, lane string, records []Record) error {
+	return writeRecordsWithRetry(ctx, lane, records)
+}
+
+func (r *Runtime) poisonLockedGroup(ctx context.Context, stream, lane string, group *recordGroup, cause error) {
+	if !r.renewBusinessLocks(ctx, lane, []*recordGroup{group}) {
+		return
+	}
+	for _, message := range group.messages {
+		if moveErr := r.moveToPoison(stream, lane, message, cause); moveErr != nil {
+			utils.Error(fmt.Errorf("commwrite poison move lane=%s: %w", lane, moveErr))
+			return
 		}
 	}
 }
 
-func (r *Runtime) ackAndDelete(stream string, messages []redislib.XMessage) {
+func (r *Runtime) ackAndDelete(stream string, messages []redislib.XMessage) error {
 	ids := make([]string, 0, len(messages))
 	for _, message := range messages {
 		ids = append(ids, message.ID)
 	}
 	if len(ids) == 0 {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -415,6 +606,69 @@ func (r *Runtime) ackAndDelete(stream string, messages []redislib.XMessage) {
 	})
 	if err != nil {
 		utils.Error(fmt.Errorf("commwrite XACK/XDEL stream=%s: %w", stream, err))
+	}
+	return err
+}
+
+func businessIdentity(record Record) string {
+	if record.Mapper == MapperMarketingWhatsapp {
+		return strconv.FormatInt(record.SourceRowID, 10)
+	}
+	canonical := strings.ToLower(strings.TrimSpace(record.Source)) + "\x00" +
+		strconv.FormatInt(record.SourceRowID, 10) + "\x00" + strings.ToUpper(strings.TrimSpace(record.Channel))
+	sum := sha256.Sum256([]byte(canonical))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func businessLockKey(lane string, record Record) string {
+	return "commwrite:lock:{" + lane + "}:" + businessIdentity(record)
+}
+
+func BusinessLockKeyForTest(lane string, record Record) string {
+	return businessLockKey(lane, record)
+}
+
+func messagesForGroups(groups []*recordGroup) []redislib.XMessage {
+	count := 0
+	for _, group := range groups {
+		count += len(group.messages)
+	}
+	messages := make([]redislib.XMessage, 0, count)
+	for _, group := range groups {
+		messages = append(messages, group.messages...)
+	}
+	return messages
+}
+
+func (r *Runtime) renewBusinessLocks(ctx context.Context, lane string, groups []*recordGroup) bool {
+	for _, group := range groups {
+		owned, err := renewBusinessLock(ctx, r.redis, group.lockKey, group.token)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				metrics.CountByReason("CommWriteLockRenewalFailure", lane, "redis", 1)
+			}
+			return false
+		}
+		if !owned {
+			metrics.CountByReason("CommWriteLockRenewalFailure", lane, "ownership_lost", 1)
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Runtime) releaseBusinessLocks(lane string, groups []*recordGroup) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, group := range groups {
+		owned, err := releaseBusinessLock(ctx, r.redis, group.lockKey, group.token)
+		if err != nil {
+			metrics.CountByReason("CommWriteLockReleaseFailure", lane, "redis", 1)
+			continue
+		}
+		if !owned {
+			metrics.CountByReason("CommWriteLockReleaseFailure", lane, "ownership_lost", 1)
+		}
 	}
 }
 
@@ -476,14 +730,55 @@ func (r *Runtime) emitStreamMetrics(ctx context.Context, stream, lane string) {
 	metrics.GaugeByChannel("CommWriteWriterPresent", "Count", parts[0], parts[1], 1)
 }
 
-func writerConsumerName(lane string) string {
+func writerConsumerName(lane, instance string, worker int) string {
 	host, _ := os.Hostname()
-	return strings.NewReplacer(":", "-", ".", "-").Replace(lane + "-" + host)
+	name := fmt.Sprintf("%s-%s-%d-%s-%d", lane, host, os.Getpid(), instance, worker)
+	return strings.NewReplacer(":", "-", ".", "-").Replace(name)
 }
 
 func leaseKey(lane string) string { return streamPrefix(lane) + ":lease" }
 
 func PoisonStreamKey(lane string) string { return streamPrefix(lane) + ":poison" }
+
+// PoisonEntry is a read-only operator view. Values contains the complete
+// original stream record plus source_stream_id, poison_reason and poisoned_at.
+type PoisonEntry struct {
+	ID     string
+	Values map[string]interface{}
+}
+
+func PoisonCount(ctx context.Context, client, channel string) (int64, error) {
+	if defaultRuntime.redis == nil {
+		return 0, fmt.Errorf("commwrite Redis is unavailable")
+	}
+	return defaultRuntime.redis.XLen(ctx, PoisonStreamKey(channelKey(client, channel))).Result()
+}
+
+// InspectPoison returns at most 100 entries and never mutates or replays them.
+func InspectPoison(ctx context.Context, client, channel, start string, count int64) ([]PoisonEntry, error) {
+	if defaultRuntime.redis == nil {
+		return nil, fmt.Errorf("commwrite Redis is unavailable")
+	}
+	if strings.TrimSpace(start) == "" {
+		start = "-"
+	}
+	if count < 1 || count > 100 {
+		count = 100
+	}
+	entries, err := defaultRuntime.redis.XRangeN(ctx, PoisonStreamKey(channelKey(client, channel)), start, "+", count).Result()
+	if err != nil && err != redislib.Nil {
+		return nil, err
+	}
+	result := make([]PoisonEntry, 0, len(entries))
+	for _, entry := range entries {
+		values := make(map[string]interface{}, len(entry.Values))
+		for key, value := range entry.Values {
+			values[key] = value
+		}
+		result = append(result, PoisonEntry{ID: entry.ID, Values: values})
+	}
+	return result, nil
+}
 
 func anyAsyncConfigured() bool {
 	for key := range supportedChannels {
