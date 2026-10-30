@@ -73,7 +73,7 @@ func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error
 		if record.Mapper != MapperMarketingSMS || record.SourceRowID < 1 || record.Source == "" || record.HitAt.IsZero() {
 			return fmt.Errorf("invalid SMS persistence record")
 		}
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATETIME(), ?)")
 		args = append(args,
 			record.Source, record.SourceRowID, "SMS", nullString(record.Client), nullString(record.Vendor),
 			nullString(record.Process), nullString(record.EventID), nullString(record.CommID),
@@ -83,14 +83,7 @@ func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error
 	}
 	query := fmt.Sprintf(`INSERT INTO %s
 ([Source], SourceRowId, Channel, Client, Vendor, Process, EventId, CommId, TransactionId, Outcome, ErrorMessage, TemplateReference, CreatedOn, UpdatedOn)
-SELECT v.[Source], v.SourceRowId, v.Channel, v.Client, v.Vendor, v.Process, v.EventId, v.CommId, v.TransactionId, v.Outcome, v.ErrorMessage, v.TemplateReference, SYSDATETIME(), v.HitAt
-FROM (VALUES %s) AS v([Source], SourceRowId, Channel, Client, Vendor, Process, EventId, CommId, TransactionId, Outcome, ErrorMessage, TemplateReference, HitAt)
-WHERE NOT EXISTS (
-    SELECT 1 FROM %s AS existing
-    WHERE existing.[Source] = v.[Source]
-      AND existing.SourceRowId = v.SourceRowId
-      AND existing.Channel = v.Channel
-)`, table, strings.Join(rows, ","), table)
+	VALUES %s`, table, strings.Join(rows, ","))
 	return executeBatch(ctx, db, query, args)
 }
 
@@ -120,11 +113,7 @@ func writeMarketingWhatsapp(ctx context.Context, db *gorm.DB, records []Record) 
 	}
 	query := fmt.Sprintf(`INSERT INTO %s
 (SourceRowId, EventId, CommId, Mobile, Vendor, Process, Client, TemplateName, AppId, TransactionId, MessageId, IsSent, ResponseMessage, HitTime, Tag1, Tag2, DynamicMobile, VariablesValue, ScheduledAt, RawPayload, RawResponse)
-SELECT v.SourceRowId, v.EventId, v.CommId, v.Mobile, v.Vendor, v.Process, v.Client, v.TemplateName, v.AppId, v.TransactionId, v.MessageId, v.IsSent, v.ResponseMessage, v.HitTime, v.Tag1, v.Tag2, v.DynamicMobile, v.VariablesValue, v.ScheduledAt, v.RawPayload, v.RawResponse
-FROM (VALUES %s) AS v(SourceRowId, EventId, CommId, Mobile, Vendor, Process, Client, TemplateName, AppId, TransactionId, MessageId, IsSent, ResponseMessage, HitTime, Tag1, Tag2, DynamicMobile, VariablesValue, ScheduledAt, RawPayload, RawResponse)
-WHERE NOT EXISTS (
-    SELECT 1 FROM %s AS existing WHERE existing.SourceRowId = v.SourceRowId
-)`, table, strings.Join(rows, ","), table)
+	VALUES %s`, table, strings.Join(rows, ","))
 	return executeBatch(ctx, db, query, args)
 }
 
