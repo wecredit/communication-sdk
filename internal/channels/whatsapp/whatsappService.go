@@ -96,8 +96,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
-	// Hot-path per-message routing logging is intentionally disabled; aggregate outcomes remain.
-	// utils.Debug(fmt.Sprintf("Channel: %s Mobile: %s, Should hit vendor: %v\n", msg.Channel, msg.Mobile, shouldHitVendor))
+	utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v", msg.Channel, msg.CommId, shouldHitVendor))
 
 	var hitAt time.Time
 	if shouldHitVendor {
@@ -164,8 +163,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	}
 
 	if shouldHitVendor && response.IsSent {
-		// Hot-path success logging is intentionally disabled; aggregate vendor metrics remain.
-		// utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s on %s through %s", msg.ProcessName, msg.Mobile, msg.Vendor))
+		utils.Info(fmt.Sprintf("WhatsApp sent successfully for Process: %s CommId: %s through %s", msg.ProcessName, msg.CommId, msg.Vendor))
 		if msg.Client == variables.CreditSea {
 			redis.IncrementCreditSeaCounter(context.Background(), redis.RDB, redis.CreditSeaWhatsappCount)
 		}
