@@ -117,8 +117,7 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 
 	var response extapimodels.SmsResponse
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
-	// Hot-path per-message routing logging is intentionally disabled; aggregate outcomes remain.
-	// utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v\n", msg.Channel, msg.CommId, shouldHitVendor))
+	utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v", msg.Channel, msg.CommId, shouldHitVendor))
 
 	if !shouldHitVendor {
 		response.Outcome = outcome.Skipped
@@ -168,8 +167,7 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 	}
 
 	if response.Outcome == outcome.Submitted {
-		// Hot-path success logging is intentionally disabled; aggregate provider metrics remain.
-		// utils.Info(fmt.Sprintf("SMS submitted for Process: %s CommId: %s via %s", msg.ProcessName, msg.CommId, msg.Vendor))
+		utils.Info(fmt.Sprintf("SMS submitted for Process: %s CommId: %s via %s", msg.ProcessName, msg.CommId, msg.Vendor))
 
 		if smspolicy.IsRegulatedMarketingSMS(msg.Source, msg.SourceRowId, msg.Channel) {
 			metrics.Count("wecredit_sms_sent_total", msg.Vendor, msg.Client, 1)

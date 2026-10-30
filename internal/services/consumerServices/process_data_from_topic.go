@@ -784,8 +784,7 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 		return false, deleted // Return false to indicate processing failed
 	}
 
-	// Hot-path per-message processing logging is intentionally disabled; failures and minute metrics remain.
-	// utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
+	utils.Debug(fmt.Sprintf("[Client:%s CommId:%s] Processing %s", data.Client, data.CommId, data.Channel))
 
 	// ZapCash single-hop: sdk.Send no longer claims Redis or writes *InputAuditTable.
 	// That claim runs on AWS_ZAPCASH_QUEUE_URL. AWS_QUEUE_URL still goes through
@@ -1826,8 +1825,7 @@ func deleteMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, msg
 			ReceiptHandle: msg.ReceiptHandle,
 		})
 		if err == nil {
-			// Hot-path SQS delete success logging is intentionally disabled; delete failures remain visible.
-			// utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message successfully deleted from SQS on attempt %d", data.Client, data.CommId, i))
+			utils.Info(fmt.Sprintf("[Client:%s CommId:%s] Message successfully deleted from SQS on attempt %d", data.Client, data.CommId, i))
 			return true, nil
 		}
 
@@ -1856,8 +1854,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 	if requestedVendor != "" {
 		data.Vendor = requestedVendor
 		if channelHelper.IsVendorActive(data.Client, requestedVendor, data.Channel) {
-			// Hot-path vendor routing logging is intentionally disabled; routing failures remain visible.
-			// utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+			utils.Debug(fmt.Sprintf("Preserved requested vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 			return true
 		}
 		utils.Error(fmt.Errorf("requested vendor is not active for client: %s, channel: %s, commId: %s", data.Client, data.Channel, data.CommId))
@@ -1872,7 +1869,7 @@ func AssignVendor(data *sdkModels.CommApiRequestBody) bool {
 		data.Vendor = variables.FCM
 	} else {
 		data.Vendor = GetVendorByClientAndChannel(data.Channel, data.Client, data.CommId)
-		// utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
+		utils.Debug(fmt.Sprintf("Assigned vendor: %s for client: %s, channel: %s, commId: %s", data.Vendor, data.Client, data.Channel, data.CommId))
 	}
 	return true
 }
