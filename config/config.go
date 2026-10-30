@@ -25,35 +25,8 @@ import (
 var Configs models.Config
 
 func LoadConfigs() error {
-	// Load the .env file (optional, for local development)
-	if _, err := os.Stat(".env"); err == nil {
-		err := godotenv.Load()
-		if err != nil {
-			return fmt.Errorf("error loading .env file: %v", err)
-		}
-	}
-
-	// Use reflection to set the struct fields with environment variables
-	val := reflect.ValueOf(&Configs).Elem() // Pass a pointer to the struct
-	typ := reflect.TypeOf(Configs)          // Use the struct type (not the pointer)
-
-	for i := 0; i < val.NumField(); i++ {
-		field := val.Field(i)
-		envVar := typ.Field(i).Tag.Get("envconfig")
-
-		if value, exists := os.LookupEnv(envVar); exists {
-			if field.CanSet() {
-				field.SetString(value)
-			}
-		} else {
-			// Set default value if available
-			defaultVal := typ.Field(i).Tag.Get("default")
-			if defaultVal != "" {
-				if field.CanSet() {
-					field.SetString(defaultVal)
-				}
-			}
-		}
+	if err := LoadEnvironmentConfigs(); err != nil {
+		return err
 	}
 
 	if err := ValidateTimesWpMode(Configs); err != nil {
@@ -133,6 +106,46 @@ func LoadConfigs() error {
 			utils.Info("SNS Client initialized successfully.")
 		}
 	*/
+
+	return nil
+}
+
+// LoadEnvironmentConfigs loads only .env/environment values and defaults. It
+// intentionally does not connect to Redis, SQL, AWS, or AppConfig. Operational
+// commands use it so they can initialize only the dependencies they require.
+func LoadEnvironmentConfigs() error {
+	// Load the .env file (optional, for local development)
+	if _, err := os.Stat(".env"); err == nil {
+		err := godotenv.Load()
+		if err != nil {
+			return fmt.Errorf("error loading .env file: %v", err)
+		}
+	}
+
+	Configs = models.Config{}
+
+	// Use reflection to set the struct fields with environment variables
+	val := reflect.ValueOf(&Configs).Elem() // Pass a pointer to the struct
+	typ := reflect.TypeOf(Configs)          // Use the struct type (not the pointer)
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		envVar := typ.Field(i).Tag.Get("envconfig")
+
+		if value, exists := os.LookupEnv(envVar); exists {
+			if field.CanSet() {
+				field.SetString(value)
+			}
+		} else {
+			// Set default value if available
+			defaultVal := typ.Field(i).Tag.Get("default")
+			if defaultVal != "" {
+				if field.CanSet() {
+					field.SetString(defaultVal)
+				}
+			}
+		}
+	}
 
 	return nil
 }

@@ -454,7 +454,16 @@ func (r *Runtime) processMessages(ctx context.Context, stream, lane, mapper stri
 	for _, group := range groups {
 		group.lockKey = businessLockKey(lane, group.record)
 		group.token = uuid.NewString()
-		ok, err := acquireBusinessLock(ctx, r.redis, group.lockKey, group.token)
+	}
+	commands := make([]*redislib.BoolCmd, len(groups))
+	r.redis.Pipelined(ctx, func(pipe redislib.Pipeliner) error {
+		for index, group := range groups {
+			commands[index] = pipe.SetNX(ctx, group.lockKey, group.token, writerBusinessLockTTL)
+		}
+		return nil
+	})
+	for index, group := range groups {
+		ok, err := commands[index].Result()
 		if err != nil {
 			metrics.CountByReason("CommWriteLockContention", lane, "redis_error", 1)
 			continue
@@ -641,15 +650,22 @@ func messagesForGroups(groups []*recordGroup) []redislib.XMessage {
 }
 
 func (r *Runtime) renewBusinessLocks(ctx context.Context, lane string, groups []*recordGroup) bool {
-	for _, group := range groups {
-		owned, err := renewBusinessLock(ctx, r.redis, group.lockKey, group.token)
+	commands := make([]*redislib.Cmd, len(groups))
+	r.redis.Pipelined(ctx, func(pipe redislib.Pipeliner) error {
+		for index, group := range groups {
+			commands[index] = pipe.Eval(ctx, renewOwnedLockLua, []string{group.lockKey}, group.token, writerBusinessLockTTL.Milliseconds())
+		}
+		return nil
+	})
+	for index := range groups {
+		result, err := commands[index].Int()
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				metrics.CountByReason("CommWriteLockRenewalFailure", lane, "redis", 1)
 			}
 			return false
 		}
-		if !owned {
+		if result != 1 {
 			metrics.CountByReason("CommWriteLockRenewalFailure", lane, "ownership_lost", 1)
 			return false
 		}
@@ -660,13 +676,20 @@ func (r *Runtime) renewBusinessLocks(ctx context.Context, lane string, groups []
 func (r *Runtime) releaseBusinessLocks(lane string, groups []*recordGroup) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	for _, group := range groups {
-		owned, err := releaseBusinessLock(ctx, r.redis, group.lockKey, group.token)
+	commands := make([]*redislib.Cmd, len(groups))
+	r.redis.Pipelined(ctx, func(pipe redislib.Pipeliner) error {
+		for index, group := range groups {
+			commands[index] = pipe.Eval(ctx, releaseOwnedLockLua, []string{group.lockKey}, group.token)
+		}
+		return nil
+	})
+	for index := range groups {
+		result, err := commands[index].Int()
 		if err != nil {
 			metrics.CountByReason("CommWriteLockReleaseFailure", lane, "redis", 1)
 			continue
 		}
-		if !owned {
+		if result != 1 {
 			metrics.CountByReason("CommWriteLockReleaseFailure", lane, "ownership_lost", 1)
 		}
 	}

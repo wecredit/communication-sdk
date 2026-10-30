@@ -883,10 +883,13 @@ func startClientWorker(ctx context.Context, poolKey string, handler *ClientRouti
 		}
 		currentVisibility = msgWrapper.Visibility
 		if marketingAsyncActive(msgWrapper.Payload.Client, msgWrapper.Payload.Channel) {
-			if err := persistence.WaitForCapacity(ctx, msgWrapper.Payload.Client, msgWrapper.Payload.Channel); err != nil {
+			if err := persistence.CanAccept(ctx, msgWrapper.Payload.Client, msgWrapper.Payload.Channel); err != nil {
 				msgWrapper.Visibility.Release()
 				currentVisibility = nil
-				return
+				if ctx.Err() != nil {
+					return
+				}
+				continue
 			}
 		}
 		startedAt := time.Now()
