@@ -20,7 +20,7 @@ import (
 
 const (
 	writerGroup          = "commwrite-writers-v1"
-	writerBatchSize      = int64(100)
+	writerBatchSize      = int64(70)
 	writerFirstReadBlock = 500 * time.Millisecond
 	writerBatchWindow    = 50 * time.Millisecond
 	writerClaimIdle      = 60 * time.Second
