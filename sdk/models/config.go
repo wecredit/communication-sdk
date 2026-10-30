@@ -226,8 +226,11 @@ type Config struct {
 	// CommWriteStreamBudgetOverrides supplies the verified maximum stream-entry
 	// budget per client/channel. Async enablement requires a positive budget.
 	CommWriteStreamBudgetOverrides string `envconfig:"COMM_WRITE_STREAM_BUDGET_OVERRIDES"`
-	SMSWorkers                     string `envconfig:"SMS_WORKERS"`
-	WhatsAppWorkers                string `envconfig:"WHATSAPP_WORKERS"`
+	// CommWriteWorkerOverrides controls internal SQL writers started by the one
+	// globally leased lane owner. Entries use client:channel:workers.
+	CommWriteWorkerOverrides string `envconfig:"COMM_WRITE_WORKER_OVERRIDES"`
+	SMSWorkers               string `envconfig:"SMS_WORKERS"`
+	WhatsAppWorkers          string `envconfig:"WHATSAPP_WORKERS"`
 
 	// Per-provider SMS, WhatsApp, and IVR outbound rate limits. Numbers are
 	// client TOTALS shared across ECS tasks via Redis (see PROVIDER_RPS_TASK_SLOTS).

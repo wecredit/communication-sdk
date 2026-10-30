@@ -25,35 +25,8 @@ import (
 var Configs models.Config
 
 func LoadConfigs() error {
-	// Load the .env file (optional, for local development)
-	if _, err := os.Stat(".env"); err == nil {
-		err := godotenv.Load()
-		if err != nil {
-			return fmt.Errorf("error loading .env file: %v", err)
-		}
-	}
-
-	// Use reflection to set the struct fields with environment variables
-	val := reflect.ValueOf(&Configs).Elem() // Pass a pointer to the struct
-	typ := reflect.TypeOf(Configs)          // Use the struct type (not the pointer)
-
-	for i := 0; i < val.NumField(); i++ {
-		field := val.Field(i)
-		envVar := typ.Field(i).Tag.Get("envconfig")
-
-		if value, exists := os.LookupEnv(envVar); exists {
-			if field.CanSet() {
-				field.SetString(value)
-			}
-		} else {
-			// Set default value if available
-			defaultVal := typ.Field(i).Tag.Get("default")
-			if defaultVal != "" {
-				if field.CanSet() {
-					field.SetString(defaultVal)
-				}
-			}
-		}
+	if err := LoadEnvironmentConfigs(); err != nil {
+		return err
 	}
 
 	if err := ValidateTimesWpMode(Configs); err != nil {
@@ -133,6 +106,46 @@ func LoadConfigs() error {
 			utils.Info("SNS Client initialized successfully.")
 		}
 	*/
+
+	return nil
+}
+
+// LoadEnvironmentConfigs loads only .env/environment values and defaults. It
+// intentionally does not connect to Redis, SQL, AWS, or AppConfig. Operational
+// commands use it so they can initialize only the dependencies they require.
+func LoadEnvironmentConfigs() error {
+	// Load the .env file (optional, for local development)
+	if _, err := os.Stat(".env"); err == nil {
+		err := godotenv.Load()
+		if err != nil {
+			return fmt.Errorf("error loading .env file: %v", err)
+		}
+	}
+
+	Configs = models.Config{}
+
+	// Use reflection to set the struct fields with environment variables
+	val := reflect.ValueOf(&Configs).Elem() // Pass a pointer to the struct
+	typ := reflect.TypeOf(Configs)          // Use the struct type (not the pointer)
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		envVar := typ.Field(i).Tag.Get("envconfig")
+
+		if value, exists := os.LookupEnv(envVar); exists {
+			if field.CanSet() {
+				field.SetString(value)
+			}
+		} else {
+			// Set default value if available
+			defaultVal := typ.Field(i).Tag.Get("default")
+			if defaultVal != "" {
+				if field.CanSet() {
+					field.SetString(defaultVal)
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -268,6 +281,7 @@ func applyRuntimeTuningFromAppConfig() error {
 			"LOG_LEVEL",
 			"COMM_ASYNC_WRITE_CHANNELS",
 			"COMM_WRITE_STREAM_BUDGET_OVERRIDES",
+			"COMM_WRITE_WORKER_OVERRIDES",
 		}
 
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
@@ -362,6 +376,14 @@ func applyRuntimeTuningFromAppConfig() error {
 		candidate.CommWriteStreamBudgetOverrides = fallback.CommWriteStreamBudgetOverrides
 	}
 
+	if err := ValidateCommWriteWorkerOverrides(candidate.CommWriteWorkerOverrides); err != nil {
+		utils.Error(fmt.Errorf("AppConfig COMM_WRITE_WORKER_OVERRIDES invalid; keeping environment/default: %w", err))
+		candidate.CommWriteWorkerOverrides = fallback.CommWriteWorkerOverrides
+		if fallbackErr := ValidateCommWriteWorkerOverrides(candidate.CommWriteWorkerOverrides); fallbackErr != nil {
+			return fmt.Errorf("invalid fallback COMM_WRITE_WORKER_OVERRIDES: %w", fallbackErr)
+		}
+	}
+
 	Configs = candidate
 	logResolvedRuntimeTuning(Configs, appConfigValues)
 	utils.SetLogLevel(Configs.LogLevel)
@@ -379,7 +401,7 @@ func logResolvedRuntimeTuning(resolved models.Config, appValues map[string]strin
 	}
 
 	utils.Info(fmt.Sprintf(
-		"runtime_tuning_resolved provider_overrides=%q[%s] provider_caps=%q[%s] provider_default=%s[%s] task_slots=%s[%s] default_workers=%s[%s] client_workers=%q[%s] channel_workers=%q[%s] buffer=%s[%s] gomaxprocs=%s[%s] log_level=%s[%s] async_writes=%q[%s] stream_budgets=%q[%s]",
+		"runtime_tuning_resolved provider_overrides=%q[%s] provider_caps=%q[%s] provider_default=%s[%s] task_slots=%s[%s] default_workers=%s[%s] client_workers=%q[%s] channel_workers=%q[%s] buffer=%s[%s] gomaxprocs=%s[%s] log_level=%s[%s] async_writes=%q[%s] stream_budgets=%q[%s] write_workers=%q[%s]",
 		resolved.ProviderRPSOverrides, source("PROVIDER_RPS_OVERRIDES", resolved.ProviderRPSOverrides),
 		resolved.ProviderRPSApprovedCaps, source("PROVIDER_RPS_APPROVED_CAPS", resolved.ProviderRPSApprovedCaps),
 		resolved.ProviderRPSDefault, source("PROVIDER_RPS_DEFAULT", resolved.ProviderRPSDefault),
@@ -392,6 +414,7 @@ func logResolvedRuntimeTuning(resolved models.Config, appValues map[string]strin
 		resolved.LogLevel, source("LOG_LEVEL", resolved.LogLevel),
 		resolved.CommAsyncWriteChannels, source("COMM_ASYNC_WRITE_CHANNELS", resolved.CommAsyncWriteChannels),
 		resolved.CommWriteStreamBudgetOverrides, source("COMM_WRITE_STREAM_BUDGET_OVERRIDES", resolved.CommWriteStreamBudgetOverrides),
+		resolved.CommWriteWorkerOverrides, source("COMM_WRITE_WORKER_OVERRIDES", resolved.CommWriteWorkerOverrides),
 	))
 }
 
@@ -411,6 +434,66 @@ func ApplyAppConfigValues(candidate *models.Config, values map[string]string) {
 	apply("LOG_LEVEL", &candidate.LogLevel)
 	apply("COMM_ASYNC_WRITE_CHANNELS", &candidate.CommAsyncWriteChannels)
 	apply("COMM_WRITE_STREAM_BUDGET_OVERRIDES", &candidate.CommWriteStreamBudgetOverrides)
+	apply("COMM_WRITE_WORKER_OVERRIDES", &candidate.CommWriteWorkerOverrides)
+}
+
+// ValidateCommWriteWorkerOverrides validates internal persistence concurrency.
+// Only lanes with an implemented durable record contract may be configured.
+func ValidateCommWriteWorkerOverrides(raw string) error {
+	seen := make(map[string]struct{})
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		parts := strings.Split(entry, ":")
+		if len(parts) != 3 {
+			return fmt.Errorf("invalid commwrite worker override %q", entry)
+		}
+
+		lane := strings.ToLower(strings.TrimSpace(parts[0])) + ":" + strings.ToLower(strings.TrimSpace(parts[1]))
+		if lane != "wecredit:sms" && lane != "wecredit:whatsapp" {
+			return fmt.Errorf("unsupported commwrite worker lane %q", lane)
+		}
+
+		workers, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || workers < 1 || workers > 8 {
+			return fmt.Errorf("commwrite workers for %s must be between 1 and 8", lane)
+		}
+
+		if _, exists := seen[lane]; exists {
+			return fmt.Errorf("duplicate commwrite worker override %q", lane)
+		}
+
+		seen[lane] = struct{}{}
+	}
+
+	return nil
+}
+
+// CommWriteWorkerCount resolves one supported lane. Blank configuration is
+// deliberately backward-compatible with the original single writer.
+func CommWriteWorkerCount(raw, client, channel string) (int, error) {
+	if err := ValidateCommWriteWorkerOverrides(raw); err != nil {
+		return 0, err
+	}
+
+	want := strings.ToLower(strings.TrimSpace(client)) + ":" + strings.ToLower(strings.TrimSpace(channel))
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 {
+			continue
+		}
+
+		lane := strings.ToLower(strings.TrimSpace(parts[0])) + ":" + strings.ToLower(strings.TrimSpace(parts[1]))
+		if lane == want {
+			workers, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
+			return workers, nil
+		}
+	}
+
+	return 1, nil
 }
 
 func validPositiveConfigInt(raw string) bool {
