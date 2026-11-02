@@ -64,6 +64,7 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 		}
 		seenSubStages[mapping.SubStage] = struct{}{}
 	}
+
 	sort.Slice(request.TemplateStages, func(i, j int) bool {
 		return request.TemplateStages[i].SubStage < request.TemplateStages[j].SubStage
 	})
@@ -74,7 +75,120 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 		}
 		request.Interval = &interval
 	}
+
+	if request.ExecutionTimes != nil {
+		times, err := normalizeExecutionTimes(request.LenderName, *request.ExecutionTimes)
+		if err != nil {
+			return err
+		}
+
+		request.ExecutionTimes = &times
+	}
+
 	return nil
+}
+
+// NormalizeExecutionTimes sorts, de-dupes, and compacts HH:MM wall-clock slots (max 3).
+// Non-zapcash lenders must leave times empty. Slot index is the post-normalize position (1-based).
+func NormalizeExecutionTimes(lenderName string, raw []string) ([]string, error) {
+	return normalizeExecutionTimes(strings.ToLower(strings.TrimSpace(lenderName)), raw)
+}
+
+func normalizeExecutionTimes(lenderName string, raw []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(raw))
+	normalized := make([]string, 0, 3)
+	for _, part := range raw {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			continue
+		}
+
+		hhmm, err := parseExecutionHHMM(token)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, dup := seen[hhmm]; dup {
+			continue
+		}
+
+		seen[hhmm] = struct{}{}
+		normalized = append(normalized, hhmm)
+	}
+
+	sort.Strings(normalized)
+	if len(normalized) > 3 {
+		return nil, errors.New("executionTimes supports at most 3 values")
+	}
+
+	if len(normalized) > 0 && lenderName != "zapcash" {
+		return nil, errors.New("executionTimes are only supported for lenderName zapcash")
+	}
+
+	return normalized, nil
+}
+
+func parseExecutionHHMM(token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if len(token) >= 8 && token[2] == ':' && token[5] == ':' {
+		token = token[:5]
+	}
+
+	parts := strings.Split(token, ":")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid executionTime %q (want HH:MM)", token)
+	}
+
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil || hour < 0 || hour > 23 {
+		return "", fmt.Errorf("invalid executionTime hour in %q", token)
+	}
+
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil || minute < 0 || minute > 59 {
+		return "", fmt.Errorf("invalid executionTime minute in %q", token)
+	}
+
+	return fmt.Sprintf("%02d:%02d", hour, minute), nil
+}
+
+func executionTimeColumns(times []string) (t1, t2, t3 *string) {
+	store := func(hhmm string) *string {
+		v := hhmm + ":00"
+		return &v
+	}
+
+	if len(times) > 0 {
+		t1 = store(times[0])
+	}
+
+	if len(times) > 1 {
+		t2 = store(times[1])
+	}
+
+	if len(times) > 2 {
+		t3 = store(times[2])
+	}
+
+	return t1, t2, t3
+}
+
+// executionTimePtrEqual compares two *string values for equality, treating nil and empty strings as equal.
+func executionTimePtrEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+
+	if a == nil || b == nil {
+		return false
+	}
+
+	return apiModels.FormatExecutionTimeForCompare(*a) == apiModels.FormatExecutionTimeForCompare(*b)
+}
+
+// executionTimesColumnsEqual compares three execution time columns for equality.
+func executionTimesColumnsEqual(a1, a2, a3, b1, b2, b3 *string) bool {
+	return executionTimePtrEqual(a1, b1) && executionTimePtrEqual(a2, b2) && executionTimePtrEqual(a3, b3)
 }
 
 func normalizeStageIntervals(raw string) (string, error) {
@@ -129,7 +243,15 @@ func scheduleFromRequest(request apiModels.StageConfigurationRequest) apiModels.
 	if request.Interval != nil {
 		interval = *request.Interval
 	}
-	return apiModels.LenderSchedule{LenderName: request.LenderName, CommType: request.CommType, Stage: request.Stage, Interval: interval}
+
+	schedule := apiModels.LenderSchedule{LenderName: request.LenderName, CommType: request.CommType, Stage: request.Stage, Interval: interval}
+	if request.ExecutionTimes != nil {
+		t1, t2, t3 := executionTimeColumns(*request.ExecutionTimes)
+		schedule.ExecutionTime1, schedule.ExecutionTime2, schedule.ExecutionTime3 = t1, t2, t3
+		schedule.FillExecutionTimes()
+	}
+
+	return schedule
 }
 
 func mappingsFromRequest(request apiModels.StageConfigurationRequest) []apiModels.StageMapping {
@@ -168,6 +290,11 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	}
 	now := adminNow()
 	schedule := scheduleFromRequest(request)
+	if request.ExecutionTimes == nil {
+		// Create without times leaves all three columns null.
+		schedule.ExecutionTime1, schedule.ExecutionTime2, schedule.ExecutionTime3 = nil, nil, nil
+	}
+
 	applyAuditOnCreate(&schedule.CreatedOn, &schedule.UpdatedOn, &schedule.CreatedBy, &schedule.UpdatedBy, now, actorUsername)
 	mappings := mappingsFromRequest(request)
 	for i := range mappings {
@@ -211,6 +338,7 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	publishStageConfigurationInvalidation(versions)
 	response := &apiModels.StageConfigurationResponse{TemplateStages: mappings}
 	if scheduleRequested {
+		schedule.FillExecutionTimes()
 		response.LenderSchedule = &schedule
 	}
 	return response, nil
@@ -231,6 +359,14 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 	if request.Interval == nil {
 		target.Interval = discovered.Interval
 	}
+
+	if request.ExecutionTimes == nil {
+		target.ExecutionTime1 = discovered.ExecutionTime1
+		target.ExecutionTime2 = discovered.ExecutionTime2
+		target.ExecutionTime3 = discovered.ExecutionTime3
+	}
+
+	target.FillExecutionTimes()
 	target.ID = id
 	target.CreatedOn = discovered.CreatedOn
 	target.CreatedBy = discovered.CreatedBy
@@ -303,15 +439,34 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 			}
 
 			now := adminNow()
-			scheduleChanged = current.LenderName != target.LenderName || current.CommType != target.CommType || current.Stage != target.Stage || current.Interval != target.Interval
+			timesChanged := false
+			if request.ExecutionTimes != nil {
+				t1, t2, t3 := executionTimeColumns(*request.ExecutionTimes)
+				target.ExecutionTime1, target.ExecutionTime2, target.ExecutionTime3 = t1, t2, t3
+				target.FillExecutionTimes()
+				timesChanged = !executionTimesColumnsEqual(
+					current.ExecutionTime1, current.ExecutionTime2, current.ExecutionTime3,
+					target.ExecutionTime1, target.ExecutionTime2, target.ExecutionTime3,
+				)
+			}
+
+			scheduleChanged = current.LenderName != target.LenderName || current.CommType != target.CommType || current.Stage != target.Stage || current.Interval != target.Interval || timesChanged
 			mappingsChanged = mappingsRequested && !sameMappingSet(existing, desired, sameScheduleIdentity(current, target))
 			if scheduleChanged {
 				target.UpdatedOn = now
 				target.UpdatedBy = actorUsername
-				if err := tx.Table(config.Configs.LenderStagesTable).Where("Id = ?", id).Updates(map[string]interface{}{
+				updates := map[string]interface{}{
 					"LenderName": target.LenderName, "CommType": target.CommType, "Stage": target.Stage, "Interval": target.Interval,
 					"UpdatedOn": target.UpdatedOn, "UpdatedBy": target.UpdatedBy,
-				}).Error; err != nil {
+				}
+
+				if request.ExecutionTimes != nil {
+					updates["ExecutionTime1"] = target.ExecutionTime1
+					updates["ExecutionTime2"] = target.ExecutionTime2
+					updates["ExecutionTime3"] = target.ExecutionTime3
+				}
+
+				if err := tx.Table(config.Configs.LenderStagesTable).Where("Id = ?", id).Updates(updates).Error; err != nil {
 					return fmt.Errorf("update lender schedule: %w", err)
 				}
 			} else {
@@ -375,6 +530,8 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 			return nil, err
 		}
 	}
+
+	target.FillExecutionTimes()
 	return &apiModels.StageConfigurationResponse{LenderSchedule: &target, TemplateStages: savedMappings}, nil
 }
 
@@ -487,6 +644,11 @@ func (s *StageConfigurationService) GetLenderSchedules(params apiModels.StageCon
 	if err := query.Order(orderClause).Limit(params.PageSize).Offset((params.Page - 1) * params.PageSize).Find(&items).Error; err != nil {
 		return nil, err
 	}
+
+	for i := range items {
+		items[i].FillExecutionTimes()
+	}
+
 	return &apiModels.LenderScheduleListResult{Items: items, TotalItems: total}, nil
 }
 
@@ -498,6 +660,8 @@ func (s *StageConfigurationService) GetLenderSchedule(id int) (*apiModels.StageC
 		}
 		return nil, err
 	}
+
+	schedule.FillExecutionTimes()
 	var mappings []apiModels.StageMapping
 	if err := s.ReadDB.Table(config.Configs.TemplateStageTable).Where("LenderName = ? AND CommType = ? AND Stage = ?", schedule.LenderName, schedule.CommType, schedule.Stage).Order("SubStage ASC, Id ASC").Find(&mappings).Error; err != nil {
 		return nil, err

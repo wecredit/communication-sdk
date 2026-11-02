@@ -1,6 +1,7 @@
 package apiServices_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -87,5 +88,80 @@ func TestStageLockIdentitiesUseCanonicalPreHashOrder(t *testing.T) {
 	ordered := apiServices.OrderedStageConfigurationLockIdentities("z|SMS|2", "a|SMS|9", "z|SMS|2")
 	if !reflect.DeepEqual(ordered, []string{"a|SMS|9", "z|SMS|2"}) {
 		t.Fatalf("order = %v", ordered)
+	}
+}
+
+func TestFillExecutionTimesKeepsNullJSONShape(t *testing.T) {
+	var schedule apiModels.LenderSchedule
+	schedule.FillExecutionTimes()
+	raw, err := json.Marshal(schedule)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"executionTime1", "executionTime2", "executionTime3"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("missing %s", key)
+		}
+		if payload[key] != nil {
+			t.Fatalf("%s = %v, want null", key, payload[key])
+		}
+	}
+	times, ok := payload["executionTimes"].([]any)
+	if !ok {
+		t.Fatalf("executionTimes type = %T", payload["executionTimes"])
+	}
+	if len(times) != 0 {
+		t.Fatalf("executionTimes = %v, want []", times)
+	}
+
+	t1 := "15:05:00"
+	schedule.ExecutionTime1 = &t1
+	schedule.FillExecutionTimes()
+	if schedule.ExecutionTime1 == nil || *schedule.ExecutionTime1 != "15:05" {
+		t.Fatalf("executionTime1 = %v", schedule.ExecutionTime1)
+	}
+	if !reflect.DeepEqual(schedule.ExecutionTimes, []string{"15:05"}) {
+		t.Fatalf("executionTimes = %v", schedule.ExecutionTimes)
+	}
+}
+
+func TestNormalizeExecutionTimesSortDedupCompact(t *testing.T) {
+	got, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"15:05", "10:30", "10:30", " 08:00 ", ""})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	want := []string{"08:00", "10:30", "15:05"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestNormalizeExecutionTimesRejectsNonZapcashAndOverCap(t *testing.T) {
+	if _, err := apiServices.NormalizeExecutionTimes("wecredit", []string{"10:00"}); err == nil {
+		t.Fatal("expected non-zapcash rejection")
+	}
+	if _, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"01:00", "02:00", "03:00", "04:00"}); err == nil {
+		t.Fatal("expected over-cap rejection")
+	}
+	if _, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"25:00"}); err == nil {
+		t.Fatal("expected invalid hour rejection")
+	}
+}
+
+func TestNormalizeStageConfigurationExecutionTimes(t *testing.T) {
+	interval := "1d"
+	times := []string{"15:05", "10:30"}
+	request := apiModels.StageConfigurationRequest{
+		LenderName: "zapcash", CommType: "whatsapp", Stage: 3, Interval: &interval, ExecutionTimes: &times,
+	}
+	if err := apiServices.NormalizeStageConfigurationRequest(&request); err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if request.ExecutionTimes == nil || !reflect.DeepEqual(*request.ExecutionTimes, []string{"10:30", "15:05"}) {
+		t.Fatalf("executionTimes = %v", request.ExecutionTimes)
 	}
 }
