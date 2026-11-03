@@ -40,8 +40,22 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 	if ok, stage, err := sdkServices.ValidateCollectionAfternoonRequest(ivr); !ok || stage != 12 || err != nil {
 		t.Fatalf("ivr slot = (%t, %d, %v)", ok, stage, err)
 	}
+	// slot-* is EventId identity for stage-slot mode — not the afternoon path.
+	for _, slot := range []string{"slot-1", "slot-2", "slot-3", "SLOT-1"} {
+		ok, _, err := sdkServices.ValidateCollectionAfternoonRequest(sdkModels.CommApiRequestBody{
+			CollectionSlot: slot, Client: "zapcash", Channel: "WHATSAPP", Stage: 3.01,
+		})
+		if ok || err != nil {
+			t.Fatalf("slot-mode %q = (%t, %v), want (false, nil)", slot, ok, err)
+		}
+		if sdkServices.IsCollectionAfternoonSlot(slot) {
+			t.Fatalf("IsCollectionAfternoonSlot(%q) = true", slot)
+		}
+	}
+	if !sdkServices.IsCollectionAfternoonSlot("Afternoon") {
+		t.Fatal("IsCollectionAfternoonSlot(Afternoon) = false")
+	}
 	for _, request := range []sdkModels.CommApiRequestBody{
-		{CollectionSlot: "morning", Client: "zapcash", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "other", Channel: "RCS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "SMS", Stage: 12.07},
 		{CollectionSlot: "afternoon", Client: "zapcash", Channel: "RCS", Stage: 10.01},
@@ -49,6 +63,12 @@ func TestCollectionAfternoonSlotValidation(t *testing.T) {
 		if _, _, err := sdkServices.ValidateCollectionAfternoonRequest(request); err == nil {
 			t.Fatalf("expected invalid request to fail: %+v", request)
 		}
+	}
+	// Non-afternoon labels fall through (ok=false, err=nil), including legacy "morning".
+	if ok, _, err := sdkServices.ValidateCollectionAfternoonRequest(sdkModels.CommApiRequestBody{
+		CollectionSlot: "morning", Client: "zapcash", Channel: "RCS", Stage: 12.07,
+	}); ok || err != nil {
+		t.Fatalf("morning = (%t, %v), want (false, nil)", ok, err)
 	}
 }
 

@@ -169,17 +169,17 @@ func executionTimeColumns(times []string) (t1, t2, t3 *string) {
 	return t1, t2, t3
 }
 
-// executionTimePtrEqual compares two *string values for equality, treating nil and empty strings as equal.
+// executionTimePtrEqual compares two *string values for equality, treating nil
+// and empty / whitespace-only strings as equal after HH:MM normalization.
 func executionTimePtrEqual(a, b *string) bool {
-	if a == nil && b == nil {
-		return true
+	left, right := "", ""
+	if a != nil {
+		left = *a
 	}
-
-	if a == nil || b == nil {
-		return false
+	if b != nil {
+		right = *b
 	}
-
-	return apiModels.FormatExecutionTimeForCompare(*a) == apiModels.FormatExecutionTimeForCompare(*b)
+	return apiModels.FormatExecutionTimeForCompare(left) == apiModels.FormatExecutionTimeForCompare(right)
 }
 
 // executionTimesColumnsEqual compares three execution time columns for equality.
