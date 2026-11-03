@@ -74,7 +74,9 @@ type CommApiRequestBody struct {
 	IsMonitorCopy    bool   `json:"isMonitorCopy,omitempty" gorm:"-"`
 	MonitorVariantId string `json:"monitorVariantId,omitempty" gorm:"-"`
 	// CollectionSlot is optional so existing producers and consumers keep their
-	// current wire shape. The ZapCash afternoon collection path uses it for RCS and IVR.
+	// current wire shape. Value "afternoon" selects the ZapCash afternoon claim
+	// path for RCS/IVR stages 11–13. Slot-mode values (slot-1|2|3) are EventId /
+	// audit identity only and use the normal enqueue path.
 	CollectionSlot string `json:"collectionSlot,omitempty" gorm:"-"`
 	// IsFollowUpMessage is 1 when a WeCredit WhatsApp row is a follow-up and may send
 	// after that mobile was already used today. 0 keeps the day-level mobile key.
