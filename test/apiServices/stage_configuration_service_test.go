@@ -82,6 +82,17 @@ func TestNormalizeStageConfigurationAllowsIndependentResources(t *testing.T) {
 	if mappingOnly.Interval != nil || mappingOnly.TemplateStages[0].SubStage != 1 {
 		t.Fatalf("unexpected mapping-only normalization: %+v", mappingOnly)
 	}
+
+	times := []string{"15:05", "10:30"}
+	timesOnly := apiModels.StageConfigurationRequest{
+		LenderName: "zapcash", CommType: "whatsapp", Stage: 3, ExecutionTimes: &times,
+	}
+	if err := apiServices.NormalizeStageConfigurationRequest(&timesOnly); err != nil {
+		t.Fatalf("executionTimes-only request: %v", err)
+	}
+	if timesOnly.ExecutionTimes == nil || !reflect.DeepEqual(*timesOnly.ExecutionTimes, []string{"10:30", "15:05"}) {
+		t.Fatalf("executionTimes-only = %v", timesOnly.ExecutionTimes)
+	}
 }
 
 func TestStageLockIdentitiesUseCanonicalPreHashOrder(t *testing.T) {
@@ -149,6 +160,12 @@ func TestNormalizeExecutionTimesRejectsNonZapcashAndOverCap(t *testing.T) {
 	}
 	if _, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"25:00"}); err == nil {
 		t.Fatal("expected invalid hour rejection")
+	}
+	if _, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"10:30:99"}); err == nil {
+		t.Fatal("expected malformed HH:MM:SS rejection")
+	}
+	if _, err := apiServices.NormalizeExecutionTimes("zapcash", []string{"10:30:00"}); err == nil {
+		t.Fatal("expected HH:MM:SS rejection")
 	}
 }
 

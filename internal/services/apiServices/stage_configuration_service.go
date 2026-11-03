@@ -51,8 +51,8 @@ func NormalizeStageConfigurationRequest(request *apiModels.StageConfigurationReq
 	if request.Stage < 0 || request.Stage > maxWholeStage {
 		return fmt.Errorf("stage must be an integer between 0 and %d", maxWholeStage)
 	}
-	if request.Interval == nil && request.TemplateStages == nil {
-		return errors.New("at least one of interval or templateStages is required")
+	if request.Interval == nil && request.TemplateStages == nil && request.ExecutionTimes == nil {
+		return errors.New("at least one of interval, templateStages, or executionTimes is required")
 	}
 	seenSubStages := make(map[int]struct{}, len(request.TemplateStages))
 	for _, mapping := range request.TemplateStages {
@@ -130,10 +130,6 @@ func normalizeExecutionTimes(lenderName string, raw []string) ([]string, error) 
 
 func parseExecutionHHMM(token string) (string, error) {
 	token = strings.TrimSpace(token)
-	if len(token) >= 8 && token[2] == ':' && token[5] == ':' {
-		token = token[:5]
-	}
-
 	parts := strings.Split(token, ":")
 	if len(parts) != 2 {
 		return "", fmt.Errorf("invalid executionTime %q (want HH:MM)", token)
@@ -288,6 +284,9 @@ func (s *StageConfigurationService) Create(request apiModels.StageConfigurationR
 	if !scheduleRequested && !mappingsRequested {
 		return nil, fmt.Errorf("%w: templateStages must contain at least one mapping when interval is omitted", ErrConfigurationValidation)
 	}
+	if request.ExecutionTimes != nil && !scheduleRequested {
+		return nil, fmt.Errorf("%w: executionTimes require interval", ErrConfigurationValidation)
+	}
 	now := adminNow()
 	schedule := scheduleFromRequest(request)
 	if request.ExecutionTimes == nil {
@@ -356,17 +355,6 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 		return nil, fmt.Errorf("discover lender schedule: %w", err)
 	}
 	target := scheduleFromRequest(request)
-	if request.Interval == nil {
-		target.Interval = discovered.Interval
-	}
-
-	if request.ExecutionTimes == nil {
-		target.ExecutionTime1 = discovered.ExecutionTime1
-		target.ExecutionTime2 = discovered.ExecutionTime2
-		target.ExecutionTime3 = discovered.ExecutionTime3
-	}
-
-	target.FillExecutionTimes()
 	target.ID = id
 	target.CreatedOn = discovered.CreatedOn
 	target.CreatedBy = discovered.CreatedBy
@@ -395,6 +383,17 @@ func (s *StageConfigurationService) Update(id int, request apiModels.StageConfig
 			if !sameScheduleIdentity(current, discovered) {
 				return ErrConfigurationStale
 			}
+			// Retain omitted fields from the locked row so the response matches the DB.
+			if request.Interval == nil {
+				target.Interval = current.Interval
+			}
+
+			if request.ExecutionTimes == nil {
+				target.ExecutionTime1 = current.ExecutionTime1
+				target.ExecutionTime2 = current.ExecutionTime2
+				target.ExecutionTime3 = current.ExecutionTime3
+			}
+
 			if err := ensureScheduleIdentityAvailable(tx, target, id); err != nil {
 				return err
 			}
