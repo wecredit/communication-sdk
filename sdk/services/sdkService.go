@@ -46,20 +46,28 @@ func ResolveCommID(existing, clientName string) string {
 
 const collectionAfternoonClaimTTL = 36 * time.Hour
 
+// IsCollectionAfternoonSlot reports whether CollectionSlot should take the
+// legacy afternoon claim path. Slot-mode labels (slot-1|2|3) are not afternoon.
+func IsCollectionAfternoonSlot(slot string) bool {
+	return strings.EqualFold(strings.TrimSpace(slot), "afternoon")
+}
+
 // ValidateCollectionAfternoonRequest validates the tagged request shape that
 // bypasses the legacy SDK idempotency hash. RCS and IVR use it for the second
 // collection send. Morning and afternoon stay distinct because each claim key
 // includes the channel. IVR on a shared queue still writes a blank
 // COMM_IDEMPOTENT_KEY field in processCollectionAfternoon so the worker can stamp it.
+// Non-afternoon CollectionSlot values (including slot-*) return ok=false with no
+// error so callers can fall through to the normal path.
 func ValidateCollectionAfternoonRequest(data sdkModels.CommApiRequestBody) (bool, int, error) {
 	slot := strings.TrimSpace(data.CollectionSlot)
-	if slot == "" {
+	if slot == "" || !IsCollectionAfternoonSlot(slot) {
 		return false, 0, nil
 	}
 
 	channel := strings.ToUpper(strings.TrimSpace(data.Channel))
 	wholeStage := int(data.Stage)
-	if slot != "afternoon" || !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") ||
+	if !strings.EqualFold(strings.TrimSpace(data.Client), "zapcash") ||
 		(channel != variables.RCS && channel != variables.IVR) ||
 		(wholeStage != 11 && wholeStage != 12 && wholeStage != 13) {
 		return false, 0, fmt.Errorf("invalid collectionSlot request")
@@ -109,7 +117,11 @@ func ProcessCommApiData(data *sdkModels.CommApiRequestBody, snsClient *sns.SNS, 
 	data.Email = strings.TrimSpace(data.Email)
 	data.ProcessName = strings.ToUpper(strings.TrimSpace(data.ProcessName))
 
-	if strings.TrimSpace(data.CollectionSlot) != "" {
+	// Only the legacy afternoon collection path uses CollectionSlot=afternoon.
+	// Slot-mode values (slot-1|2|3) are EventId / audit identity and must use
+	// the normal enqueue path — any non-empty value previously forced afternoon
+	// and failed WhatsApp/SMS/email/PUSH and non-collection stages.
+	if IsCollectionAfternoonSlot(data.CollectionSlot) {
 		return processCollectionAfternoon(data, snsClient, topicArn, queueURL, redisClient)
 	}
 
