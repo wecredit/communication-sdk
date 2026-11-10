@@ -143,7 +143,10 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 			recordOutcome(*data, "", markerAccepted)
 		}
 
-		utils.Info(fmt.Sprintf("provider_accepted commId=%s client=%s http=%d", data.CommId, data.Client, result.HTTPStatus))
+		utils.Info(fmt.Sprintf(
+			"provider_accepted commId=%s client=%s http=%d errCode=%s txn=%s apiResponse=%s",
+			data.CommId, data.Client, result.HTTPStatus, result.ErrCode, result.TransactionID, result.RawBody,
+		))
 	} else {
 		category := result.RedisCategory
 		if category == "" {
@@ -156,7 +159,13 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 			logCategory = "provider_rejected"
 		}
 
-		utils.Info(fmt.Sprintf("%s commId=%s client=%s http=%d", logCategory, data.CommId, data.Client, result.HTTPStatus))
+		// Exact Pinnacle response body (no request credentials/MSISDN).
+		utils.Info(fmt.Sprintf(
+			"%s commId=%s client=%s http=%d errCode=%s errDesc=%q txn=%s camp=%s bodyLen=%d bodyFp=%s callErr=%v apiResponse=%s",
+			logCategory, data.CommId, data.Client, result.HTTPStatus,
+			result.ErrCode, result.ErrDesc, result.TransactionID, result.CampaignID,
+			result.BodyLen, result.BodyFP, callErr, result.RawBody,
+		))
 	}
 
 	writeAudits(*data, inputAudit, templateName, result.IsSent, result.ResponseMessage, result.TransactionID, result.CampaignID)
