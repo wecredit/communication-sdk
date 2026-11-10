@@ -60,12 +60,14 @@ func TestPinnacleIVROneCall(t *testing.T) {
 		wantPrefix string
 		wantTxn    string
 		wantCamp   string
+		wantCode   string
+		wantDesc   string
 	}{
-		{name: "accepted", status: 200, body: `{"ERR_CODE":"0","ERR_DESC":"Request processed Successfully.","CAMPG_ID":"651637","TRANS_ID":"10227391223"}`, wantSent: true, wantPrefix: pinnacleIvr.PrefixAccepted, wantTxn: "10227391223", wantCamp: "651637"},
-		{name: "rejected", status: 200, body: `{"ERR_CODE":"5","ERR_DESC":"Vox file not found","CAMPG_ID":"-1","TRANS_ID":"-1"}`, wantPrefix: pinnacleIvr.PrefixRejected, wantTxn: "-1", wantCamp: "-1"},
+		{name: "accepted", status: 200, body: `{"ERR_CODE":"0","ERR_DESC":"Request processed Successfully.","CAMPG_ID":"651637","TRANS_ID":"10227391223"}`, wantSent: true, wantPrefix: pinnacleIvr.PrefixAccepted, wantTxn: "10227391223", wantCamp: "651637", wantCode: "0", wantDesc: "Request processed Successfully."},
+		{name: "rejected", status: 200, body: `{"ERR_CODE":"5","ERR_DESC":"Vox file not found","CAMPG_ID":"-1","TRANS_ID":"-1"}`, wantPrefix: pinnacleIvr.PrefixRejected, wantTxn: "-1", wantCamp: "-1", wantCode: "5", wantDesc: "Vox file not found"},
 		{name: "http 400", status: 400, body: `nope`, wantPrefix: pinnacleIvr.PrefixUnknown},
 		{name: "http 500", status: 500, body: `{"ERR_CODE":1}`, wantPrefix: pinnacleIvr.PrefixUnknown},
-		{name: "http 302", status: 302, body: `{"ERR_CODE":"0","ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"}`, wantPrefix: pinnacleIvr.PrefixUnknown},
+		{name: "http 302", status: 302, body: `{"ERR_CODE":"0","ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"}`, wantPrefix: pinnacleIvr.PrefixUnknown, wantCode: "0", wantDesc: "ok"},
 		{name: "empty", status: 200, body: ``, wantPrefix: pinnacleIvr.PrefixUnknown},
 		{name: "malformed", status: 200, body: `{`, wantPrefix: pinnacleIvr.PrefixUnknown},
 		{name: "missing code", status: 200, body: `{"ERR_DESC":"ok","CAMPG_ID":"1","TRANS_ID":"2"}`, wantPrefix: pinnacleIvr.PrefixUnknown},
@@ -105,6 +107,15 @@ func TestPinnacleIVROneCall(t *testing.T) {
 			}
 			if result.TransactionID != tc.wantTxn || result.CampaignID != tc.wantCamp {
 				t.Fatalf("ids txn=%q camp=%q", result.TransactionID, result.CampaignID)
+			}
+			if result.ErrCode != tc.wantCode || result.ErrDesc != tc.wantDesc {
+				t.Fatalf("parsed errCode=%q errDesc=%q", result.ErrCode, result.ErrDesc)
+			}
+			if len(tc.body) > 0 && result.BodyLen != len(tc.body) {
+				t.Fatalf("BodyLen=%d want %d", result.BodyLen, len(tc.body))
+			}
+			if len(tc.body) > 0 && len(result.BodyFP) != 12 {
+				t.Fatalf("BodyFP=%q want 12 hex chars", result.BodyFP)
 			}
 		})
 	}
