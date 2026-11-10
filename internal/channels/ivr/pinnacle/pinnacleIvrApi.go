@@ -3,6 +3,8 @@ package pinnacleIvr
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +54,14 @@ type CallResult struct {
 	TransactionID   string
 	RedisCategory   string
 	HTTPStatus      int
+	// ErrCode / ErrDesc are parsed Pinnacle fields (string JSON only).
+	ErrCode string
+	ErrDesc string
+	// RawBody is the exact HTTP response body from Pinnacle (capped at read limit).
+	// Request credentials/MSISDN are never stored here.
+	RawBody string
+	BodyLen int
+	BodyFP  string
 }
 
 var ivrHTTPClient = newIvrHTTPClient()
@@ -124,6 +134,9 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 			HTTPStatus:      resp.StatusCode,
 			ResponseMessage: capMessage(PrefixUnknown + " body"),
 			RedisCategory:   "ivr_outcome_unknown",
+			RawBody:         string(raw),
+			BodyLen:         len(raw),
+			BodyFP:          bodyFingerprint(raw),
 		}, readErr
 	}
 
@@ -131,7 +144,14 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 }
 
 func parseCallResponse(status int, raw []byte) CallResult {
-	result := CallResult{HTTPStatus: status, RedisCategory: "ivr_outcome_unknown", ResponseMessage: PrefixUnknown}
+	result := CallResult{
+		HTTPStatus:      status,
+		RedisCategory:   "ivr_outcome_unknown",
+		ResponseMessage: PrefixUnknown,
+		RawBody:         string(raw),
+		BodyLen:         len(raw),
+		BodyFP:          bodyFingerprint(raw),
+	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		result.ResponseMessage = capMessage(PrefixUnknown + " empty")
 		return result
@@ -153,13 +173,18 @@ func parseCallResponse(status int, raw []byte) CallResult {
 		result.ResponseMessage = capMessage(PrefixUnknown + " err_code")
 		return result
 	}
+	result.ErrCode = code
 
 	if status < 200 || status >= 300 {
+		if desc, ok := jsonString(payload.ErrDesc); ok {
+			result.ErrDesc = desc
+		}
 		result.ResponseMessage = capMessage(PrefixUnknown + " http")
 		return result
 	}
 
 	desc, _ := jsonString(payload.ErrDesc)
+	result.ErrDesc = desc
 	if camp, ok := jsonString(payload.CampgID); ok && len(camp) >= 1 && len(camp) <= maxCampaignIDLength {
 		result.CampaignID = camp
 	}
@@ -178,6 +203,14 @@ func parseCallResponse(status int, raw []byte) CallResult {
 	result.RedisCategory = "ivr_provider_rejected"
 	result.ResponseMessage = capMessage(joinPrefix(PrefixRejected, desc))
 	return result
+}
+
+func bodyFingerprint(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func jsonString(raw json.RawMessage) (string, bool) {
