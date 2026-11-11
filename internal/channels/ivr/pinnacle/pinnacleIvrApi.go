@@ -58,10 +58,13 @@ type CallResult struct {
 	ErrCode string
 	ErrDesc string
 	// RawBody is the exact HTTP response body from Pinnacle (capped at read limit).
-	// Request credentials/MSISDN are never stored here.
 	RawBody string
 	BodyLen int
 	BodyFP  string
+	// ApiURL / RequestJSON / ApiCurl are the outbound call with Password masked as "***".
+	ApiURL      string
+	RequestJSON string
+	ApiCurl     string
 }
 
 var ivrHTTPClient = newIvrHTTPClient()
@@ -105,9 +108,15 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 		return CallResult{}, err
 	}
 
+	requestJSON, apiCurl := buildLoggedRequest(url, body)
+
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return CallResult{}, err
+		return CallResult{
+			ApiURL:      url,
+			RequestJSON: requestJSON,
+			ApiCurl:     apiCurl,
+		}, err
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, IvrHTTPTimeout)
@@ -115,7 +124,11 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return CallResult{}, err
+		return CallResult{
+			ApiURL:      url,
+			RequestJSON: requestJSON,
+			ApiCurl:     apiCurl,
+		}, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -124,6 +137,9 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 		return CallResult{
 			ResponseMessage: capMessage(PrefixUnknown + " transport"),
 			RedisCategory:   "ivr_outcome_unknown",
+			ApiURL:          url,
+			RequestJSON:     requestJSON,
+			ApiCurl:         apiCurl,
 		}, err
 	}
 
@@ -137,10 +153,33 @@ func PostSingleCall(ctx context.Context, baseURL string, body CallRequest) (Call
 			RawBody:         string(raw),
 			BodyLen:         len(raw),
 			BodyFP:          bodyFingerprint(raw),
+			ApiURL:          url,
+			RequestJSON:     requestJSON,
+			ApiCurl:         apiCurl,
 		}, readErr
 	}
 
-	return parseCallResponse(resp.StatusCode, raw), nil
+	result := parseCallResponse(resp.StatusCode, raw)
+	result.ApiURL = url
+	result.RequestJSON = requestJSON
+	result.ApiCurl = apiCurl
+	return result, nil
+}
+
+// buildLoggedRequest returns the JSON body and a copy-paste curl with Password masked.
+func buildLoggedRequest(url string, body CallRequest) (requestJSON, apiCurl string) {
+	logged := body
+	if strings.TrimSpace(logged.Password) != "" {
+		logged.Password = "***"
+	}
+	payload, err := json.Marshal(logged)
+	if err != nil {
+		return "", ""
+	}
+	requestJSON = string(payload)
+	escaped := strings.ReplaceAll(requestJSON, "'", `'\''`)
+	apiCurl = fmt.Sprintf("curl -sS -X POST '%s' -H 'Content-Type: application/json' -d '%s'", url, escaped)
+	return requestJSON, apiCurl
 }
 
 func parseCallResponse(status int, raw []byte) CallResult {
