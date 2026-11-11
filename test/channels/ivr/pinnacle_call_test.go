@@ -117,6 +117,15 @@ func TestPinnacleIVROneCall(t *testing.T) {
 			if len(tc.body) > 0 && len(result.BodyFP) != 12 {
 				t.Fatalf("BodyFP=%q want 12 hex chars", result.BodyFP)
 			}
+			if !strings.Contains(result.RequestJSON, `"Password":"***"`) {
+				t.Fatalf("RequestJSON missing redacted password: %q", result.RequestJSON)
+			}
+			if strings.Contains(result.RequestJSON, "secret-ivr-password") || strings.Contains(result.ApiCurl, "secret-ivr-password") {
+				t.Fatal("password leaked into logged request")
+			}
+			if !strings.Contains(result.ApiCurl, "SINGLE_CALLWithCustCall_ID") || !strings.Contains(result.ApiCurl, "curl -sS -X POST") {
+				t.Fatalf("ApiCurl incomplete: %q", result.ApiCurl)
+			}
 		})
 	}
 }
@@ -150,8 +159,11 @@ func TestIVRAttemptDoesNotCallTwice(t *testing.T) {
 		t.Fatalf("redelivery calls=%d delete=%v", env.calls.Load(), second.DeleteMessage)
 	}
 	logs := env.logs.String()
-	if strings.Contains(logs, "secret-ivr-password") || strings.Contains(logs, "OMNISTACK") {
-		t.Fatalf("credentials leaked into logs: %s", logs)
+	if strings.Contains(logs, "secret-ivr-password") {
+		t.Fatalf("password leaked into logs: %s", logs)
+	}
+	if !strings.Contains(logs, `apiCurl=curl -sS -X POST`) || !strings.Contains(logs, `"Password":"***"`) {
+		t.Fatalf("missing redacted apiCurl log: %s", logs)
 	}
 	if !strings.Contains(logs, "ivr_audit_enqueue commId=WC-ivr-1 table=IvrOutputTable") {
 		t.Fatalf("missing audit enqueue log: %s", logs)
@@ -284,8 +296,12 @@ func TestIVRRequestBody(t *testing.T) {
 	if body["OBD_TYPE"] != "SINGLE_VOICE" || body["VoiceId"] != "57965" || body["PARAM1"] != "" || body["DTMF"] != "" || body["THX_VOX_ID"] != "" {
 		t.Fatalf("body %s", raw)
 	}
-	if strings.Contains(env.logs.String(), "secret-ivr-password") || strings.Contains(env.logs.String(), "7014850582") {
-		t.Fatal("secret or msisdn logged")
+	logs := env.logs.String()
+	if strings.Contains(logs, "secret-ivr-password") {
+		t.Fatal("password leaked into logs")
+	}
+	if !strings.Contains(logs, "apiRequest=") || !strings.Contains(logs, "apiCurl=") || !strings.Contains(logs, "7014850582") {
+		t.Fatalf("expected redacted request/curl with MSISDN in logs: %s", logs)
 	}
 	if body["UserName"] == "" || body["Password"] == "" {
 		t.Fatalf("credentials missing from the request body: %s", raw)
