@@ -144,8 +144,9 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 		}
 
 		utils.Info(fmt.Sprintf(
-			"provider_accepted commId=%s client=%s http=%d errCode=%s txn=%s apiResponse=%s",
-			data.CommId, data.Client, result.HTTPStatus, result.ErrCode, result.TransactionID, result.RawBody,
+			"provider_accepted commId=%s client=%s http=%d errCode=%s txn=%s apiRequest=%s apiCurl=%s apiResponse=%s",
+			data.CommId, data.Client, result.HTTPStatus, result.ErrCode, result.TransactionID,
+			result.RequestJSON, result.ApiCurl, result.RawBody,
 		))
 	} else {
 		category := result.RedisCategory
@@ -159,12 +160,12 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 			logCategory = "provider_rejected"
 		}
 
-		// Exact Pinnacle response body (no request credentials/MSISDN).
+		// Exact response body + redacted request curl (Password=***). MSISDN kept for vendor review.
 		utils.Info(fmt.Sprintf(
-			"%s commId=%s client=%s http=%d errCode=%s errDesc=%q txn=%s camp=%s bodyLen=%d bodyFp=%s callErr=%v apiResponse=%s",
+			"%s commId=%s client=%s http=%d errCode=%s errDesc=%q txn=%s camp=%s bodyLen=%d bodyFp=%s callErr=%v apiRequest=%s apiCurl=%s apiResponse=%s",
 			logCategory, data.CommId, data.Client, result.HTTPStatus,
 			result.ErrCode, result.ErrDesc, result.TransactionID, result.CampaignID,
-			result.BodyLen, result.BodyFP, callErr, result.RawBody,
+			result.BodyLen, result.BodyFP, callErr, result.RequestJSON, result.ApiCurl, result.RawBody,
 		))
 	}
 
