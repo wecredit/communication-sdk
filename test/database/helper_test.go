@@ -1,6 +1,7 @@
 package database_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,29 @@ import (
 	"github.com/wecredit/communication-sdk/internal/database"
 	"gorm.io/gorm"
 )
+
+func TestHoldSQSAckAfterAcceptedAudits(t *testing.T) {
+	busy := fmt.Errorf("audit insert busy")
+	other := fmt.Errorf("timeout")
+	cases := []struct {
+		name      string
+		accepted  bool
+		inputErr  error
+		outputErr error
+		want      bool
+	}{
+		{name: "both fail after accept", accepted: true, inputErr: busy, outputErr: other, want: true},
+		{name: "input only", accepted: true, inputErr: busy, want: false},
+		{name: "output only", accepted: true, outputErr: busy, want: false},
+		{name: "both ok", accepted: true, want: false},
+		{name: "both fail but not accepted", accepted: false, inputErr: busy, outputErr: other, want: false},
+	}
+	for _, tc := range cases {
+		if got := database.HoldSQSAckAfterAcceptedAudits(tc.accepted, tc.inputErr, tc.outputErr); got != tc.want {
+			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}
 
 func TestPoolLimitUsesFallbackForBlankAndInvalid(t *testing.T) {
 	if got := database.ParsePoolLimit("", "DB_MAX_OPEN_CONNS_MARKETING", "Marketing DB", 50); got != 50 {

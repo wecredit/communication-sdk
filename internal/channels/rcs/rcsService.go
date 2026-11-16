@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	pinnacleRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/pinnacle"
 	sinchRcs "github.com/wecredit/communication-sdk/internal/channels/rcs/sinch"
@@ -27,6 +26,11 @@ type SendRcsResult struct {
 	TemplateVariables    string
 	SMSFallbackVariables string
 	TransactionID        string
+	// OutputAudit is the RcsOutputTable row. The consumer persists it (sync or
+	// async stream) so SQS ACK can wait on durable audit success.
+	OutputAudit map[string]interface{}
+	// ResponseMessage is used when sealing the ZapCash Redis terminal.
+	ResponseMessage string
 }
 
 func ApplyRcsResponseDefaults(response *extapimodels.RcsResponse, msg sdkModels.CommApiRequestBody, shouldHitVendor bool, templateName string) {
@@ -112,8 +116,6 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 		utils.Error(fmt.Errorf("mapping error: %v", err))
 	}
 
-	database.InsertRow(msg.Client, config.Configs.RcsOutputTable, dbMappedData)
-
 	result := SendRcsResult{
 		Processed:            true,
 		Accepted:             response.IsSent,
@@ -122,6 +124,8 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 		TemplateVariables:    req.TemplateVariables,
 		SMSFallbackVariables: req.SmsFallbackVariables,
 		TransactionID:        response.TransactionId,
+		OutputAudit:          dbMappedData,
+		ResponseMessage:      response.ResponseMessage,
 	}
 
 	if response.IsSent {

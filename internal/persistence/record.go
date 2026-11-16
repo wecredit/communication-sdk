@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -11,11 +12,15 @@ import (
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/variables"
 )
 
 const (
-	MapperMarketingSMS      = "marketing_sms_tracking_v1"
-	MapperMarketingWhatsapp = "marketing_whatsapp_output_v1"
+	MapperMarketingSMS        = "marketing_sms_tracking_v1"
+	MapperMarketingWhatsapp   = "marketing_whatsapp_output_v1"
+	MapperZapCashRcsCore      = "zapcash_rcs_core_v1"
+	MapperZapCashWhatsappCore = "zapcash_whatsapp_core_v1"
+	MapperZapCashIvrCore      = "zapcash_ivr_core_v1"
 )
 
 var ErrMissingHitAt = errors.New("terminal result is missing HitAt")
@@ -48,6 +53,20 @@ type Record struct {
 	ScheduledAt       *time.Time
 	RawPayload        string
 	RawResponse       string
+	// InputJSON / OutputJSON carry ZapCash Core channel audit maps. Table names
+	// stay out of the stream; the mapper selects config table names at write time.
+	InputJSON  string
+	OutputJSON string
+}
+
+// IsZapCashCoreMapper is true for Core Input+Output stream mappers.
+func IsZapCashCoreMapper(mapper string) bool {
+	switch strings.TrimSpace(mapper) {
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return true
+	default:
+		return false
+	}
 }
 
 func MarketingSMSRecord(data sdkModels.CommApiRequestBody, output map[string]interface{}, terminal redisModels.MobileChannelRedisData) (Record, error) {
@@ -142,6 +161,107 @@ func MarketingWhatsappRecord(data sdkModels.CommApiRequestBody, output map[strin
 	return record, nil
 }
 
+// ZapCashCoreRecord builds one stream entry with both Core Input and Output maps.
+func ZapCashCoreRecord(data sdkModels.CommApiRequestBody, input, output map[string]interface{}, terminal redisModels.MobileChannelRedisData) (Record, error) {
+	hitAt, err := terminalHitAt(terminal)
+	if err != nil {
+		return Record{}, err
+	}
+
+	mapper, channel, err := zapCashCoreMapper(data.Channel)
+	if err != nil {
+		return Record{}, err
+	}
+
+	commID := strings.TrimSpace(data.CommId)
+	if commID == "" {
+		return Record{}, fmt.Errorf("zapcash core record requires CommId")
+	}
+
+	inputJSON, err := marshalAuditMap(input)
+	if err != nil {
+		return Record{}, fmt.Errorf("encode input audit: %w", err)
+	}
+
+	outputJSON, err := marshalAuditMap(output)
+	if err != nil {
+		return Record{}, fmt.Errorf("encode output audit: %w", err)
+	}
+	if inputJSON == "" && outputJSON == "" {
+		return Record{}, fmt.Errorf("zapcash core record requires input or output audit")
+	}
+
+	transactionID := firstNonBlank(terminal.ProviderMessageID, terminal.TransactionId, mapString(output, "TransactionId"))
+	outcome := strings.TrimSpace(terminal.Outcome)
+	if outcome == "" {
+		if mapBool(output, "IsSent") || transactionID != "" {
+			outcome = "submitted"
+		} else {
+			outcome = "rejected"
+		}
+	}
+
+	return Record{
+		Mapper:            mapper,
+		EventID:           strings.TrimSpace(data.EventId),
+		SourceRowID:       data.SourceRowId,
+		Channel:           channel,
+		Client:            variables.ZapCash,
+		Vendor:            strings.TrimSpace(data.Vendor),
+		Process:           strings.TrimSpace(data.ProcessName),
+		CommID:            commID,
+		TransactionID:     transactionID,
+		ProviderMessageID: firstNonBlank(terminal.ProviderMessageID, transactionID),
+		Outcome:           outcome,
+		ErrorMessage:      firstNonBlank(terminal.ErrorMessage, mapString(output, "ResponseMessage")),
+		HitAt:             hitAt,
+		Mobile:            strings.TrimSpace(data.Mobile),
+		IsSent:            mapBool(output, "IsSent") || strings.EqualFold(outcome, "submitted"),
+		InputJSON:         inputJSON,
+		OutputJSON:        outputJSON,
+	}, nil
+}
+
+func zapCashCoreMapper(channel string) (mapper, normalizedChannel string, err error) {
+	switch strings.ToUpper(strings.TrimSpace(channel)) {
+	case variables.RCS:
+		return MapperZapCashRcsCore, variables.RCS, nil
+	case variables.WhatsApp:
+		return MapperZapCashWhatsappCore, variables.WhatsApp, nil
+	case variables.IVR:
+		return MapperZapCashIvrCore, variables.IVR, nil
+	default:
+		return "", "", fmt.Errorf("unsupported zapcash core channel %q", channel)
+	}
+}
+
+func marshalAuditMap(row map[string]interface{}) (string, error) {
+	if len(row) == 0 {
+		return "", nil
+	}
+
+	raw, err := json.Marshal(row)
+	if err != nil {
+		return "", err
+	}
+
+	return string(raw), nil
+}
+
+func unmarshalAuditMap(raw string) (map[string]interface{}, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "<nil>" {
+		return nil, nil
+	}
+
+	var row map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &row); err != nil {
+		return nil, err
+	}
+
+	return row, nil
+}
+
 func terminalHitAt(terminal redisModels.MobileChannelRedisData) (time.Time, error) {
 	raw := strings.TrimSpace(terminal.HitAt)
 	if raw == "" {
@@ -167,7 +287,7 @@ func (r Record) streamValues() map[string]interface{} {
 		"app_id": r.AppID, "is_sent": strconv.FormatBool(r.IsSent), "tag1": r.Tag1,
 		"tag2": r.Tag2, "dynamic_mobile": r.DynamicMobile,
 		"variables_value": r.VariablesValue, "raw_payload": r.RawPayload,
-		"raw_response": r.RawResponse,
+		"raw_response": r.RawResponse, "input_json": r.InputJSON, "output_json": r.OutputJSON,
 	}
 	if r.ScheduledAt != nil {
 		values["scheduled_at"] = r.ScheduledAt.Format(time.RFC3339Nano)
@@ -179,10 +299,22 @@ func (r Record) streamValues() map[string]interface{} {
 
 func recordFromMessage(message redislib.XMessage) (Record, error) {
 	value := func(key string) string { return strings.TrimSpace(fmt.Sprint(message.Values[key])) }
-	rawValue := func(key string) string { return fmt.Sprint(message.Values[key]) }
-	sourceRowID, err := strconv.ParseInt(value("source_row_id"), 10, 64)
-	if err != nil || sourceRowID < 1 {
-		return Record{}, fmt.Errorf("invalid source_row_id %q", value("source_row_id"))
+	rawValue := func(key string) string {
+		if message.Values[key] == nil {
+			return ""
+		}
+		return fmt.Sprint(message.Values[key])
+	}
+
+	mapper := value("mapper")
+	sourceRowRaw := value("source_row_id")
+	var sourceRowID int64
+	if sourceRowRaw != "" && sourceRowRaw != "<nil>" {
+		parsed, err := strconv.ParseInt(sourceRowRaw, 10, 64)
+		if err != nil {
+			return Record{}, fmt.Errorf("invalid source_row_id %q", sourceRowRaw)
+		}
+		sourceRowID = parsed
 	}
 
 	hitAt, err := time.Parse(time.RFC3339Nano, value("hit_at"))
@@ -196,7 +328,7 @@ func recordFromMessage(message redislib.XMessage) (Record, error) {
 	}
 
 	record := Record{
-		Mapper: value("mapper"), EventID: value("event_id"), Source: value("source"),
+		Mapper: mapper, EventID: value("event_id"), Source: value("source"),
 		SourceRowID: sourceRowID, Channel: value("channel"), Client: value("client"),
 		Vendor: value("vendor"), Process: value("process"), CommID: value("comm_id"),
 		TransactionID: value("transaction_id"), ProviderMessageID: value("provider_message_id"),
@@ -205,6 +337,7 @@ func recordFromMessage(message redislib.XMessage) (Record, error) {
 		AppID: value("app_id"), IsSent: isSent, Tag1: value("tag1"), Tag2: value("tag2"),
 		DynamicMobile: value("dynamic_mobile"), VariablesValue: value("variables_value"),
 		RawPayload: rawValue("raw_payload"), RawResponse: rawValue("raw_response"),
+		InputJSON: rawValue("input_json"), OutputJSON: rawValue("output_json"),
 	}
 
 	if raw := value("scheduled_at"); raw != "" {
@@ -215,7 +348,22 @@ func recordFromMessage(message redislib.XMessage) (Record, error) {
 		record.ScheduledAt = &scheduled
 	}
 
-	if record.Mapper != MapperMarketingSMS && record.Mapper != MapperMarketingWhatsapp {
+	switch record.Mapper {
+	case MapperMarketingSMS, MapperMarketingWhatsapp:
+		if record.SourceRowID < 1 {
+			return Record{}, fmt.Errorf("invalid source_row_id %q", sourceRowRaw)
+		}
+
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		if record.CommID == "" {
+			return Record{}, fmt.Errorf("zapcash core record requires CommId")
+		}
+
+		if record.InputJSON == "" && record.OutputJSON == "" {
+			return Record{}, fmt.Errorf("zapcash core record requires input or output audit")
+		}
+
+	default:
 		return Record{}, fmt.Errorf("unsupported mapper %q", record.Mapper)
 	}
 

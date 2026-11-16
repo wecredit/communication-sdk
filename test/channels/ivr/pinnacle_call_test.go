@@ -381,7 +381,7 @@ func TestIVROverlappingDeliveriesCallOnce(t *testing.T) {
 	}
 }
 
-func TestIVRAuditBusyStillDeletesAfterOneCall(t *testing.T) {
+func TestIVRAuditBusyHoldsAckAfterAcceptedSend(t *testing.T) {
 	env := startIVR(t)
 	env.script(200, `{"ERR_CODE":"0","ERR_DESC":"ok","CAMPG_ID":"651637","TRANS_ID":"10227391223"}`, nil)
 	previous := database.DBtechWrite
@@ -394,11 +394,11 @@ func TestIVRAuditBusyStillDeletesAfterOneCall(t *testing.T) {
 	}
 	defer close(release)
 	got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
-	if env.calls.Load() != 1 || !got.DeleteMessage {
-		t.Fatalf("busy audit calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+	if env.calls.Load() != 1 || got.DeleteMessage {
+		t.Fatalf("busy audit calls=%d delete=%v want delete=false", env.calls.Load(), got.DeleteMessage)
 	}
-	if !strings.Contains(env.logs.String(), "audit_insert_failed") || !strings.Contains(env.logs.String(), "audit insert busy") {
-		t.Fatalf("missing busy log: %s", env.logs.String())
+	if !strings.Contains(env.logs.String(), "holding SQS ack after accepted IVR send") {
+		t.Fatalf("missing hold-ack log: %s", env.logs.String())
 	}
 }
 

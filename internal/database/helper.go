@@ -137,10 +137,18 @@ func InsertRow(client, table string, row map[string]interface{}) {
 	}
 }
 
+// HoldSQSAckAfterAcceptedAudits is true when an accepted provider send failed
+// both Input and Output channel audits. Callers must leave the SQS message so a
+// redelivery can retry the inserts after the claim is sealed.
+func HoldSQSAckAfterAcceptedAudits(accepted bool, inputErr, outputErr error) bool {
+	return accepted && inputErr != nil && outputErr != nil
+}
+
 // InsertRowSync writes one channel audit row on the caller.
 // A disabled destination or a nil pool is a success. A full slot or a database
 // error is returned. Channel handlers that must delete SQS when the send is
-// finished, including PUSH, use InsertRow instead.
+// finished, including PUSH, use InsertRow instead. ZapCash RCS/WhatsApp/IVR
+// accepted-send paths use this when Core async writers are off.
 func InsertRowSync(client, table string, row map[string]interface{}) error {
 	writeComm, writeCore := ChannelAuditDestinations(
 		client,
