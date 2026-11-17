@@ -82,8 +82,8 @@ func (s *TemplateService) GetTemplates(params apiModels.TemplateListParams) (*ap
 	if params.Search != "" {
 		like := "%" + EscapeLikePattern(params.Search) + "%"
 		query = query.Where(
-			"(TemplateName LIKE ? ESCAPE '"+likeEscapeChar+"' OR Process LIKE ? ESCAPE '"+likeEscapeChar+"' OR Channel LIKE ? ESCAPE '"+likeEscapeChar+"' OR Vendor LIKE ? ESCAPE '"+likeEscapeChar+"')",
-			like, like, like, like,
+			"(TemplateName LIKE ? ESCAPE '"+likeEscapeChar+"' OR Process LIKE ? ESCAPE '"+likeEscapeChar+"' OR Channel LIKE ? ESCAPE '"+likeEscapeChar+"' OR Vendor LIKE ? ESCAPE '"+likeEscapeChar+"' OR CAST(DltTemplateId AS CHAR) LIKE ? ESCAPE '"+likeEscapeChar+"' OR VoiceId LIKE ? ESCAPE '"+likeEscapeChar+"')",
+			like, like, like, like, like, like,
 		)
 	}
 
