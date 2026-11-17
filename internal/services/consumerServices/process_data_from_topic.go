@@ -1153,15 +1153,20 @@ func handleIVR(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	}
 
 	if result.AlreadyMarked {
-		if zapCashCoreAsyncActive(data.Client, data.Channel) {
-			if err := enqueueZapCashCoreAudits(ctx, data, dbMappedData, map[string]interface{}{
-				"CommId": data.CommId, "Vendor": data.Vendor, "MobileNumber": data.Mobile,
-				"IsSent": true, "ResponseMessage": "redelivery audit repair",
-			}); err != nil {
-				utils.Error(fmt.Errorf("[Client:%s CommId:%s] IVR redelivery async audit enqueue failed: %v", data.Client, data.CommId, err))
-				return true, false
-			}
+		// Same repair as skipSend: derive IsSent from the sealed claim so
+		// rejected redeliveries are not recorded as accepts, and sync hold-ACK
+		// redeliveries retry both audits before delete.
+		redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+		_, redisTxn, redisErr, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+		if getErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] IVR redelivery claim read failed: %v", data.Client, data.CommId, getErr))
+			return true, false
 		}
+
+		if !repairZapCashSealedChannelAudits(ctx, data, dbMappedData, redisTxn, redisErr) {
+			return true, false
+		}
+
 		deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete already-marked IVR message: %v", delErr))
@@ -2422,15 +2427,16 @@ func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommAp
 		dbMappedData = map[string]interface{}{}
 	}
 	dbMappedData["CommId"] = data.CommId
+	accepted := zapCashSealedClaimAccepted(redisTxn, redisErr)
 	outputRow := map[string]interface{}{
 		"CommId":          data.CommId,
 		"Vendor":          data.Vendor,
 		"MobileNumber":    data.Mobile,
 		"TransactionId":   redisTxn,
-		"IsSent":          strings.TrimSpace(redisTxn) != "",
+		"IsSent":          accepted,
 		"ResponseMessage": redisErr,
 	}
-	if strings.TrimSpace(redisErr) == "" && strings.TrimSpace(redisTxn) != "" {
+	if strings.TrimSpace(redisErr) == "" && accepted {
 		outputRow["ResponseMessage"] = "redelivery audit repair"
 	}
 
@@ -2448,12 +2454,21 @@ func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommAp
 	}
 	inputErr := database.InsertRowSync(data.Client, inputTable, dbMappedData)
 	outputErr := database.InsertRowSync(data.Client, outputTable, outputRow)
-	accepted := strings.TrimSpace(redisTxn) != ""
 	if database.HoldSQSAckAfterAcceptedAudits(accepted, inputErr, outputErr) {
 		logHeldSQSAckForAudits(data, data.Channel, inputErr, outputErr)
 		return false
 	}
 	return true
+}
+
+// zapCashSealedClaimAccepted is true when the sealed Redis claim records a
+// provider accept (transaction id, or IVR's txn-less ivr_accepted marker).
+func zapCashSealedClaimAccepted(redisTxn, redisErr string) bool {
+	if strings.TrimSpace(redisTxn) != "" {
+		return true
+	}
+
+	return strings.TrimSpace(redisErr) == "ivr_accepted"
 }
 
 func zapCashChannelAuditTables(channel string) (inputTable, outputTable string) {
