@@ -138,17 +138,19 @@ func InsertRow(client, table string, row map[string]interface{}) {
 }
 
 // HoldSQSAckAfterAcceptedAudits is true when an accepted provider send failed
-// both Input and Output channel audits. Callers must leave the SQS message so a
-// redelivery can retry the inserts after the claim is sealed.
+// either Input or Output channel audit. Callers must leave the SQS message so a
+// redelivery can retry the missing insert after the claim is sealed.
 func HoldSQSAckAfterAcceptedAudits(accepted bool, inputErr, outputErr error) bool {
-	return accepted && inputErr != nil && outputErr != nil
+	return accepted && (inputErr != nil || outputErr != nil)
 }
 
 // InsertRowSync writes one channel audit row on the caller.
 // A disabled destination or a nil pool is a success. A full slot or a database
-// error is returned. Channel handlers that must delete SQS when the send is
-// finished, including PUSH, use InsertRow instead. ZapCash RCS/WhatsApp/IVR
-// accepted-send paths use this when Core async writers are off.
+// error is returned. When CommId is set, an existing row is skipped so
+// hold-ACK redelivery does not duplicate a partial success. Channel handlers
+// that must delete SQS when the send is finished, including PUSH, use
+// InsertRow instead. ZapCash RCS/WhatsApp/IVR accepted-send paths use this
+// when Core async writers are off.
 func InsertRowSync(client, table string, row map[string]interface{}) error {
 	writeComm, writeCore := ChannelAuditDestinations(
 		client,
@@ -173,11 +175,11 @@ func InsertRowSync(client, table string, row map[string]interface{}) error {
 
 	var err error
 	if writeComm && commDB != nil {
-		err = insertAuditWithTimeout(table, commDB, copied)
+		err = insertAuditWithTimeoutIfMissing(table, commDB, copied)
 	}
 
 	if writeCore && coreDB != nil {
-		err = errors.Join(err, insertAuditWithTimeout(table, coreDB, copied))
+		err = errors.Join(err, insertAuditWithTimeoutIfMissing(table, coreDB, copied))
 	}
 
 	return err
@@ -187,6 +189,34 @@ func insertAuditWithTimeout(table string, db *gorm.DB, row map[string]interface{
 	ctx, cancel := context.WithTimeout(context.Background(), auditInsertTimeout)
 	defer cancel()
 	return InsertData(table, db.WithContext(ctx), row)
+}
+
+func insertAuditWithTimeoutIfMissing(table string, db *gorm.DB, row map[string]interface{}) error {
+	commID := auditRowCommID(row)
+	if commID == "" {
+		return insertAuditWithTimeout(table, db, row)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), auditInsertTimeout)
+	defer cancel()
+	var count int64
+	if err := db.WithContext(ctx).Table(table).Where("CommId = ?", commID).Limit(1).Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count > 0 {
+		return nil
+	}
+
+	return InsertData(table, db.WithContext(ctx), row)
+}
+
+func auditRowCommID(row map[string]interface{}) string {
+	if row == nil || row["CommId"] == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(fmt.Sprint(row["CommId"]))
 }
 
 func copyAuditRow(row map[string]interface{}) map[string]interface{} {

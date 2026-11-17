@@ -2423,6 +2423,12 @@ func enqueueZapCashCoreAudits(ctx context.Context, data sdkModels.CommApiRequest
 }
 
 func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, redisTxn, redisErr string) bool {
+	// ivr_attempted means the dial is still in flight. Do not write a false
+	// rejection or ACK; leave the message until the claim is sealed.
+	if ZapCashIvrClaimInFlight(data.Channel, redisTxn, redisErr) {
+		return false
+	}
+
 	if dbMappedData == nil {
 		dbMappedData = map[string]interface{}{}
 	}
@@ -2469,6 +2475,16 @@ func zapCashSealedClaimAccepted(redisTxn, redisErr string) bool {
 	}
 
 	return strings.TrimSpace(redisErr) == "ivr_accepted"
+}
+
+// ZapCashIvrClaimInFlight is true while IVR has stamped ivr_attempted and has
+// not yet written a terminal transactionId or outcome marker.
+func ZapCashIvrClaimInFlight(channel, redisTxn, redisErr string) bool {
+	if !strings.EqualFold(strings.TrimSpace(channel), variables.IVR) {
+		return false
+	}
+
+	return strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == "ivr_attempted"
 }
 
 func zapCashChannelAuditTables(channel string) (inputTable, outputTable string) {

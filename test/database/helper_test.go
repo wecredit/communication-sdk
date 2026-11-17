@@ -21,8 +21,8 @@ func TestHoldSQSAckAfterAcceptedAudits(t *testing.T) {
 		want      bool
 	}{
 		{name: "both fail after accept", accepted: true, inputErr: busy, outputErr: other, want: true},
-		{name: "input only", accepted: true, inputErr: busy, want: false},
-		{name: "output only", accepted: true, outputErr: busy, want: false},
+		{name: "input only", accepted: true, inputErr: busy, want: true},
+		{name: "output only", accepted: true, outputErr: busy, want: true},
 		{name: "both ok", accepted: true, want: false},
 		{name: "both fail but not accepted", accepted: false, inputErr: busy, outputErr: other, want: false},
 	}
