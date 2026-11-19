@@ -474,3 +474,67 @@ func TestMarketingSMSRecordUsesTrackingFieldLimitsAndRedaction(t *testing.T) {
 		t.Fatalf("error message was not redacted: %q", record.ErrorMessage)
 	}
 }
+
+func TestZapCashCoreRecordRequiresHitAtAndCommId(t *testing.T) {
+	_, err := persistence.ZapCashCoreRecord(sdkModels.CommApiRequestBody{
+		Client: "zapcash", Channel: "RCS", CommId: "WC-1",
+	}, map[string]interface{}{"CommId": "WC-1"}, map[string]interface{}{"IsSent": true}, redisModels.MobileChannelRedisData{
+		TransactionId: "txn-1",
+	})
+	if !errors.Is(err, persistence.ErrMissingHitAt) {
+		t.Fatalf("error = %v, want ErrMissingHitAt", err)
+	}
+
+	hitAt := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	_, err = persistence.ZapCashCoreRecord(sdkModels.CommApiRequestBody{
+		Client: "zapcash", Channel: "RCS",
+	}, map[string]interface{}{"Mobile": int64(1)}, map[string]interface{}{"IsSent": true}, redisModels.MobileChannelRedisData{
+		TransactionId: "txn-1", Outcome: "submitted", HitAt: hitAt.Format(time.RFC3339Nano),
+	})
+	if err == nil || !strings.Contains(err.Error(), "CommId") {
+		t.Fatalf("error = %v, want CommId required", err)
+	}
+}
+
+func TestZapCashCoreRecordEncodesInputAndOutputJSON(t *testing.T) {
+	hitAt := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	record, err := persistence.ZapCashCoreRecord(sdkModels.CommApiRequestBody{
+		Client: "zapcash", Channel: "RCS", CommId: "WC-rcs-1", EventId: "event-1",
+		Vendor: "PINNACLE", ProcessName: "ZAPCASH", Mobile: "9999999999",
+	}, map[string]interface{}{"CommId": "WC-rcs-1", "Mobile": int64(9999999999), "Stage": 12.0},
+		map[string]interface{}{"CommId": "WC-rcs-1", "IsSent": true, "TransactionId": "txn-9"},
+		redisModels.MobileChannelRedisData{
+			TransactionId: "txn-9", ProviderMessageID: "txn-9", Outcome: "submitted",
+			HitAt: hitAt.Format(time.RFC3339Nano),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Mapper != persistence.MapperZapCashRcsCore || record.Client != "zapcash" || record.Channel != "RCS" {
+		t.Fatalf("record identity = %+v", record)
+	}
+	if !strings.Contains(record.InputJSON, "WC-rcs-1") || !strings.Contains(record.OutputJSON, "txn-9") {
+		t.Fatalf("json payload missing: input=%q output=%q", record.InputJSON, record.OutputJSON)
+	}
+	if persistence.BatchLimit(record.Mapper) != 50 {
+		t.Fatalf("batch limit = %d, want 50", persistence.BatchLimit(record.Mapper))
+	}
+	lock := persistence.BusinessLockKeyForTest("zapcash:rcs", record)
+	if !strings.Contains(lock, "WC-rcs-1") {
+		t.Fatalf("business lock = %q, want CommId", lock)
+	}
+}
+
+func TestZapCashAsyncEnabledRequiresFlagAndBudget(t *testing.T) {
+	old := config.Configs
+	t.Cleanup(func() { config.Configs = old })
+	config.Configs.CommAsyncWriteChannels = "zapcash:rcs"
+	config.Configs.CommWriteStreamBudgetOverrides = "zapcash:rcs:1000"
+	if !persistence.AsyncEnabled("ZAPCASH", "RCS") {
+		t.Fatal("expected zapcash:rcs to be enabled")
+	}
+	config.Configs.CommWriteStreamBudgetOverrides = ""
+	if persistence.AsyncEnabled("zapcash", "rcs") {
+		t.Fatal("async write must stay off without a verified stream budget")
+	}
+}

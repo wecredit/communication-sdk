@@ -309,4 +309,10 @@ func TestZapCashBlankClaimShouldReclaim(t *testing.T) {
 	if services.ShouldReclaimBlankZapCashClaim(variables.IVR, "", "ivr_attempted", 2) {
 		t.Fatal("a stamped IVR claim must stay")
 	}
+	if !services.ZapCashIvrClaimInFlight(variables.IVR, "", "ivr_attempted") {
+		t.Fatal("ivr_attempted must be treated as in-flight")
+	}
+	if services.ZapCashIvrClaimInFlight(variables.IVR, "txn-1", "") || services.ZapCashIvrClaimInFlight(variables.IVR, "", "ivr_accepted") || services.ZapCashIvrClaimInFlight(variables.RCS, "", "ivr_attempted") {
+		t.Fatal("sealed or non-IVR claims are not in-flight")
+	}
 }
