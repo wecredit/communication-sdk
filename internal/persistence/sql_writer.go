@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -16,6 +17,7 @@ const sqlStatementTimeout = 30 * time.Second
 const (
 	smsBatchLimit           = 140
 	whatsappBatchLimit      = 70
+	zapCashCoreBatchLimit   = 50
 	smsColumnCount          = 13
 	whatsappColumnCount     = 21
 	sqlServerParameterLimit = 2100
@@ -29,6 +31,9 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return nil
 	}
 	if db == nil {
+		if IsZapCashCoreMapper(records[0].Mapper) {
+			return fmt.Errorf("ZapCash Core database is unavailable")
+		}
 		return fmt.Errorf("Marketing database is unavailable")
 	}
 	deduped := dedupeRecords(records)
@@ -37,6 +42,8 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return writeMarketingSMS(ctx, db, deduped)
 	case MapperMarketingWhatsapp:
 		return writeMarketingWhatsapp(ctx, db, deduped)
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return writeZapCashCore(ctx, db, deduped)
 	default:
 		return fmt.Errorf("unsupported persistence mapper %q", deduped[0].Mapper)
 	}
@@ -50,6 +57,9 @@ func dedupeRecords(records []Record) []Record {
 		if record.Mapper == MapperMarketingWhatsapp {
 			key = record.Mapper + "\x00" + fmt.Sprint(record.SourceRowID)
 		}
+		if IsZapCashCoreMapper(record.Mapper) {
+			key = record.Mapper + "\x00" + record.CommID
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -57,6 +67,99 @@ func dedupeRecords(records []Record) []Record {
 		result = append(result, record)
 	}
 	return result
+}
+
+func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error {
+	if len(records) > zapCashCoreBatchLimit {
+		return fmt.Errorf("ZapCash Core persistence batch exceeds limit %d", zapCashCoreBatchLimit)
+	}
+	for _, record := range records {
+		if err := writeOneZapCashCore(ctx, db, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeOneZapCashCore(ctx context.Context, db *gorm.DB, record Record) error {
+	if !IsZapCashCoreMapper(record.Mapper) || record.CommID == "" || record.HitAt.IsZero() {
+		return fmt.Errorf("invalid ZapCash Core persistence record")
+	}
+
+	inputTable, outputTable, err := zapCashCoreTables(record.Mapper)
+	if err != nil {
+		return err
+	}
+
+	input, err := unmarshalAuditMap(record.InputJSON)
+	if err != nil {
+		return fmt.Errorf("decode input audit: %w", err)
+	}
+
+	output, err := unmarshalAuditMap(record.OutputJSON)
+	if err != nil {
+		return fmt.Errorf("decode output audit: %w", err)
+	}
+
+	if input != nil {
+		input["CommId"] = record.CommID
+		if err := insertCoreAuditIfMissing(ctx, db, inputTable, record.CommID, input); err != nil {
+			return err
+		}
+	}
+
+	if output != nil {
+		output["CommId"] = record.CommID
+		if err := insertCoreAuditIfMissing(ctx, db, outputTable, record.CommID, output); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error) {
+	switch mapper {
+	case MapperZapCashRcsCore:
+		inputTable, err = approvedTable(config.Configs.SdkRcsInputTable)
+		if err != nil {
+			return "", "", err
+		}
+
+		outputTable, err = approvedTable(config.Configs.RcsOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashWhatsappCore:
+		inputTable, err = approvedTable(config.Configs.SdkWhatsappInputTable)
+		if err != nil {
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.WhatsappOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashIvrCore:
+		inputTable, err = approvedTable(config.Configs.SdkIvrInputTable)
+		if err != nil {
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.IvrOutputTable)
+		return inputTable, outputTable, err
+	default:
+		return "", "", fmt.Errorf("unsupported zapcash core mapper %q", mapper)
+	}
+}
+
+func insertCoreAuditIfMissing(parent context.Context, db *gorm.DB, table, commID string, row map[string]interface{}) error {
+	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
+	defer cancel()
+
+	var count int64
+	if err := db.WithContext(ctx).Table(table).Where("CommId = ?", commID).Limit(1).Count(&count).Error; err != nil {
+		return fmt.Errorf("core audit exists check table=%s: %w", table, err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	return database.InsertData(table, db.WithContext(ctx), row)
 }
 
 func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error {
@@ -128,17 +231,25 @@ func executeBatch(parent context.Context, db *gorm.DB, query string, args []inte
 // BatchLimit exposes the stable per-mapper read/write ceiling for startup and
 // black-box tests. It does not alter the Redis record contract.
 func BatchLimit(mapper string) int64 {
-	if mapper == MapperMarketingSMS {
+	switch mapper {
+	case MapperMarketingSMS:
 		return smsBatchLimit
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return zapCashCoreBatchLimit
+	default:
+		return whatsappBatchLimit
 	}
-	return whatsappBatchLimit
 }
 
 func BatchParameterCount(mapper string) int {
-	if mapper == MapperMarketingSMS {
+	switch mapper {
+	case MapperMarketingSMS:
 		return smsBatchLimit * smsColumnCount
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return zapCashCoreBatchLimit
+	default:
+		return whatsappBatchLimit * whatsappColumnCount
 	}
-	return whatsappBatchLimit * whatsappColumnCount
 }
 
 func approvedTable(table string) (string, error) {

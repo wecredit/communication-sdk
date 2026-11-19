@@ -357,4 +357,7 @@ func streamBudget(client, channel string) int64 {
 var supportedChannels = map[string]string{
 	"wecredit:sms":      MapperMarketingSMS,
 	"wecredit:whatsapp": MapperMarketingWhatsapp,
+	"zapcash:rcs":       MapperZapCashRcsCore,
+	"zapcash:whatsapp":  MapperZapCashWhatsappCore,
+	"zapcash:ivr":       MapperZapCashIvrCore,
 }
