@@ -437,6 +437,16 @@ func ApplyAppConfigValues(candidate *models.Config, values map[string]string) {
 	apply("COMM_WRITE_WORKER_OVERRIDES", &candidate.CommWriteWorkerOverrides)
 }
 
+// supportedCommWriteWorkerLanes matches persistence.supportedChannels.
+// Keep this list in sync when a new durable mapper lane is added.
+var supportedCommWriteWorkerLanes = map[string]struct{}{
+	"wecredit:sms":      {},
+	"wecredit:whatsapp": {},
+	"zapcash:rcs":       {},
+	"zapcash:whatsapp":  {},
+	"zapcash:ivr":       {},
+}
+
 // ValidateCommWriteWorkerOverrides validates internal persistence concurrency.
 // Only lanes with an implemented durable record contract may be configured.
 func ValidateCommWriteWorkerOverrides(raw string) error {
@@ -453,7 +463,7 @@ func ValidateCommWriteWorkerOverrides(raw string) error {
 		}
 
 		lane := strings.ToLower(strings.TrimSpace(parts[0])) + ":" + strings.ToLower(strings.TrimSpace(parts[1]))
-		if lane != "wecredit:sms" && lane != "wecredit:whatsapp" {
+		if _, ok := supportedCommWriteWorkerLanes[lane]; !ok {
 			return fmt.Errorf("unsupported commwrite worker lane %q", lane)
 		}
 
