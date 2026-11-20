@@ -301,9 +301,9 @@ func buildAuditMaps(data sdkModels.CommApiRequestBody, inputAudit map[string]int
 
 func writeAuditsSync(data sdkModels.CommApiRequestBody, input, output map[string]interface{}) (inputErr, outputErr error) {
 	logAuditEnqueue(data.CommId, config.Configs.SdkIvrInputTable)
-	inputErr = database.InsertRowSync(data.Client, config.Configs.SdkIvrInputTable, input)
+	inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkIvrInputTable, redis.AuditSideInput, input)
 	logAuditEnqueue(data.CommId, config.Configs.IvrOutputTable)
-	outputErr = database.InsertRowSync(data.Client, config.Configs.IvrOutputTable, output)
+	outputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.IvrOutputTable, redis.AuditSideOutput, output)
 	return inputErr, outputErr
 }
 

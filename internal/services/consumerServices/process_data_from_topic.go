@@ -1351,7 +1351,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	switch {
 	case asyncCore:
 	case zapCashClient:
-		inputErr = database.InsertRowSync(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
+		inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkWhatsappInputTable, redis.AuditSideInput, dbMappedData)
 	default:
 		database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
 	}
@@ -1719,7 +1719,7 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	case asyncCore:
 		// Core audits enqueue after seal.
 	case zapCashClient:
-		inputErr = database.InsertRowSync(data.Client, config.Configs.SdkRcsInputTable, dbMappedData)
+		inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkRcsInputTable, redis.AuditSideInput, dbMappedData)
 	default:
 		database.InsertRow(data.Client, config.Configs.SdkRcsInputTable, dbMappedData)
 	}
@@ -2356,7 +2356,7 @@ func writeRcsOutputAuditSync(data sdkModels.CommApiRequestBody, result rcs.SendR
 	if result.OutputAudit == nil {
 		return nil
 	}
-	return database.InsertRowSync(data.Client, config.Configs.RcsOutputTable, result.OutputAudit)
+	return channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.RcsOutputTable, redis.AuditSideOutput, result.OutputAudit)
 }
 
 func persistRcsOutputAudit(data sdkModels.CommApiRequestBody, result rcs.SendRcsResult, zapCashClient bool) error {
@@ -2372,7 +2372,7 @@ func persistRcsOutputAudit(data sdkModels.CommApiRequestBody, result rcs.SendRcs
 
 func persistWhatsappOutputAudit(data sdkModels.CommApiRequestBody, outputRow map[string]interface{}, zapCashClient bool) error {
 	if zapCashClient {
-		return database.InsertRowSync(data.Client, config.Configs.WhatsappOutputTable, outputRow)
+		return channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.WhatsappOutputTable, redis.AuditSideOutput, outputRow)
 	}
 	database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, outputRow)
 	return nil
@@ -2458,8 +2458,8 @@ func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommAp
 	if inputTable == "" || outputTable == "" {
 		return true
 	}
-	inputErr := database.InsertRowSync(data.Client, inputTable, dbMappedData)
-	outputErr := database.InsertRowSync(data.Client, outputTable, outputRow)
+	inputErr := channelHelper.PersistZapCashAuditIfNeeded(data, inputTable, redis.AuditSideInput, dbMappedData)
+	outputErr := channelHelper.PersistZapCashAuditIfNeeded(data, outputTable, redis.AuditSideOutput, outputRow)
 	if database.HoldSQSAckAfterAcceptedAudits(accepted, inputErr, outputErr) {
 		logHeldSQSAckForAudits(data, data.Channel, inputErr, outputErr)
 		return false
