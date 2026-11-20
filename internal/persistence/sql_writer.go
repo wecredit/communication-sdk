@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
-	"github.com/wecredit/communication-sdk/internal/database"
 	commredis "github.com/wecredit/communication-sdk/internal/redis"
 	"gorm.io/gorm"
 )
@@ -79,50 +79,69 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 	if len(records) > zapCashCoreBatchLimit {
 		return fmt.Errorf("ZapCash Core persistence batch exceeds limit %d", zapCashCoreBatchLimit)
 	}
+	rowsByTable := make(map[string][]map[string]interface{})
+	marksByTable := make(map[string][]auditMark)
 	for _, record := range records {
-		if err := writeOneZapCashCore(ctx, db, record); err != nil {
+		if !IsZapCashCoreMapper(record.Mapper) || record.CommID == "" || record.HitAt.IsZero() {
+			return fmt.Errorf("invalid ZapCash Core persistence record")
+		}
+		inputTable, outputTable, err := zapCashCoreTables(record.Mapper)
+		if err != nil {
 			return err
+		}
+		input, err := unmarshalAuditMap(record.InputJSON)
+		if err != nil {
+			return fmt.Errorf("decode input audit: %w", err)
+		}
+		output, err := unmarshalAuditMap(record.OutputJSON)
+		if err != nil {
+			return fmt.Errorf("decode output audit: %w", err)
+		}
+		for _, side := range []struct {
+			table, name string
+			row         map[string]interface{}
+		}{
+			{inputTable, AuditSideInput, input}, {outputTable, AuditSideOutput, output},
+		} {
+			if side.row == nil {
+				continue
+			}
+			field := strings.TrimSpace(record.AuditKey)
+			if field == "" {
+				field = strings.TrimSpace(record.EventID)
+			}
+			if field != "" {
+				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
+				if err != nil {
+					return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+				}
+				if written {
+					continue
+				}
+			}
+
+			side.row["CommId"] = record.CommID
+			rowsByTable[side.table] = append(rowsByTable[side.table], side.row)
+			marksByTable[side.table] = append(marksByTable[side.table], auditMark{field: field, side: side.name})
+		}
+	}
+
+	for table, rows := range rowsByTable {
+		if err := insertCoreAuditBatch(ctx, db, table, rows); err != nil {
+			return err
+		}
+		for _, mark := range marksByTable[table] {
+			if mark.field != "" {
+				if err := commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, mark.field, mark.side); err != nil {
+					return fmt.Errorf("mark Core audit %s/%s: %w", mark.field, mark.side, err)
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func writeOneZapCashCore(ctx context.Context, db *gorm.DB, record Record) error {
-	if !IsZapCashCoreMapper(record.Mapper) || record.CommID == "" || record.HitAt.IsZero() {
-		return fmt.Errorf("invalid ZapCash Core persistence record")
-	}
-
-	inputTable, outputTable, err := zapCashCoreTables(record.Mapper)
-	if err != nil {
-		return err
-	}
-
-	input, err := unmarshalAuditMap(record.InputJSON)
-	if err != nil {
-		return fmt.Errorf("decode input audit: %w", err)
-	}
-
-	output, err := unmarshalAuditMap(record.OutputJSON)
-	if err != nil {
-		return fmt.Errorf("decode output audit: %w", err)
-	}
-
-	if input != nil {
-		input["CommId"] = record.CommID
-		if err := insertCoreAuditSide(ctx, db, inputTable, record, AuditSideInput, input); err != nil {
-			return err
-		}
-	}
-
-	if output != nil {
-		output["CommId"] = record.CommID
-		if err := insertCoreAuditSide(ctx, db, outputTable, record, AuditSideOutput, output); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
+type auditMark struct{ field, side string }
 
 func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error) {
 	switch mapper {
@@ -151,31 +170,6 @@ func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error
 	default:
 		return "", "", fmt.Errorf("unsupported zapcash core mapper %q", mapper)
 	}
-}
-
-func insertCoreAuditSide(parent context.Context, db *gorm.DB, table string, record Record, side string, row map[string]interface{}) error {
-	field := strings.TrimSpace(record.EventID)
-	if field != "" {
-		written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side)
-		if err == nil && written {
-			return nil
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
-	defer cancel()
-	if err := database.InsertData(table, db.WithContext(ctx), row); err != nil {
-		return err
-	}
-
-	if field == "" {
-		return nil
-	}
-	if err := commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side); err != nil {
-		// Insert already committed; keep stream ACK path from retrying forever.
-		return nil
-	}
-	return nil
 }
 
 func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error {
@@ -242,6 +236,43 @@ func executeBatch(parent context.Context, db *gorm.DB, query string, args []inte
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return tx.Exec(query, args...).Error
 	})
+}
+
+// Core rows are inserted directly (without a per-row transaction) in one
+// multi-VALUES statement per audit table. The async stream record remains
+// pending if the statement fails, so the existing bounded retry/reclaim path applies.
+func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	columnSet := make(map[string]struct{})
+	for _, row := range rows {
+		for column := range row {
+			columnSet[column] = struct{}{}
+		}
+	}
+	columns := make([]string, 0, len(columnSet))
+	for column := range columnSet {
+		columns = append(columns, column)
+	}
+
+	sort.Strings(columns)
+	values := make([]string, 0, len(rows))
+	args := make([]interface{}, 0, len(rows)*len(columns))
+	for _, row := range rows {
+		placeholders := make([]string, len(columns))
+		for i, column := range columns {
+			placeholders[i] = "?"
+			args = append(args, row[column])
+		}
+
+		values = append(values, "("+strings.Join(placeholders, ",")+")")
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
+	defer cancel()
+	return db.WithContext(ctx).Exec(query, args...).Error
 }
 
 // BatchLimit exposes the stable per-mapper read/write ceiling for startup and

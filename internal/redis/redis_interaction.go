@@ -552,6 +552,38 @@ const (
 	AuditSideOutput = "output"
 )
 
+func AcquireAuditRepairLock(RDB *redis.Client, hash, field, side, token string, ttl time.Duration) (bool, error) {
+	if RDB == nil {
+		return false, fmt.Errorf("redis client is nil")
+	}
+
+	if strings.TrimSpace(token) == "" || ttl <= 0 {
+		return false, fmt.Errorf("audit repair lock token and positive ttl are required")
+	}
+	
+	key := auditRepairLockKey(hash, field, side)
+	return RDB.SetNX(context.Background(), key, token, ttl).Result()
+}
+
+func ReleaseAuditRepairLock(RDB *redis.Client, hash, field, side, token string) error {
+	if RDB == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+
+	return releaseAuditRepairLockScript.Run(context.Background(), RDB, []string{auditRepairLockKey(hash, field, side)}, token).Err()
+}
+
+func auditRepairLockKey(hash, field, side string) string {
+	return fmt.Sprintf("%s:audit-repair:%s:%s", hash, field, strings.ToLower(strings.TrimSpace(side)))
+}
+
+var releaseAuditRepairLockScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
 // AuditSideWritten reports whether the claim already recorded a successful
 // Core Input or Output audit insert for this send attempt.
 func AuditSideWritten(data redisModels.MobileChannelRedisData, side string) bool {
@@ -563,6 +595,42 @@ func AuditSideWritten(data redisModels.MobileChannelRedisData, side string) bool
 	default:
 		return false
 	}
+}
+
+func IsCommAuditSideWritten(RDB *redis.Client, hash, field, side string) (bool, error) {
+	if RDB == nil || strings.TrimSpace(field) == "" {
+		return false, nil
+	}
+
+	data, err := getMobileChannelRedisData(context.Background(), RDB, hash, field)
+	if err != nil {
+		return false, err
+	}
+
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case AuditSideInput:
+		return data.CommInputAuditWritten, nil
+
+	case AuditSideOutput:
+		return data.CommOutputAuditWritten, nil
+	default:
+		return false, fmt.Errorf("unsupported audit side %q", side)
+
+	}
+}
+
+func MarkCommAuditSideWritten(RDB *redis.Client, hash, field, side string) error {
+	if RDB == nil || strings.TrimSpace(field) == "" {
+		return nil
+	}
+	side = strings.ToLower(strings.TrimSpace(side))
+	if side != AuditSideInput && side != AuditSideOutput {
+		return fmt.Errorf("unsupported audit side %q", side)
+	}
+	if err := markAuditSideWrittenScript.Run(context.Background(), RDB, []string{hash}, field, "comm_"+side).Err(); err != nil {
+		return fmt.Errorf("mark communication audit side %s for %s: %w", side, field, err)
+	}
+	return nil
 }
 
 // IsAuditSideWritten reads the claim and reports whether that audit side landed.
@@ -591,27 +659,39 @@ func MarkAuditSideWritten(RDB *redis.Client, commIdempotentKey, redisKey, side s
 		return fmt.Errorf("unsupported audit side %q", side)
 	}
 
-	ctx := context.Background()
-	data, err := getMobileChannelRedisData(ctx, RDB, commIdempotentKey, redisKey)
-	if err != nil {
-		return err
-	}
-	switch side {
-	case AuditSideInput:
-		data.InputAuditWritten = true
-	case AuditSideOutput:
-		data.OutputAuditWritten = true
-	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshal audit side mark: %w", err)
-	}
-	if err := RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err(); err != nil {
+	if err := markAuditSideWrittenScript.Run(context.Background(), RDB, []string{commIdempotentKey}, redisKey, side).Err(); err != nil {
 		return fmt.Errorf("mark audit side %s for %s: %w", side, redisKey, err)
 	}
 	return nil
 }
+
+// A Lua update preserves the other audit-side flag when input and output
+// writers mark the same claim concurrently. Redis executes this atomically.
+var markAuditSideWrittenScript = redis.NewScript(`
+local value = redis.call('HGET', KEYS[1], ARGV[1])
+local data = {}
+if value then
+  local ok, decoded = pcall(cjson.decode, value)
+  if ok and type(decoded) == 'table' then
+    data = decoded
+  elseif ok then
+    data.transactionId = tostring(decoded)
+  else
+    data.transactionId = value
+  end
+end
+if ARGV[2] == 'input' then
+  data.inputAuditWritten = true
+elseif ARGV[2] == 'output' then
+  data.outputAuditWritten = true
+elseif ARGV[2] == 'comm_input' then
+  data.commInputAuditWritten = true
+else
+  data.commOutputAuditWritten = true
+end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
+return 1
+`)
 
 func UpdatePushTransactionID(RDB *redis.Client, commIdempotentKey, redisKey, claimID, transactionId string) error {
 	err := updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
