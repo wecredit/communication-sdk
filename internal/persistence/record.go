@@ -9,6 +9,7 @@ import (
 	"time"
 
 	redislib "github.com/redis/go-redis/v9"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -30,6 +31,7 @@ var ErrMissingHitAt = errors.New("terminal result is missing HitAt")
 type Record struct {
 	Mapper            string
 	EventID           string
+	AuditKey          string
 	Source            string
 	SourceRowID       int64
 	Channel           string
@@ -204,6 +206,7 @@ func ZapCashCoreRecord(data sdkModels.CommApiRequestBody, input, output map[stri
 	return Record{
 		Mapper:            mapper,
 		EventID:           strings.TrimSpace(data.EventId),
+		AuditKey:          channelHelper.GenerateRedisKeyForRequest(data),
 		SourceRowID:       data.SourceRowId,
 		Channel:           channel,
 		Client:            variables.ZapCash,
@@ -277,7 +280,7 @@ func terminalHitAt(terminal redisModels.MobileChannelRedisData) (time.Time, erro
 
 func (r Record) streamValues() map[string]interface{} {
 	values := map[string]interface{}{
-		"mapper": r.Mapper, "event_id": r.EventID, "source": r.Source,
+		"mapper": r.Mapper, "event_id": r.EventID, "audit_key": r.AuditKey, "source": r.Source,
 		"source_row_id": strconv.FormatInt(r.SourceRowID, 10), "channel": r.Channel,
 		"client": r.Client, "vendor": r.Vendor, "process": r.Process,
 		"comm_id": r.CommID, "transaction_id": r.TransactionID,
@@ -328,7 +331,7 @@ func recordFromMessage(message redislib.XMessage) (Record, error) {
 	}
 
 	record := Record{
-		Mapper: mapper, EventID: value("event_id"), Source: value("source"),
+		Mapper: mapper, EventID: value("event_id"), AuditKey: value("audit_key"), Source: value("source"),
 		SourceRowID: sourceRowID, Channel: value("channel"), Client: value("client"),
 		Vendor: value("vendor"), Process: value("process"), CommID: value("comm_id"),
 		TransactionID: value("transaction_id"), ProviderMessageID: value("provider_message_id"),

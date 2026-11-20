@@ -106,7 +106,10 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 			if side.row == nil {
 				continue
 			}
-			field := strings.TrimSpace(record.EventID)
+			field := strings.TrimSpace(record.AuditKey)
+			if field == "" {
+				field = strings.TrimSpace(record.EventID)
+			}
 			if field != "" {
 				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
 				if err == nil && written {
