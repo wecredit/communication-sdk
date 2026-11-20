@@ -591,27 +591,35 @@ func MarkAuditSideWritten(RDB *redis.Client, commIdempotentKey, redisKey, side s
 		return fmt.Errorf("unsupported audit side %q", side)
 	}
 
-	ctx := context.Background()
-	data, err := getMobileChannelRedisData(ctx, RDB, commIdempotentKey, redisKey)
-	if err != nil {
-		return err
-	}
-	switch side {
-	case AuditSideInput:
-		data.InputAuditWritten = true
-	case AuditSideOutput:
-		data.OutputAuditWritten = true
-	}
-
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshal audit side mark: %w", err)
-	}
-	if err := RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err(); err != nil {
+	if err := markAuditSideWrittenScript.Run(context.Background(), RDB, []string{commIdempotentKey}, redisKey, side).Err(); err != nil {
 		return fmt.Errorf("mark audit side %s for %s: %w", side, redisKey, err)
 	}
 	return nil
 }
+
+// A Lua update preserves the other audit-side flag when input and output
+// writers mark the same claim concurrently. Redis executes this atomically.
+var markAuditSideWrittenScript = redis.NewScript(`
+local value = redis.call('HGET', KEYS[1], ARGV[1])
+local data = {}
+if value then
+  local ok, decoded = pcall(cjson.decode, value)
+  if ok and type(decoded) == 'table' then
+    data = decoded
+  elseif ok then
+    data.transactionId = decoded
+  else
+    data.transactionId = value
+  end
+end
+if ARGV[2] == 'input' then
+  data.inputAuditWritten = true
+else
+  data.outputAuditWritten = true
+end
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
+return 1
+`)
 
 func UpdatePushTransactionID(RDB *redis.Client, commIdempotentKey, redisKey, claimID, transactionId string) error {
 	err := updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
