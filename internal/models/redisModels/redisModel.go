@@ -12,6 +12,8 @@ type MobileChannelRedisData struct {
 	Outcome           string `json:"outcome,omitempty"`
 	// InputAuditWritten / OutputAuditWritten mark Core channel audit sides that
 	// already landed so hold-ACK repair and async writers skip without SQL COUNT.
-	InputAuditWritten  bool `json:"inputAuditWritten,omitempty"`
-	OutputAuditWritten bool `json:"outputAuditWritten,omitempty"`
+	InputAuditWritten      bool `json:"inputAuditWritten,omitempty"`
+	OutputAuditWritten     bool `json:"outputAuditWritten,omitempty"`
+	CommInputAuditWritten  bool `json:"commInputAuditWritten,omitempty"`
+	CommOutputAuditWritten bool `json:"commOutputAuditWritten,omitempty"`
 }

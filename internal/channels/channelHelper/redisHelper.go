@@ -2,6 +2,8 @@ package channelHelper
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -250,22 +252,49 @@ func MarkChannelAuditSideWritten(msg sdkModels.CommApiRequestBody, side string) 
 	return nil
 }
 
-// PersistZapCashAuditIfNeeded inserts a ZapCash Core audit row unless Redis
-// already shows that side landed, then stamps the claim on success.
+// PersistZapCashAuditIfNeeded writes missing audit destinations once per
+// Redis claim and marks each destination after its insert succeeds.
 func PersistZapCashAuditIfNeeded(msg sdkModels.CommApiRequestBody, table, side string, row map[string]interface{}) error {
-	if ChannelAuditSideWritten(msg, side) {
-		return nil
+	if redis.RDB == nil {
+		return fmt.Errorf("audit repair Redis is unavailable")
 	}
-
-	if err := database.InsertRowSync(msg.Client, table, row); err != nil {
-		return err
+	redisKey := GenerateRedisKeyForRequest(msg)
+	var tokenBytes [16]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return fmt.Errorf("create audit repair token: %w", err)
 	}
-
-	if err := MarkChannelAuditSideWritten(msg, side); err != nil {
-		// Row is durable; leave a log and treat insert as success so ACK can proceed.
-		utils.Error(fmt.Errorf("audit insert ok but redis mark failed redisKey=%s side=%s: %v",
-			GenerateRedisKeyForRequest(msg), side, err))
+	token := hex.EncodeToString(tokenBytes[:])
+	locked, err := redis.AcquireAuditRepairLock(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side, token, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("acquire audit repair lock: %w", err)
 	}
+	if !locked {
+		return fmt.Errorf("audit repair busy")
+	}
+	defer func() {
+		if err := redis.ReleaseAuditRepairLock(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side, token); err != nil {
+			utils.Error(fmt.Errorf("release audit repair lock redisKey=%s side=%s: %v", redisKey, side, err))
+		}
+	}()
 
-	return nil
+	coreDone, err := redis.IsAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side)
+	if err != nil {
+		return fmt.Errorf("Core audit-side read failed: %w", err)
+	}
+	commDone, err := redis.IsCommAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side)
+	if err != nil {
+		return fmt.Errorf("communication audit-side read failed: %w", err)
+	}
+	result, insertErr := database.InsertRowSyncMissing(msg.Client, table, row, commDone, coreDone)
+	if result.CoreWritten {
+		if err := MarkChannelAuditSideWritten(msg, side); err != nil {
+			utils.Error(fmt.Errorf("Core audit insert ok but Redis mark failed redisKey=%s side=%s: %v", redisKey, side, err))
+		}
+	}
+	if result.CommunicationWritten {
+		if err := redis.MarkCommAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side); err != nil {
+			utils.Error(fmt.Errorf("communication audit insert ok but Redis mark failed redisKey=%s side=%s: %v", redisKey, side, err))
+		}
+	}
+	return insertErr
 }
