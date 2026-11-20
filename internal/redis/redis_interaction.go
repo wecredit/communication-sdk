@@ -547,6 +547,72 @@ func GetTerminalResult(RDB *redis.Client, commIdempotentKey, redisKey string) (r
 	return getMobileChannelRedisData(context.Background(), RDB, commIdempotentKey, redisKey)
 }
 
+const (
+	AuditSideInput  = "input"
+	AuditSideOutput = "output"
+)
+
+// AuditSideWritten reports whether the claim already recorded a successful
+// Core Input or Output audit insert for this send attempt.
+func AuditSideWritten(data redisModels.MobileChannelRedisData, side string) bool {
+	switch strings.ToLower(strings.TrimSpace(side)) {
+	case AuditSideInput:
+		return data.InputAuditWritten
+	case AuditSideOutput:
+		return data.OutputAuditWritten
+	default:
+		return false
+	}
+}
+
+// IsAuditSideWritten reads the claim and reports whether that audit side landed.
+// A nil client or blank field is treated as not written.
+func IsAuditSideWritten(RDB *redis.Client, commIdempotentKey, redisKey, side string) (bool, error) {
+	if RDB == nil || strings.TrimSpace(redisKey) == "" {
+		return false, nil
+	}
+	data, err := getMobileChannelRedisData(context.Background(), RDB, commIdempotentKey, redisKey)
+	if err != nil {
+		return false, err
+	}
+	return AuditSideWritten(data, side), nil
+}
+
+// MarkAuditSideWritten sets inputAuditWritten or outputAuditWritten on the
+// existing claim JSON without clearing terminal fields. Nil client / blank
+// field is a no-op success so callers can treat insert as durable.
+func MarkAuditSideWritten(RDB *redis.Client, commIdempotentKey, redisKey, side string) error {
+	if RDB == nil || strings.TrimSpace(redisKey) == "" {
+		return nil
+	}
+
+	side = strings.ToLower(strings.TrimSpace(side))
+	if side != AuditSideInput && side != AuditSideOutput {
+		return fmt.Errorf("unsupported audit side %q", side)
+	}
+
+	ctx := context.Background()
+	data, err := getMobileChannelRedisData(ctx, RDB, commIdempotentKey, redisKey)
+	if err != nil {
+		return err
+	}
+	switch side {
+	case AuditSideInput:
+		data.InputAuditWritten = true
+	case AuditSideOutput:
+		data.OutputAuditWritten = true
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal audit side mark: %w", err)
+	}
+	if err := RDB.HSet(ctx, commIdempotentKey, redisKey, string(jsonData)).Err(); err != nil {
+		return fmt.Errorf("mark audit side %s for %s: %w", side, redisKey, err)
+	}
+	return nil
+}
+
 func UpdatePushTransactionID(RDB *redis.Client, commIdempotentKey, redisKey, claimID, transactionId string) error {
 	err := updatePushClaim(RDB, commIdempotentKey, redisKey, claimID, func(data *redisModels.MobileChannelRedisData) {
 		data.TransactionId = transactionId

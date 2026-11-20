@@ -9,7 +9,13 @@ import (
 
 	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/database"
+	commredis "github.com/wecredit/communication-sdk/internal/redis"
 	"gorm.io/gorm"
+)
+
+const (
+	AuditSideInput  = commredis.AuditSideInput
+	AuditSideOutput = commredis.AuditSideOutput
 )
 
 const sqlStatementTimeout = 30 * time.Second
@@ -103,14 +109,14 @@ func writeOneZapCashCore(ctx context.Context, db *gorm.DB, record Record) error 
 
 	if input != nil {
 		input["CommId"] = record.CommID
-		if err := insertCoreAuditIfMissing(ctx, db, inputTable, record.CommID, input); err != nil {
+		if err := insertCoreAuditSide(ctx, db, inputTable, record, AuditSideInput, input); err != nil {
 			return err
 		}
 	}
 
 	if output != nil {
 		output["CommId"] = record.CommID
-		if err := insertCoreAuditIfMissing(ctx, db, outputTable, record.CommID, output); err != nil {
+		if err := insertCoreAuditSide(ctx, db, outputTable, record, AuditSideOutput, output); err != nil {
 			return err
 		}
 	}
@@ -147,19 +153,29 @@ func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error
 	}
 }
 
-func insertCoreAuditIfMissing(parent context.Context, db *gorm.DB, table, commID string, row map[string]interface{}) error {
+func insertCoreAuditSide(parent context.Context, db *gorm.DB, table string, record Record, side string, row map[string]interface{}) error {
+	field := strings.TrimSpace(record.EventID)
+	if field != "" {
+		written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side)
+		if err == nil && written {
+			return nil
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
 	defer cancel()
-
-	var count int64
-	if err := db.WithContext(ctx).Table(table).Where("CommId = ?", commID).Limit(1).Count(&count).Error; err != nil {
-		return fmt.Errorf("core audit exists check table=%s: %w", table, err)
+	if err := database.InsertData(table, db.WithContext(ctx), row); err != nil {
+		return err
 	}
-	if count > 0 {
+
+	if field == "" {
 		return nil
 	}
-
-	return database.InsertData(table, db.WithContext(ctx), row)
+	if err := commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side); err != nil {
+		// Insert already committed; keep stream ACK path from retrying forever.
+		return nil
+	}
+	return nil
 }
 
 func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error {

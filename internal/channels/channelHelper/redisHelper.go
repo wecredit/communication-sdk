@@ -9,6 +9,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/database"
 	"github.com/wecredit/communication-sdk/internal/models/redisModels"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
@@ -220,5 +221,51 @@ func UpdateRedisErrorMessage(msg sdkModels.CommApiRequestBody, errorMessage stri
 		utils.Error(fmt.Errorf("redis update for redisKey: %s errorMessage: %s failed: %v", redisKey, errorMessage, err))
 		return err
 	}
+	return nil
+}
+
+// ChannelAuditSideWritten is true when the claim already recorded a successful
+// Input or Output Core audit for this send attempt.
+func ChannelAuditSideWritten(msg sdkModels.CommApiRequestBody, side string) bool {
+	redisKey := GenerateRedisKeyForRequest(msg)
+	written, err := redis.IsAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis audit-side read for redisKey %s side %s failed: %v", redisKey, side, err))
+		return false
+	}
+
+	return written
+}
+
+// MarkChannelAuditSideWritten stamps inputAuditWritten or outputAuditWritten on
+// the existing claim after a successful Core audit insert.
+func MarkChannelAuditSideWritten(msg sdkModels.CommApiRequestBody, side string) error {
+	redisKey := GenerateRedisKeyForRequest(msg)
+	err := redis.MarkAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, side)
+	if err != nil {
+		utils.Error(fmt.Errorf("redis audit-side mark for redisKey %s side %s failed: %v", redisKey, side, err))
+		return err
+	}
+
+	return nil
+}
+
+// PersistZapCashAuditIfNeeded inserts a ZapCash Core audit row unless Redis
+// already shows that side landed, then stamps the claim on success.
+func PersistZapCashAuditIfNeeded(msg sdkModels.CommApiRequestBody, table, side string, row map[string]interface{}) error {
+	if ChannelAuditSideWritten(msg, side) {
+		return nil
+	}
+
+	if err := database.InsertRowSync(msg.Client, table, row); err != nil {
+		return err
+	}
+
+	if err := MarkChannelAuditSideWritten(msg, side); err != nil {
+		// Row is durable; leave a log and treat insert as success so ACK can proceed.
+		utils.Error(fmt.Errorf("audit insert ok but redis mark failed redisKey=%s side=%s: %v",
+			GenerateRedisKeyForRequest(msg), side, err))
+	}
+
 	return nil
 }
