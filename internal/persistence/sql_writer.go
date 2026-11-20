@@ -112,7 +112,10 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 			}
 			if field != "" {
 				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
-				if err == nil && written {
+				if err != nil {
+					return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+				}
+				if written {
 					continue
 				}
 			}
@@ -129,7 +132,9 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 		}
 		for _, mark := range marksByTable[table] {
 			if mark.field != "" {
-				_ = commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, mark.field, mark.side)
+				if err := commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, mark.field, mark.side); err != nil {
+					return fmt.Errorf("mark Core audit %s/%s: %w", mark.field, mark.side, err)
+				}
 			}
 		}
 	}
@@ -240,8 +245,14 @@ func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, row
 	if len(rows) == 0 {
 		return nil
 	}
-	columns := make([]string, 0, len(rows[0]))
-	for column := range rows[0] {
+	columnSet := make(map[string]struct{})
+	for _, row := range rows {
+		for column := range row {
+			columnSet[column] = struct{}{}
+		}
+	}
+	columns := make([]string, 0, len(columnSet))
+	for column := range columnSet {
 		columns = append(columns, column)
 	}
 
@@ -249,18 +260,10 @@ func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, row
 	values := make([]string, 0, len(rows))
 	args := make([]interface{}, 0, len(rows)*len(columns))
 	for _, row := range rows {
-		if len(row) != len(columns) {
-			return fmt.Errorf("inconsistent ZapCash Core audit columns")
-		}
-
 		placeholders := make([]string, len(columns))
 		for i, column := range columns {
-			value, ok := row[column]
-			if !ok {
-				return fmt.Errorf("inconsistent ZapCash Core audit columns")
-			}
 			placeholders[i] = "?"
-			args = append(args, value)
+			args = append(args, row[column])
 		}
 
 		values = append(values, "("+strings.Join(placeholders, ",")+")")

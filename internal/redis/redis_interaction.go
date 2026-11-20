@@ -675,7 +675,7 @@ if value then
   if ok and type(decoded) == 'table' then
     data = decoded
   elseif ok then
-    data.transactionId = decoded
+    data.transactionId = tostring(decoded)
   else
     data.transactionId = value
   end

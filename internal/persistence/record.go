@@ -301,7 +301,13 @@ func (r Record) streamValues() map[string]interface{} {
 }
 
 func recordFromMessage(message redislib.XMessage) (Record, error) {
-	value := func(key string) string { return strings.TrimSpace(fmt.Sprint(message.Values[key])) }
+	value := func(key string) string {
+		v, ok := message.Values[key]
+		if !ok || v == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 	rawValue := func(key string) string {
 		if message.Values[key] == nil {
 			return ""
