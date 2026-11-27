@@ -22,6 +22,7 @@ func TestAppConfigOverlayAppliesOnlyFrequentlyChangedSettings(t *testing.T) {
 		"CONSUMER_DEFAULT_CLIENT_WORKERS":    "12",
 		"CONSUMER_CLIENT_WORKER_OVERRIDES":   "wecredit:20",
 		"CONSUMER_CHANNEL_WORKER_OVERRIDES":  "wecredit:sms:30",
+		"QUERY_CAMPAIGN_WORKER_OVERRIDES":    "zapcash:sms:8,zapcash:whatsapp:8",
 		"CONSUMER_CLIENT_BUFFER_SIZE":        "400",
 		"SMS_WORKERS":                        "25",
 		"WHATSAPP_WORKERS":                   "35",
@@ -32,7 +33,7 @@ func TestAppConfigOverlayAppliesOnlyFrequentlyChangedSettings(t *testing.T) {
 		"COMM_WRITE_WORKER_OVERRIDES":        "wecredit:sms:2",
 	})
 
-	if candidate.ProviderRPSOverrides != "times:wecredit:sms:110" || candidate.ConsumerClientWorkerOverrides != "wecredit:20" || candidate.ConsumerChannelWorkerOverrides != "wecredit:sms:30" || candidate.LogLevel != "debug" || candidate.CommAsyncWriteChannels != "wecredit:sms" || candidate.CommWriteStreamBudgetOverrides != "wecredit:sms:100000" || candidate.CommWriteWorkerOverrides != "wecredit:sms:2" {
+	if candidate.ProviderRPSOverrides != "times:wecredit:sms:110" || candidate.ConsumerClientWorkerOverrides != "wecredit:20" || candidate.ConsumerChannelWorkerOverrides != "wecredit:sms:30" || candidate.QueryCampaignWorkerOverrides != "zapcash:sms:8,zapcash:whatsapp:8" || candidate.LogLevel != "debug" || candidate.CommAsyncWriteChannels != "wecredit:sms" || candidate.CommWriteStreamBudgetOverrides != "wecredit:sms:100000" || candidate.CommWriteWorkerOverrides != "wecredit:sms:2" {
 		t.Fatalf("AppConfig overlay did not apply settings: %+v", candidate)
 	}
 	if candidate.ProviderRPSTaskSlots != "2" || candidate.ConsumerDefaultClientWorkers != "5" || candidate.ConsumerClientBufferSize != "200" || candidate.SMSWorkers != "" || candidate.WhatsAppWorkers != "" || candidate.GoMaxProcs != "1" {

@@ -34,6 +34,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/redis"
 	dbservices "github.com/wecredit/communication-sdk/internal/services/dbService"
 	"github.com/wecredit/communication-sdk/internal/services/monitoring"
+	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
 	"github.com/wecredit/communication-sdk/sdk/queue"
 	sdkServices "github.com/wecredit/communication-sdk/sdk/services"
@@ -226,7 +227,7 @@ const (
 
 func ConsumerQueueURLs() []string {
 	seen := make(map[string]struct{})
-	urls := make([]string, 0, 3)
+	urls := make([]string, 0, 8)
 	add := func(raw string) {
 		u := strings.TrimSpace(raw)
 		if u == "" {
@@ -246,27 +247,92 @@ func ConsumerQueueURLs() []string {
 	add(config.Configs.AwsZapCashQueueUrl)
 	// WeCredit + TrustFin WhatsApp SQS-direct staging target.
 	add(config.Configs.AwsWeCreditWhatsappQueueUrl)
+	// Dedicated query-campaign queues (one per client; isolated from nurture/marketing).
+	add(config.Configs.AwsQueryCampaignZapCashQueueUrl)
+	add(config.Configs.AwsQueryCampaignWeCreditQueueUrl)
 	return urls
+}
+
+// QueryCampaignQueueURLs returns configured dedicated QC queue URLs (non-blank).
+func QueryCampaignQueueURLs() []string {
+	out := make([]string, 0, 2)
+	for _, raw := range []string{
+		config.Configs.AwsQueryCampaignZapCashQueueUrl,
+		config.Configs.AwsQueryCampaignWeCreditQueueUrl,
+	} {
+		if u := strings.TrimSpace(raw); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// IsQueryCampaignQueueURL reports whether queueURL is a dedicated QC queue.
+func IsQueryCampaignQueueURL(queueURL string) bool {
+	queueURL = strings.TrimSpace(queueURL)
+	if queueURL == "" {
+		return false
+	}
+	for _, u := range QueryCampaignQueueURLs() {
+		if u == queueURL {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateConsumerQueueURLs rejects queue configurations whose distinct
 // message contracts cannot be determined from the received queue URL.
 func ValidateConsumerQueueURLs() error {
-	zapCashQueueURL := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
-	if zapCashQueueURL == "" {
-		return nil
-	}
-	for _, collision := range []struct {
+	nurtureQueues := []struct {
 		envName string
 		url     string
 	}{
 		{"AWS_QUEUE_URL", config.Configs.AwsQueueUrl},
 		{"AWS_WECREDIT_SMS_QUEUE_URL", config.Configs.AwsWeCreditSmsQueueUrl},
 		{"AWS_WECREDIT_WHATSAPP_QUEUE_URL", config.Configs.AwsWeCreditWhatsappQueueUrl},
-	} {
-		other := strings.TrimSpace(collision.url)
-		if other != "" && other == zapCashQueueURL {
-			return fmt.Errorf("AWS_ZAPCASH_QUEUE_URL must differ from %s", collision.envName)
+		{"AWS_ZAPCASH_QUEUE_URL", config.Configs.AwsZapCashQueueUrl},
+	}
+	qcQueues := []struct {
+		envName string
+		url     string
+	}{
+		{"AWS_QUERY_CAMPAIGN_ZAPCASH_QUEUE_URL", config.Configs.AwsQueryCampaignZapCashQueueUrl},
+		{"AWS_QUERY_CAMPAIGN_WECREDIT_QUEUE_URL", config.Configs.AwsQueryCampaignWeCreditQueueUrl},
+	}
+
+	zapCashQueueURL := strings.TrimSpace(config.Configs.AwsZapCashQueueUrl)
+	if zapCashQueueURL != "" {
+		for _, collision := range nurtureQueues {
+			if collision.envName == "AWS_ZAPCASH_QUEUE_URL" {
+				continue
+			}
+			other := strings.TrimSpace(collision.url)
+			if other != "" && other == zapCashQueueURL {
+				return fmt.Errorf("AWS_ZAPCASH_QUEUE_URL must differ from %s", collision.envName)
+			}
+		}
+	}
+
+	for _, qc := range qcQueues {
+		qcURL := strings.TrimSpace(qc.url)
+		if qcURL == "" {
+			continue
+		}
+		for _, nurture := range nurtureQueues {
+			other := strings.TrimSpace(nurture.url)
+			if other != "" && other == qcURL {
+				return fmt.Errorf("%s must differ from %s", qc.envName, nurture.envName)
+			}
+		}
+		for _, otherQC := range qcQueues {
+			if otherQC.envName == qc.envName {
+				continue
+			}
+			other := strings.TrimSpace(otherQC.url)
+			if other != "" && other == qcURL {
+				return fmt.Errorf("%s must differ from %s", qc.envName, otherQC.envName)
+			}
 		}
 	}
 	return nil
@@ -348,10 +414,19 @@ func parseRedriveMaxReceiveCountValue(raw json.RawMessage) (int, error) {
 	return asNumber, nil
 }
 
+func requiresWhatsAppRedriveValidation(queueURL, primaryWhatsAppURL string) bool {
+	queueURL = strings.TrimSpace(queueURL)
+	if queueURL == "" {
+		return false
+	}
+	// QC queues are mixed SMS+WA per client — do not gate the whole poller on WA redrive.
+	primary := strings.TrimSpace(primaryWhatsAppURL)
+	return primary != "" && strings.EqualFold(queueURL, primary)
+}
+
 // PrepareConsumerQueues validates queue URLs and redrive policies for WhatsApp.
 func PrepareConsumerQueues(client sqsQueueAttributesAPI, queueURLs []string, whatsappQueueURL string) []ConsumerQueueRuntime {
 	runtimes := make([]ConsumerQueueRuntime, 0, len(queueURLs))
-	whatsappQueueURL = strings.TrimSpace(whatsappQueueURL)
 	for _, rawURL := range queueURLs {
 		url := strings.TrimSpace(rawURL)
 		if url == "" {
@@ -359,7 +434,7 @@ func PrepareConsumerQueues(client sqsQueueAttributesAPI, queueURLs []string, wha
 		}
 
 		runtime := ConsumerQueueRuntime{URL: url}
-		if whatsappQueueURL != "" && strings.EqualFold(url, whatsappQueueURL) {
+		if requiresWhatsAppRedriveValidation(url, whatsappQueueURL) {
 			maxReceiveCount, err := LoadWhatsappRedriveMaxReceiveCount(client, url)
 			if err != nil {
 				utils.Error(fmt.Errorf("WhatsApp consumer disabled: %v", err))
@@ -529,15 +604,25 @@ func routeMessageToClient(ctx context.Context, msg *sqs.Message, queueURL string
 		return
 	}
 
-	// SMS and WhatsApp share one client pool, but each channel has its own
-	// bounded buffer. Workers select across the buffers, so an idle channel
-	// does not reserve any part of the shared worker budget.
-	poolKey := ClientPoolKey(client)
+	// Query-campaign traffic uses dedicated pools (QUERY_CAMPAIGN_WORKER_OVERRIDES).
+	// Marketing/ZapCash nurture keep ClientSharedWorkerCount / CONSUMER_CHANNEL_WORKER_OVERRIDES.
+	qcLane := IsQueryCampaignQueueURL(queueURL) || strings.EqualFold(strings.TrimSpace(data.Source), sdkHelper.SourceQueryCampaign)
+	var poolKey string
+	var workerCount int
+	if qcLane {
+		poolKey = QueryCampaignPoolKey(client)
+		workerCount = QueryCampaignSharedWorkerCount(client)
+	} else {
+		// SMS and WhatsApp share one client pool, but each channel has its own
+		// bounded buffer. Workers select across the buffers, so an idle channel
+		// does not reserve any part of the shared worker budget.
+		poolKey = ClientPoolKey(client)
+		workerCount = ClientSharedWorkerCount(client)
+	}
 
 	clientMux.Lock()
 	handler, exists := clientHandlers[poolKey]
 	if !exists {
-		workerCount := ClientSharedWorkerCount(client)
 		handler = NewClientRoutine(workerCount)
 		// Workers call receive immediately. Ensure their first select includes
 		// this channel; otherwise a worker scheduled before buffer creation can
@@ -602,6 +687,42 @@ func ClientChannelPoolKey(client, channel string) string {
 // ClientPoolKey identifies the shared runtime worker pool for a client.
 func ClientPoolKey(client string) string {
 	return strings.ToLower(strings.TrimSpace(client))
+}
+
+// QueryCampaignPoolKey identifies the dedicated query-campaign worker pool for a client.
+// Prefixed so it never collides with marketing/ZapCash ClientPoolKey values.
+func QueryCampaignPoolKey(client string) string {
+	return "query_campaign|" + strings.ToLower(strings.TrimSpace(client))
+}
+
+// QueryCampaignSharedWorkerCount returns the dedicated QC worker budget for a client
+// from QUERY_CAMPAIGN_WORKER_OVERRIDES (additive per channel), else QUERY_CAMPAIGN_DEFAULT_WORKERS.
+func QueryCampaignSharedWorkerCount(client string) int {
+	client = strings.ToLower(strings.TrimSpace(client))
+	total := 0
+	configured := false
+
+	for _, entry := range strings.Split(config.Configs.QueryCampaignWorkerOverrides, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || !strings.EqualFold(strings.TrimSpace(parts[0]), client) {
+			continue
+		}
+		workers, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || workers < 1 {
+			continue
+		}
+		configured = true
+		total += workers
+	}
+
+	if configured {
+		if total > maxClientWorkers {
+			return maxClientWorkers
+		}
+		return total
+	}
+
+	return boundedConsumerConfigInt(config.Configs.QueryCampaignDefaultWorkers, defaultClientWorkers, maxClientWorkers)
 }
 
 // ClientSharedWorkerCount returns the total worker budget shared by SMS and
@@ -1302,6 +1423,10 @@ func PushAttemptDeletesSQS(result push.Result) bool {
 }
 
 func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message, redriveMaxReceiveCount int) (bool, bool) {
+	if isQueryCampaignDispatch(data) {
+		return handleQueryCampaignWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+	}
+
 	if isMarketingWPDispatch(data) {
 		return handleMarketingWhatsapp(ctx, data, dbMappedData, sqsClient, queueURL, msg, redriveMaxReceiveCount)
 	}
@@ -1822,6 +1947,10 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 func handleSMS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, sqsClient *sqs.SQS, queueURL string, msg *sqs.Message) (bool, bool) {
 	var deleted bool
 	var delErr error
+	if isQueryCampaignDispatch(data) {
+		return handleQueryCampaignSMS(ctx, data, dbMappedData, sqsClient, queueURL, msg)
+	}
+
 	marketing := isMarketingSMSDispatch(data)
 
 	if marketing {

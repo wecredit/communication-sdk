@@ -46,6 +46,19 @@ func TestConsumerQueueURLs(t *testing.T) {
 	if len(got) != 3 || got[2] != "https://sqs.example/wecredit-whatsapp" {
 		t.Fatalf("WhatsApp queue missing: %#v", got)
 	}
+
+	config.Configs.AwsQueryCampaignZapCashQueueUrl = "https://sqs.example/qc-zapcash"
+	config.Configs.AwsQueryCampaignWeCreditQueueUrl = "https://sqs.example/qc-wecredit"
+	got = services.ConsumerQueueURLs()
+	if len(got) != 5 {
+		t.Fatalf("QC queues missing: %#v", got)
+	}
+	if !services.IsQueryCampaignQueueURL("https://sqs.example/qc-zapcash") {
+		t.Fatal("expected QC ZapCash URL detection")
+	}
+	if services.IsQueryCampaignQueueURL("https://sqs.example/wecredit-sms") {
+		t.Fatal("nurture SMS must not be treated as QC")
+	}
 }
 
 func TestValidateConsumerQueueURLsRejectsZapCashLegacyCollision(t *testing.T) {
@@ -97,6 +110,25 @@ func TestValidateConsumerQueueURLsRejectsZapCashLegacyCollision(t *testing.T) {
 	config.Configs.AwsZapCashQueueUrl = "https://sqs.example/zapcash"
 	if err := services.ValidateConsumerQueueURLs(); err != nil {
 		t.Fatalf("rejected distinct queue URLs: %v", err)
+	}
+}
+
+func TestValidateConsumerQueueURLsRejectsQueryCampaignNurtureCollision(t *testing.T) {
+	prev := config.Configs
+	t.Cleanup(func() { config.Configs = prev })
+
+	config.Configs = models.Config{
+		AwsZapCashQueueUrl:              "https://sqs.example/zapcash",
+		AwsQueryCampaignZapCashQueueUrl: "https://sqs.example/zapcash",
+	}
+	if err := services.ValidateConsumerQueueURLs(); err == nil {
+		t.Fatal("accepted QC queue colliding with AWS_ZAPCASH_QUEUE_URL")
+	}
+
+	config.Configs.AwsQueryCampaignZapCashQueueUrl = "https://sqs.example/qc-zapcash"
+	config.Configs.AwsQueryCampaignWeCreditQueueUrl = "https://sqs.example/qc-wecredit"
+	if err := services.ValidateConsumerQueueURLs(); err != nil {
+		t.Fatalf("rejected distinct QC URLs: %v", err)
 	}
 }
 

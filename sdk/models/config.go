@@ -78,6 +78,10 @@ type Config struct {
 	AwsZapCashQueueUrl string `envconfig:"AWS_ZAPCASH_QUEUE_URL"`
 	AwsErrorQueueUrl   string `envconfig:"AWS_COMM_ERROR_QUEUE_URL"`
 
+	// Query-campaign dedicated SQS: one queue per client (SMS+WA share). Not nurture queues.
+	AwsQueryCampaignZapCashQueueUrl  string `envconfig:"AWS_QUERY_CAMPAIGN_ZAPCASH_QUEUE_URL"`
+	AwsQueryCampaignWeCreditQueueUrl string `envconfig:"AWS_QUERY_CAMPAIGN_WECREDIT_QUEUE_URL"`
+
 	// ZapCash monitoring copies ride the existing SNS -> shared SQS path.
 	ZapCashMonitoringEnabled  string `envconfig:"ZAPCASH_MONITORING_ENABLED" default:"false"`
 	ZapCashMonitorRecipients  string `envconfig:"ZAPCASH_MONITOR_RECIPIENTS"`
@@ -217,9 +221,13 @@ type Config struct {
 	ConsumerDefaultClientWorkers   string `envconfig:"CONSUMER_DEFAULT_CLIENT_WORKERS" default:"5"`
 	ConsumerClientWorkerOverrides  string `envconfig:"CONSUMER_CLIENT_WORKER_OVERRIDES"`
 	ConsumerChannelWorkerOverrides string `envconfig:"CONSUMER_CHANNEL_WORKER_OVERRIDES" default:"wecredit:sms:60,wecredit:whatsapp:60,zapcash:rcs:20,zapcash:whatsapp:20,zapcash:push:20"`
-	ConsumerClientBufferSize       string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"200"`
-	GoMaxProcs                     string `envconfig:"GOMAXPROCS" default:"1"`
-	LogLevel                       string `envconfig:"LOG_LEVEL" default:"info"`
+	// QueryCampaignWorkerOverrides is client:channel:n for dedicated QC pools only
+	// (never merged into CONSUMER_CHANNEL_WORKER_OVERRIDES).
+	QueryCampaignWorkerOverrides string `envconfig:"QUERY_CAMPAIGN_WORKER_OVERRIDES" default:"zapcash:sms:10,zapcash:whatsapp:10"`
+	QueryCampaignDefaultWorkers  string `envconfig:"QUERY_CAMPAIGN_DEFAULT_WORKERS" default:"5"`
+	ConsumerClientBufferSize     string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"200"`
+	GoMaxProcs                   string `envconfig:"GOMAXPROCS" default:"1"`
+	LogLevel                     string `envconfig:"LOG_LEVEL" default:"info"`
 	// ZapCashSendCutoffHourIST is the ZapCash-only hard send stop (IST hour 0–23). Default 20 (8 PM).
 	// Blank/non-numeric → 20. Staging may set -1 to disable (never in prod).
 	// WeCredit SMS + WhatsApp keep their own 20:00 IST policy (nurture COMM_DISPATCH_WINDOW_* +
@@ -281,4 +289,12 @@ type Config struct {
 	WeCreditVapioSmsUsername string `envconfig:"WECREDIT_VAPIO_SMS_USERNAME"`
 	WeCreditVapioSmsApiKey   string `envconfig:"WECREDIT_VAPIO_SMS_API_KEY"`
 	WeCreditVapioSmsRoute    string `envconfig:"WECREDIT_VAPIO_SMS_ROUTE"`
+
+	// Query campaigns (scheduled SQL → ledger). Vendor gate is Clients.ShouldHitVendor.
+	QueryCampaignMaxQuerySeconds           string `envconfig:"QUERY_CAMPAIGN_MAX_QUERY_SECONDS" default:"900"`
+	QueryCampaignPreviewMaxAgeHours        string `envconfig:"QUERY_CAMPAIGN_PREVIEW_MAX_AGE_HOURS" default:"24"`
+	QueryCampaignPreviewStaleBufferSeconds string `envconfig:"QUERY_CAMPAIGN_PREVIEW_STALE_BUFFER_SECONDS" default:"60"`
+	QueryCampaignExpectedRowsMarginPercent string `envconfig:"QUERY_CAMPAIGN_EXPECTED_ROWS_MARGIN_PERCENT" default:"20"`
+	QueryCampaignMaterializeHardCap        string `envconfig:"QUERY_CAMPAIGN_MATERIALIZE_HARD_CAP" default:"250000"`
+	QueryCampaignSendingGraceSeconds       string `envconfig:"QUERY_CAMPAIGN_SENDING_GRACE_SECONDS" default:"900"`
 }
