@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wecredit/communication-sdk/config"
 	"github.com/wecredit/communication-sdk/internal/channels/push"
 	"github.com/wecredit/communication-sdk/internal/channels/push/fcm"
 	"github.com/wecredit/communication-sdk/internal/models/apiModels"
@@ -376,6 +377,12 @@ func seedZapCashPushShouldHitVendor(t *testing.T, on bool) {
 	if on {
 		status = 1
 	}
+
+	prevHour := config.Configs.ZapCashSendCutoffHourIST
+	config.Configs.ZapCashSendCutoffHourIST = "-1"
+	t.Cleanup(func() {
+		config.Configs.ZapCashSendCutoffHourIST = prevHour
+	})
 
 	c := cache.GetCache()
 	if c == nil {

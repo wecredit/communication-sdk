@@ -91,6 +91,10 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 		return finishNotSent(*data, inputAudit, templateName, "should_hit_vendor_off")
 	}
 
+	if decision := channelHelper.EvaluateZapCashSendCutoff(data.Client); !decision.Allowed() {
+		return finishNotSent(*data, inputAudit, templateName, decision.Code)
+	}
+
 	if ctx.Err() != nil {
 		return cancelBeforeStamp(*data)
 	}
