@@ -465,3 +465,13 @@ func HandleZapCashSendCutoffError(msg sdkModels.CommApiRequestBody, decision pol
 
 	return UpdateRedisErrorMessage(msg, decision.ErrorMessage())
 }
+
+// ZapCashSendCutoffBlocksVendor is true when ZapCash is past ZAPCASH_SEND_CUTOFF_HOUR_IST.
+// Call after ratelimit.WaitFor so a pre-hour admit cannot hit the provider past the hour.
+func ZapCashSendCutoffBlocksVendor(client string) (blocked bool, message string) {
+	decision := EvaluateZapCashSendCutoff(client)
+	if decision.Allowed() {
+		return false, ""
+	}
+	return true, decision.ErrorMessage()
+}

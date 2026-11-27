@@ -2175,6 +2175,11 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 		return
 	}
 	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	// Keep a ZAPCASH_SEND_CUTOFF seal so a failed SQS delete cannot re-send next day.
+	if _, _, errMsg, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB); getErr == nil &&
+		strings.Contains(errMsg, "ZAPCASH_SEND_CUTOFF") {
+		return
+	}
 	if err := redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey); err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to release zapcash redis claim: %v", data.Client, data.CommId, err))
 	}

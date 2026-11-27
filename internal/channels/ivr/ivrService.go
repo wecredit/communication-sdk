@@ -103,6 +103,11 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 		return cancelBeforeStamp(*data)
 	}
 
+	// Re-check after WaitFor so a 19:59 admit cannot dial past the IST hour.
+	if decision := channelHelper.EvaluateZapCashSendCutoff(data.Client); !decision.Allowed() {
+		return finishNotSent(*data, inputAudit, templateName, decision.Code)
+	}
+
 	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)
 	stamp, stampErr := stampClaimFn(config.Configs.CommIdempotentKey, redisKey, markerAttempted)
 	if stampErr != nil {

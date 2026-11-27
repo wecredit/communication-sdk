@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/sms/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -43,6 +44,11 @@ func HitSinchSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.SINCH, data.Client, "sms")); err != nil {
 		sinchSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		sinchSmsResponse.Outcome = outcome.FailedRetryable
+		return sinchSmsResponse
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(data.Client); blocked {
+		sinchSmsResponse.ResponseMessage = message
+		sinchSmsResponse.Outcome = outcome.Skipped
 		return sinchSmsResponse
 	}
 
