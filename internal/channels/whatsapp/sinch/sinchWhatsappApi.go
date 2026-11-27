@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	sinchpayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/sinch/sinchPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
@@ -70,6 +71,10 @@ func sendSinchWhatsappMessage(sinchApiModel extapimodels.WhatsappRequestBody) (e
 	// Message-send RPS only (token path is outside this bucket — OQ-5 / Tushar).
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.SINCH, sinchApiModel.Client, "whatsapp")); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody, false
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(sinchApiModel.Client); blocked {
+		responseBody.ResponseMessage = message
 		return responseBody, false
 	}
 

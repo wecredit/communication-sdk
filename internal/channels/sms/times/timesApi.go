@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/sms/times/timesPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -43,6 +44,11 @@ func HitTimesSmsApi(data extapimodels.SmsRequestBody) extapimodels.SmsResponse {
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.TIMES, data.Client, "sms")); err != nil {
 		timesSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		timesSmsResponse.Outcome = outcome.FailedRetryable
+		return timesSmsResponse
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(data.Client); blocked {
+		timesSmsResponse.ResponseMessage = message
+		timesSmsResponse.Outcome = outcome.Skipped
 		return timesSmsResponse
 	}
 
