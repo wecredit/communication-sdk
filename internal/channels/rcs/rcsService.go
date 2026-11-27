@@ -97,6 +97,14 @@ func SendRcsByProcess(msg sdkModels.CommApiRequestBody) (SendRcsResult, error) {
 	var response extapimodels.RcsResponse
 	// Check if the vendor should be hit
 	shouldHitVendor := channelHelper.ShouldHitVendor(msg.Client, msg.Channel)
+	cutoff := channelHelper.EvaluateZapCashSendCutoff(msg.Client)
+	if shouldHitVendor && !cutoff.Allowed() {
+		shouldHitVendor = false
+		response.ResponseMessage = cutoff.ErrorMessage()
+		if err := channelHelper.HandleZapCashSendCutoffError(msg, cutoff); err != nil {
+			utils.Error(fmt.Errorf("failed to seal ZapCash RCS send cutoff: %v", err))
+		}
+	}
 
 	if shouldHitVendor {
 		switch msg.Vendor {

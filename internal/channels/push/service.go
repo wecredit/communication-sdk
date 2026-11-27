@@ -95,6 +95,10 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 		return skippedVendorOff(request, tokens), nil
 	}
 
+	if decision := channelHelper.EvaluateZapCashSendCutoff(request.Client); !decision.Allowed() {
+		return skippedSendCutoff(request, tokens, decision.ErrorMessage()), nil
+	}
+
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
 	if err != nil {
 		return terminalContentFailure(request, tokens, "", err)
@@ -205,6 +209,14 @@ func contentFailureCode(err error) string {
 }
 
 func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Result {
+	return skippedTerminal(request, tokens, vendorOffMessage(request.Mobile))
+}
+
+func skippedSendCutoff(request sdkModels.CommApiRequestBody, tokens []string, code string) Result {
+	return skippedTerminal(request, tokens, truncateErrorCode(code))
+}
+
+func skippedTerminal(request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) Result {
 	templateName := ""
 	vendor := strings.TrimSpace(request.Vendor)
 	if _, _, resolvedName, resolvedVendor, resolveErr := resolveContent(request); resolveErr == nil {
@@ -228,7 +240,6 @@ func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Res
 		FreshOutputAudits: make([]map[string]interface{}, 0, len(tokens)),
 	}
 
-	skipMsg := vendorOffMessage(request.Mobile)
 	for _, token := range tokens {
 		fingerprint, err := FingerprintToken(token)
 		if err != nil {
@@ -240,6 +251,15 @@ func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Res
 	}
 
 	return result
+}
+
+func truncateErrorCode(code string) string {
+	const maxLen = 64
+	code = strings.TrimSpace(code)
+	if len(code) <= maxLen {
+		return code
+	}
+	return code[:maxLen]
 }
 
 func buildInputAudit(
