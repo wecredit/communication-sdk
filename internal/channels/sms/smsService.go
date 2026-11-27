@@ -51,6 +51,9 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 	if decision := smspolicy.Evaluate(msg.Source, msg.SourceRowId, msg.Channel, msg.CampaignDate, smspolicy.Now()); !decision.Allowed() {
 		return complianceBlockedResult(msg, req, decision)
 	}
+	if decision := channelHelper.EvaluateZapCashSendCutoff(msg.Client); !decision.Allowed() {
+		return zapCashSendCutoffBlockedResult(msg, req, decision)
+	}
 
 	templateDetails, found := cache.GetCache().GetMappedData(cache.TemplateDetailsData)
 	if !found {
@@ -222,6 +225,22 @@ func complianceBlockedResult(msg sdkModels.CommApiRequestBody, req extapimodels.
 	utils.Info(fmt.Sprintf("WECREDIT_SMS_COMPLIANCE_BLOCKED sourceRowId=%d eventId=%s commId=%s campaignDate=%s currentIST=%s decision=%s",
 		msg.SourceRowId, msg.EventId, msg.CommId, decision.CampaignDate,
 		decision.CurrentIST.Format(time.RFC3339), decision.Code))
+
+	return buildSmsResult(msg, req, response)
+}
+
+func zapCashSendCutoffBlockedResult(msg sdkModels.CommApiRequestBody, req extapimodels.SmsRequestBody, decision smspolicy.Decision) (SendSmsResult, error) {
+	if err := channelHelper.HandleZapCashSendCutoffError(msg, decision); err != nil {
+		utils.Error(fmt.Errorf("failed to seal ZapCash SMS send cutoff: %v", err))
+	}
+
+	utils.Info(fmt.Sprintf("ZAPCASH_SEND_CUTOFF_BLOCKED channel=SMS commId=%s currentIST=%s decision=%s",
+		msg.CommId, decision.CurrentIST.Format(time.RFC3339), decision.Code))
+
+	response := extapimodels.SmsResponse{
+		Outcome:         outcome.Skipped,
+		ResponseMessage: decision.ErrorMessage(),
+	}
 
 	return buildSmsResult(msg, req, response)
 }
