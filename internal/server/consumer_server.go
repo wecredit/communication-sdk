@@ -123,6 +123,21 @@ func StartConsumer(port string) {
 		stageMappings.DELETE("/id/:id", stageConfigurationHandler.DeleteStageMapping)
 	}
 
+	queryCampaignHandler := handlers.NewQueryCampaignHandler(apiServices.NewQueryCampaignService(database.DBtechRead, database.DBtechWrite))
+	queryCampaigns := admin.Group("/query-campaigns")
+	{
+		queryCampaigns.GET("", queryCampaignHandler.List)
+		queryCampaigns.POST("/add-query-campaign", queryCampaignHandler.Add)
+		queryCampaigns.GET("/id/:id", queryCampaignHandler.Get)
+		queryCampaigns.PUT("/id/:id", queryCampaignHandler.Update)
+		queryCampaigns.POST("/id/:id/preview", queryCampaignHandler.Preview)
+		queryCampaigns.POST("/id/:id/approve", queryCampaignHandler.Approve)
+		queryCampaigns.POST("/id/:id/enable", queryCampaignHandler.Enable)
+		queryCampaigns.POST("/id/:id/pause", queryCampaignHandler.Pause)
+		queryCampaigns.GET("/id/:id/runs", queryCampaignHandler.ListRuns)
+	}
+	admin.GET("/query-campaign-runs/id/:id", queryCampaignHandler.GetRun)
+
 	// if err := r.Run(":" + port); err != nil {
 	if err := r.Run("0.0.0.0:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

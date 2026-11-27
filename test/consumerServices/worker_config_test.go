@@ -70,6 +70,32 @@ func TestClientSharedWorkerCountAddsChannelBudgets(t *testing.T) {
 	}
 }
 
+func TestQueryCampaignWorkerPoolIsolatedFromChannelOverrides(t *testing.T) {
+	original := config.Configs
+	t.Cleanup(func() { config.Configs = original })
+	config.Configs.ConsumerChannelWorkerOverrides = "zapcash:sms:60,zapcash:whatsapp:60"
+	config.Configs.QueryCampaignWorkerOverrides = "zapcash:sms:10,zapcash:whatsapp:5"
+	config.Configs.QueryCampaignDefaultWorkers = "3"
+
+	if got := services.QueryCampaignPoolKey("ZapCash"); got != "query_campaign|zapcash" {
+		t.Fatalf("QC pool key = %q", got)
+	}
+	if got := services.ClientPoolKey("zapcash"); got == services.QueryCampaignPoolKey("zapcash") {
+		t.Fatal("QC pool key must differ from nurture client pool key")
+	}
+	if got := services.QueryCampaignSharedWorkerCount("zapcash"); got != 15 {
+		t.Fatalf("QC shared workers = %d, want 15", got)
+	}
+	if got := services.ClientSharedWorkerCount("zapcash"); got != 120 {
+		t.Fatalf("nurture shared workers = %d, want 120 (must ignore QC overrides)", got)
+	}
+
+	config.Configs.QueryCampaignWorkerOverrides = ""
+	if got := services.QueryCampaignSharedWorkerCount("zapcash"); got != 3 {
+		t.Fatalf("QC default workers = %d, want 3", got)
+	}
+}
+
 func TestClientChannelBufferKeyIsolatedByChannel(t *testing.T) {
 	if sms, whatsapp := services.ClientChannelBufferKey("SMS"), services.ClientChannelBufferKey(" whatsapp "); sms == whatsapp {
 		t.Fatalf("SMS and WhatsApp must use distinct buffers: %q", sms)

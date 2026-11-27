@@ -278,6 +278,7 @@ func applyRuntimeTuningFromAppConfig() error {
 			"PROVIDER_RPS_OVERRIDES",
 			"CONSUMER_CLIENT_WORKER_OVERRIDES",
 			"CONSUMER_CHANNEL_WORKER_OVERRIDES",
+			"QUERY_CAMPAIGN_WORKER_OVERRIDES",
 			"LOG_LEVEL",
 			"COMM_ASYNC_WRITE_CHANNELS",
 			"COMM_WRITE_STREAM_BUDGET_OVERRIDES",
@@ -357,6 +358,14 @@ func applyRuntimeTuningFromAppConfig() error {
 		utils.Error(fmt.Errorf("AppConfig CONSUMER_CHANNEL_WORKER_OVERRIDES invalid; keeping code/environment default: %w", err))
 		candidate.ConsumerChannelWorkerOverrides = fallback.ConsumerChannelWorkerOverrides
 	}
+	if err := validateWorkerOverrides(candidate.QueryCampaignWorkerOverrides, true); err != nil {
+		utils.Error(fmt.Errorf("AppConfig QUERY_CAMPAIGN_WORKER_OVERRIDES invalid; keeping code/environment default: %w", err))
+		candidate.QueryCampaignWorkerOverrides = fallback.QueryCampaignWorkerOverrides
+	}
+	if candidate.QueryCampaignDefaultWorkers != "" && !validPositiveConfigInt(candidate.QueryCampaignDefaultWorkers) {
+		utils.Error(fmt.Errorf("ENV QUERY_CAMPAIGN_DEFAULT_WORKERS invalid; keeping code/environment default"))
+		candidate.QueryCampaignDefaultWorkers = fallback.QueryCampaignDefaultWorkers
+	}
 	if candidate.SMSWorkers != "" && !validPositiveConfigInt(candidate.SMSWorkers) {
 		utils.Error(fmt.Errorf("ENV SMS_WORKERS invalid; keeping code/environment default"))
 		candidate.SMSWorkers = fallback.SMSWorkers
@@ -401,7 +410,7 @@ func logResolvedRuntimeTuning(resolved models.Config, appValues map[string]strin
 	}
 
 	utils.Info(fmt.Sprintf(
-		"runtime_tuning_resolved provider_overrides=%q[%s] provider_caps=%q[%s] provider_default=%s[%s] task_slots=%s[%s] default_workers=%s[%s] client_workers=%q[%s] channel_workers=%q[%s] buffer=%s[%s] gomaxprocs=%s[%s] log_level=%s[%s] async_writes=%q[%s] stream_budgets=%q[%s] write_workers=%q[%s]",
+		"runtime_tuning_resolved provider_overrides=%q[%s] provider_caps=%q[%s] provider_default=%s[%s] task_slots=%s[%s] default_workers=%s[%s] client_workers=%q[%s] channel_workers=%q[%s] qc_workers=%q[%s] buffer=%s[%s] gomaxprocs=%s[%s] log_level=%s[%s] async_writes=%q[%s] stream_budgets=%q[%s] write_workers=%q[%s]",
 		resolved.ProviderRPSOverrides, source("PROVIDER_RPS_OVERRIDES", resolved.ProviderRPSOverrides),
 		resolved.ProviderRPSApprovedCaps, source("PROVIDER_RPS_APPROVED_CAPS", resolved.ProviderRPSApprovedCaps),
 		resolved.ProviderRPSDefault, source("PROVIDER_RPS_DEFAULT", resolved.ProviderRPSDefault),
@@ -409,6 +418,7 @@ func logResolvedRuntimeTuning(resolved models.Config, appValues map[string]strin
 		resolved.ConsumerDefaultClientWorkers, source("CONSUMER_DEFAULT_CLIENT_WORKERS", resolved.ConsumerDefaultClientWorkers),
 		resolved.ConsumerClientWorkerOverrides, source("CONSUMER_CLIENT_WORKER_OVERRIDES", resolved.ConsumerClientWorkerOverrides),
 		resolved.ConsumerChannelWorkerOverrides, source("CONSUMER_CHANNEL_WORKER_OVERRIDES", resolved.ConsumerChannelWorkerOverrides),
+		resolved.QueryCampaignWorkerOverrides, source("QUERY_CAMPAIGN_WORKER_OVERRIDES", resolved.QueryCampaignWorkerOverrides),
 		resolved.ConsumerClientBufferSize, source("CONSUMER_CLIENT_BUFFER_SIZE", resolved.ConsumerClientBufferSize),
 		resolved.GoMaxProcs, source("GOMAXPROCS", resolved.GoMaxProcs),
 		resolved.LogLevel, source("LOG_LEVEL", resolved.LogLevel),
@@ -431,6 +441,7 @@ func ApplyAppConfigValues(candidate *models.Config, values map[string]string) {
 	apply("PROVIDER_RPS_OVERRIDES", &candidate.ProviderRPSOverrides)
 	apply("CONSUMER_CLIENT_WORKER_OVERRIDES", &candidate.ConsumerClientWorkerOverrides)
 	apply("CONSUMER_CHANNEL_WORKER_OVERRIDES", &candidate.ConsumerChannelWorkerOverrides)
+	apply("QUERY_CAMPAIGN_WORKER_OVERRIDES", &candidate.QueryCampaignWorkerOverrides)
 	apply("LOG_LEVEL", &candidate.LogLevel)
 	apply("COMM_ASYNC_WRITE_CHANNELS", &candidate.CommAsyncWriteChannels)
 	apply("COMM_WRITE_STREAM_BUDGET_OVERRIDES", &candidate.CommWriteStreamBudgetOverrides)
