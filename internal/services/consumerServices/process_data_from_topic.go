@@ -1203,6 +1203,7 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
 
+	asyncCore := zapCashCoreAsyncActive(data.Client, data.Channel)
 	result, err := push.Send(ctx, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
@@ -1228,11 +1229,10 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 			data.Client, data.CommId, data.EventId, noteErr))
 	}
 
-	// Same as WhatsApp and RCS: the audit write is log-only and does not keep
-	// the SQS message. An unfinished token batch stays so the remaining devices
-	// can be retried.
-	writePushAudits(data.Client, result)
+	// Unfinished token batches stay on the queue; keep sync InsertRow so partial
+	// FreshOutputAudits are durable without holding SQS on the stream.
 	if !PushAttemptDeletesSQS(result) {
+		writePushAudits(data.Client, result)
 		releaseOwnedEventClaim(ctx, data, queueURL)
 		return result.Processed, false
 	}
@@ -1244,6 +1244,23 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		}
 	}
 
+	if asyncCore {
+		if enqueueErr := enqueueZapCashPushAudits(ctx, data, result); enqueueErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH async audit enqueue failed: %v",
+				data.Client, data.CommId, data.EventId, enqueueErr))
+			return result.Processed, false
+		}
+
+		deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if deleteErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
+				data.Client, data.CommId, data.EventId, deleteErr))
+		}
+
+		return result.Processed, deleted
+	}
+
+	writePushAudits(data.Client, result)
 	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	if deleteErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
@@ -2343,11 +2360,51 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 
 func zapCashCoreAsyncActive(client, channel string) bool {
 	switch strings.ToUpper(strings.TrimSpace(channel)) {
-	case variables.RCS, variables.WhatsApp, variables.IVR:
+	case variables.RCS, variables.WhatsApp, variables.IVR, variables.PUSH:
 		return marketingAsyncActive(client, channel)
 	default:
 		return false
 	}
+}
+
+func enqueueZapCashPushAudits(ctx context.Context, data sdkModels.CommApiRequestBody, result push.Result) error {
+	outputs := result.FreshOutputAudits
+	if len(outputs) == 0 {
+		outputs = result.OutputAudits
+	}
+
+	terminal, err := channelHelper.GetRedisTerminalResult(data)
+	if err != nil {
+		return fmt.Errorf("read sealed zapcash push terminal: %w", err)
+	}
+
+	record, err := persistence.ZapCashPushCoreRecord(data, result.InputAudit, outputs, terminal)
+	if errors.Is(err, persistence.ErrMissingHitAt) {
+		hitAt := time.Now()
+		txn, errMsg := ZapCashPushClaimSeal(result)
+		outcome := "rejected"
+		if txn != "" {
+			outcome = "submitted"
+		}
+
+		if sealErr := channelHelper.SealRedisTerminalResult(data, txn, txn, outcome, errMsg, hitAt); sealErr != nil {
+			return fmt.Errorf("seal zapcash push terminal timestamp: %w", sealErr)
+		}
+
+		terminal.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+		terminal.TransactionId = firstNonBlankPersistenceValue(terminal.TransactionId, txn)
+		terminal.ProviderMessageID = firstNonBlankPersistenceValue(terminal.ProviderMessageID, txn)
+		terminal.Outcome = outcome
+		terminal.ErrorMessage = firstNonBlankPersistenceValue(terminal.ErrorMessage, errMsg)
+		record, err = persistence.ZapCashPushCoreRecord(data, result.InputAudit, outputs, terminal)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	_, err = persistence.EnqueueDurably(ctx, record)
+	return err
 }
 
 func logHeldSQSAckForAudits(data sdkModels.CommApiRequestBody, channel string, inputErr, outputErr error) {

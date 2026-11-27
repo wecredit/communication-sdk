@@ -538,3 +538,34 @@ func TestZapCashAsyncEnabledRequiresFlagAndBudget(t *testing.T) {
 		t.Fatal("async write must stay off without a verified stream budget")
 	}
 }
+
+func TestZapCashPushCoreRecordEncodesOutputArray(t *testing.T) {
+	hitAt := time.Date(2026, 11, 27, 9, 30, 0, 0, time.UTC)
+	record, err := persistence.ZapCashPushCoreRecord(sdkModels.CommApiRequestBody{
+		Client: "zapcash", Channel: "PUSH", CommId: "WC-push-1", EventId: "event-push-1",
+		Vendor: "FCM", ProcessName: "ZAPCASH", Mobile: "9999999999",
+	}, map[string]interface{}{"CommId": "WC-push-1", "Mobile": int64(9999999999)},
+		[]map[string]interface{}{
+			{"CommId": "WC-push-1", "IsSent": true, "ProviderMessageId": "msg-a"},
+			{"CommId": "WC-push-1", "IsSent": false, "ErrorCode": "skipped"},
+		},
+		redisModels.MobileChannelRedisData{
+			TransactionId: "msg-a", ProviderMessageID: "msg-a", Outcome: "submitted",
+			HitAt: hitAt.Format(time.RFC3339Nano),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Mapper != persistence.MapperZapCashPushCore || record.Channel != "PUSH" {
+		t.Fatalf("record identity = %+v", record)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(record.OutputJSON), "[") {
+		t.Fatalf("PUSH OutputJSON must be an array, got %q", record.OutputJSON)
+	}
+	if !strings.Contains(record.OutputJSON, "msg-a") || !strings.Contains(record.OutputJSON, "skipped") {
+		t.Fatalf("output array missing token rows: %q", record.OutputJSON)
+	}
+	if !persistence.IsZapCashCoreMapper(record.Mapper) {
+		t.Fatal("PUSH mapper must be a ZapCash Core mapper")
+	}
+}

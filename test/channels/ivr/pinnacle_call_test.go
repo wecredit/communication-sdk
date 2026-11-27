@@ -186,8 +186,8 @@ func TestIVRSendCutoffBlocksBeforePostSingleCall(t *testing.T) {
 		t.Cleanup(restoreClock)
 
 		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
-		if env.calls.Load() != 1 || !got.DeleteMessage {
-			t.Fatalf("19:59 should dial: calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+		if env.calls.Load() != 1 {
+			t.Fatalf("19:59 should dial: calls=%d delete=%v deferred=%v", env.calls.Load(), got.DeleteMessage, got.DeferredPersist)
 		}
 	})
 

@@ -48,7 +48,7 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return writeMarketingSMS(ctx, db, deduped)
 	case MapperMarketingWhatsapp:
 		return writeMarketingWhatsapp(ctx, db, deduped)
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
 		return writeZapCashCore(ctx, db, deduped)
 	default:
 		return fmt.Errorf("unsupported persistence mapper %q", deduped[0].Mapper)
@@ -93,29 +93,49 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 		if err != nil {
 			return fmt.Errorf("decode input audit: %w", err)
 		}
-		output, err := unmarshalAuditMap(record.OutputJSON)
+		outputs, err := unmarshalAuditMaps(record.OutputJSON)
 		if err != nil {
 			return fmt.Errorf("decode output audit: %w", err)
 		}
-		for _, side := range []struct {
+
+		field := strings.TrimSpace(record.AuditKey)
+		if field == "" {
+			field = strings.TrimSpace(record.EventID)
+		}
+
+		type sideRow struct {
 			table, name string
 			row         map[string]interface{}
-		}{
-			{inputTable, AuditSideInput, input}, {outputTable, AuditSideOutput, output},
-		} {
+		}
+
+		sides := make([]sideRow, 0, 1+len(outputs))
+		if input != nil {
+			sides = append(sides, sideRow{table: inputTable, name: AuditSideInput, row: input})
+		}
+
+		for _, output := range outputs {
+			if output == nil {
+				continue
+			}
+			sides = append(sides, sideRow{table: outputTable, name: AuditSideOutput, row: output})
+		}
+
+		writtenSides := map[string]bool{}
+		for _, side := range sides {
 			if side.row == nil {
 				continue
 			}
-			field := strings.TrimSpace(record.AuditKey)
-			if field == "" {
-				field = strings.TrimSpace(record.EventID)
-			}
 			if field != "" {
-				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
-				if err != nil {
-					return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+				if _, seen := writtenSides[side.name]; !seen {
+					written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
+					if err != nil {
+						return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+					}
+
+					writtenSides[side.name] = written
 				}
-				if written {
+
+				if writtenSides[side.name] {
 					continue
 				}
 			}
@@ -166,6 +186,14 @@ func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error
 			return "", "", err
 		}
 		outputTable, err = approvedTable(config.Configs.IvrOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashPushCore:
+		inputTable, err = approvedTable(config.Configs.PushInputAuditTable)
+		if err != nil {
+		
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.PushOutputTable)
 		return inputTable, outputTable, err
 	default:
 		return "", "", fmt.Errorf("unsupported zapcash core mapper %q", mapper)
@@ -281,7 +309,7 @@ func BatchLimit(mapper string) int64 {
 	switch mapper {
 	case MapperMarketingSMS:
 		return smsBatchLimit
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
 		return zapCashCoreBatchLimit
 	default:
 		return whatsappBatchLimit
@@ -292,7 +320,7 @@ func BatchParameterCount(mapper string) int {
 	switch mapper {
 	case MapperMarketingSMS:
 		return smsBatchLimit * smsColumnCount
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
 		return zapCashCoreBatchLimit
 	default:
 		return whatsappBatchLimit * whatsappColumnCount
