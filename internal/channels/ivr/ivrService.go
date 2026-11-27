@@ -10,6 +10,7 @@ import (
 	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	pinnacleIvr "github.com/wecredit/communication-sdk/internal/channels/ivr/pinnacle"
 	"github.com/wecredit/communication-sdk/internal/database"
+	"github.com/wecredit/communication-sdk/internal/persistence"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
 	"github.com/wecredit/communication-sdk/internal/redis"
 	"github.com/wecredit/communication-sdk/pkg/cache"
@@ -67,9 +68,16 @@ func SetClaimHooksForTest(
 
 // AttemptResult tells the consumer whether the SQS receipt should be deleted.
 // DeleteMessage false leaves the message until visibility ends.
+// DeferredPersist means Core Input/Output were not written locally; the consumer
+// must EnqueueDurably before ACK when async writers are on.
 type AttemptResult struct {
-	DeleteMessage  bool
-	InactiveVendor bool
+	DeleteMessage   bool
+	InactiveVendor  bool
+	Accepted        bool
+	DeferredPersist bool
+	InputAudit      map[string]interface{}
+	OutputAudit     map[string]interface{}
+	AlreadyMarked   bool
 }
 
 // SendAttempt places at most one Pinnacle call for an established stamp.
@@ -119,7 +127,7 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 	case 1:
 	case 0:
 		utils.Info(fmt.Sprintf("ivr_attempt_already_marked commId=%s", data.CommId))
-		return AttemptResult{DeleteMessage: true}
+		return AttemptResult{AlreadyMarked: true, DeleteMessage: !deferZapCashCoreAudits(data.Client, data.Channel)}
 	default:
 		utils.Error(fmt.Errorf("ivr_attempt_stamp_failed commId=%s", data.CommId))
 		return AttemptResult{}
@@ -127,8 +135,7 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 
 	if ctx.Err() != nil {
 		recordOutcome(*data, "", markerUnknown)
-		writeAudits(*data, inputAudit, templateName, false, pinnacleIvr.PrefixUnknown+" cancelled", "", "")
-		return AttemptResult{DeleteMessage: true}
+		return finalizeAudits(*data, inputAudit, templateName, false, pinnacleIvr.PrefixUnknown+" cancelled", "", "")
 	}
 
 	result, callErr := pinnacleIvr.PostSingleCall(ctx, config.Configs.PinnacleZapcashIvrApiUrl, pinnacleIvr.CallRequest{
@@ -178,8 +185,7 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 		))
 	}
 
-	writeAudits(*data, inputAudit, templateName, result.IsSent, result.ResponseMessage, result.TransactionID, result.CampaignID)
-	return AttemptResult{DeleteMessage: true}
+	return finalizeAudits(*data, inputAudit, templateName, result.IsSent, result.ResponseMessage, result.TransactionID, result.CampaignID)
 }
 
 func resolveSend(data sdkModels.CommApiRequestBody) (voiceID, templateName, reject string) {
@@ -225,8 +231,7 @@ func finishNotSent(data sdkModels.CommApiRequestBody, inputAudit map[string]inte
 	}
 
 	utils.Info(fmt.Sprintf("ivr_not_sent commId=%s category=%s", data.CommId, category))
-	writeAudits(data, inputAudit, templateName, false, pinnacleIvr.PrefixNotSent+" "+category, "", "")
-	return AttemptResult{DeleteMessage: true}
+	return finalizeAudits(data, inputAudit, templateName, false, pinnacleIvr.PrefixNotSent+" "+category, "", "")
 }
 
 func cancelBeforeStamp(data sdkModels.CommApiRequestBody) AttemptResult {
@@ -247,16 +252,47 @@ func recordOutcome(data sdkModels.CommApiRequestBody, transactionID, category st
 	}
 }
 
-func writeAudits(data sdkModels.CommApiRequestBody, inputAudit map[string]interface{}, templateName string, isSent bool, responseMessage, transactionID, campaignID string) {
-	if inputAudit == nil {
-		inputAudit = map[string]interface{}{}
+func deferZapCashCoreAudits(client, channel string) bool {
+	return persistence.AsyncEnabled(client, channel) && persistence.WriterActive(client, channel)
+}
+
+func finalizeAudits(data sdkModels.CommApiRequestBody, inputAudit map[string]interface{}, templateName string, isSent bool, responseMessage, transactionID, campaignID string) AttemptResult {
+	input, output := buildAuditMaps(data, inputAudit, templateName, isSent, responseMessage, transactionID, campaignID)
+	if deferZapCashCoreAudits(data.Client, data.Channel) {
+		return AttemptResult{
+			Accepted:        isSent,
+			DeferredPersist: true,
+			InputAudit:      input,
+			OutputAudit:     output,
+		}
 	}
 
-	inputAudit["CommId"] = data.CommId
-	logAuditEnqueue(data.CommId, config.Configs.SdkIvrInputTable)
-	database.InsertRow(data.Client, config.Configs.SdkIvrInputTable, inputAudit)
+	inputErr, outputErr := writeAuditsSync(data, input, output)
+	if database.HoldSQSAckAfterAcceptedAudits(isSent, inputErr, outputErr) {
+		utils.Error(fmt.Errorf(
+			"holding SQS ack after accepted IVR send: commId=%s input_audit=%v output_audit=%v",
+			data.CommId, inputErr, outputErr,
+		))
 
-	output := map[string]interface{}{
+		return AttemptResult{Accepted: isSent, InputAudit: input, OutputAudit: output}
+	}
+
+	return AttemptResult{DeleteMessage: true, Accepted: isSent, InputAudit: input, OutputAudit: output}
+}
+
+func buildAuditMaps(data sdkModels.CommApiRequestBody, inputAudit map[string]interface{}, templateName string, isSent bool, responseMessage, transactionID, campaignID string) (input, output map[string]interface{}) {
+	if inputAudit == nil {
+		input = map[string]interface{}{}
+	} else {
+		input = map[string]interface{}{}
+		for key, value := range inputAudit {
+			input[key] = value
+		}
+	}
+
+	input["CommId"] = data.CommId
+
+	output = map[string]interface{}{
 		"CommId":          data.CommId,
 		"TemplateName":    templateName,
 		"TransactionId":   transactionID,
@@ -269,8 +305,15 @@ func writeAudits(data sdkModels.CommApiRequestBody, inputAudit map[string]interf
 		output["CampaignId"] = campaignID
 	}
 
+	return input, output
+}
+
+func writeAuditsSync(data sdkModels.CommApiRequestBody, input, output map[string]interface{}) (inputErr, outputErr error) {
+	logAuditEnqueue(data.CommId, config.Configs.SdkIvrInputTable)
+	inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkIvrInputTable, redis.AuditSideInput, input)
 	logAuditEnqueue(data.CommId, config.Configs.IvrOutputTable)
-	database.InsertRow(data.Client, config.Configs.IvrOutputTable, output)
+	outputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.IvrOutputTable, redis.AuditSideOutput, output)
+	return inputErr, outputErr
 }
 
 func logAuditEnqueue(commID, table string) {

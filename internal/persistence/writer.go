@@ -37,6 +37,10 @@ const (
 
 var writerSQLRetryBase = time.Second
 var writeRecordsAttempt = func(ctx context.Context, records []Record) error {
+	if len(records) > 0 && IsZapCashCoreMapper(records[0].Mapper) {
+		return writeRecords(ctx, database.DBZapCashV1, records)
+	}
+
 	return writeRecords(ctx, database.DBMarketing, records)
 }
 
@@ -131,8 +135,12 @@ func Start(ctx context.Context) error {
 	if runtime.redis == nil {
 		return fmt.Errorf("async persistence configured but Redis is unavailable")
 	}
-	if database.DBMarketing == nil {
+	needsMarketing, needsCore := asyncLaneDatabaseNeeds()
+	if needsMarketing && database.DBMarketing == nil {
 		return fmt.Errorf("async persistence configured but Marketing database is unavailable")
+	}
+	if needsCore && database.DBZapCashV1 == nil {
+		return fmt.Errorf("async persistence configured but ZapCash Core database is unavailable")
 	}
 	if err := VerifyRedisSafety(ctx, runtime.redis, config.Configs.RedisAddress); err != nil {
 		return err
@@ -623,10 +631,31 @@ func businessIdentity(record Record) string {
 	if record.Mapper == MapperMarketingWhatsapp {
 		return strconv.FormatInt(record.SourceRowID, 10)
 	}
+	if IsZapCashCoreMapper(record.Mapper) {
+		return record.Mapper + "\x00" + strings.TrimSpace(record.CommID)
+	}
 	canonical := strings.ToLower(strings.TrimSpace(record.Source)) + "\x00" +
 		strconv.FormatInt(record.SourceRowID, 10) + "\x00" + strings.ToUpper(strings.TrimSpace(record.Channel))
 	sum := sha256.Sum256([]byte(canonical))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+// asyncLaneDatabaseNeeds reports which SQL pools enabled async lanes require.
+func asyncLaneDatabaseNeeds() (needsMarketing, needsCore bool) {
+	for key := range supportedChannels {
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 || !AsyncEnabled(parts[0], parts[1]) {
+			continue
+		}
+
+		if strings.EqualFold(parts[0], "zapcash") {
+			needsCore = true
+			continue
+		}
+		needsMarketing = true
+	}
+
+	return needsMarketing, needsCore
 }
 
 func businessLockKey(lane string, record Record) string {

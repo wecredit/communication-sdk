@@ -47,8 +47,22 @@ func TestCommWriteWorkerOverrides(t *testing.T) {
 	if workers, err := config.CommWriteWorkerCount("wecredit:whatsapp:2,wecredit:sms:1", "wecredit", "whatsapp"); err != nil || workers != 2 {
 		t.Fatalf("WhatsApp workers=%d err=%v, want 2", workers, err)
 	}
+
+	zapCashOverrides := "wecredit:whatsapp:3,wecredit:sms:3,zapcash:rcs:2,zapcash:whatsapp:2,zapcash:ivr:2"
+	if err := config.ValidateCommWriteWorkerOverrides(zapCashOverrides); err != nil {
+		t.Fatalf("zapcash worker overrides should be accepted: %v", err)
+	}
+
+	if workers, err := config.CommWriteWorkerCount(zapCashOverrides, "zapcash", "rcs"); err != nil || workers != 2 {
+		t.Fatalf("zapcash RCS workers=%d err=%v, want 2", workers, err)
+	}
+
+	if workers, err := config.CommWriteWorkerCount(zapCashOverrides, "zapcash", "ivr"); err != nil || workers != 2 {
+		t.Fatalf("zapcash IVR workers=%d err=%v, want 2", workers, err)
+	}
+
 	for _, raw := range []string{
-		"wecredit:whatsapp:0", "wecredit:whatsapp:9", "zapcash:sms:2",
+		"wecredit:whatsapp:0", "wecredit:whatsapp:9", "zapcash:sms:2", "zapcash:push:2",
 		"wecredit:sms:2,wecredit:sms:3", "wecredit:sms:not-a-number",
 	} {
 		if err := config.ValidateCommWriteWorkerOverrides(raw); err == nil {

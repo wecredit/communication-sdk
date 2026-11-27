@@ -4,11 +4,18 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/wecredit/communication-sdk/config"
+	commredis "github.com/wecredit/communication-sdk/internal/redis"
 	"gorm.io/gorm"
+)
+
+const (
+	AuditSideInput  = commredis.AuditSideInput
+	AuditSideOutput = commredis.AuditSideOutput
 )
 
 const sqlStatementTimeout = 30 * time.Second
@@ -16,6 +23,7 @@ const sqlStatementTimeout = 30 * time.Second
 const (
 	smsBatchLimit           = 140
 	whatsappBatchLimit      = 70
+	zapCashCoreBatchLimit   = 50
 	smsColumnCount          = 13
 	whatsappColumnCount     = 21
 	sqlServerParameterLimit = 2100
@@ -29,6 +37,9 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return nil
 	}
 	if db == nil {
+		if IsZapCashCoreMapper(records[0].Mapper) {
+			return fmt.Errorf("ZapCash Core database is unavailable")
+		}
 		return fmt.Errorf("Marketing database is unavailable")
 	}
 	deduped := dedupeRecords(records)
@@ -37,6 +48,8 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return writeMarketingSMS(ctx, db, deduped)
 	case MapperMarketingWhatsapp:
 		return writeMarketingWhatsapp(ctx, db, deduped)
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return writeZapCashCore(ctx, db, deduped)
 	default:
 		return fmt.Errorf("unsupported persistence mapper %q", deduped[0].Mapper)
 	}
@@ -50,6 +63,9 @@ func dedupeRecords(records []Record) []Record {
 		if record.Mapper == MapperMarketingWhatsapp {
 			key = record.Mapper + "\x00" + fmt.Sprint(record.SourceRowID)
 		}
+		if IsZapCashCoreMapper(record.Mapper) {
+			key = record.Mapper + "\x00" + record.CommID
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -57,6 +73,103 @@ func dedupeRecords(records []Record) []Record {
 		result = append(result, record)
 	}
 	return result
+}
+
+func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error {
+	if len(records) > zapCashCoreBatchLimit {
+		return fmt.Errorf("ZapCash Core persistence batch exceeds limit %d", zapCashCoreBatchLimit)
+	}
+	rowsByTable := make(map[string][]map[string]interface{})
+	marksByTable := make(map[string][]auditMark)
+	for _, record := range records {
+		if !IsZapCashCoreMapper(record.Mapper) || record.CommID == "" || record.HitAt.IsZero() {
+			return fmt.Errorf("invalid ZapCash Core persistence record")
+		}
+		inputTable, outputTable, err := zapCashCoreTables(record.Mapper)
+		if err != nil {
+			return err
+		}
+		input, err := unmarshalAuditMap(record.InputJSON)
+		if err != nil {
+			return fmt.Errorf("decode input audit: %w", err)
+		}
+		output, err := unmarshalAuditMap(record.OutputJSON)
+		if err != nil {
+			return fmt.Errorf("decode output audit: %w", err)
+		}
+		for _, side := range []struct {
+			table, name string
+			row         map[string]interface{}
+		}{
+			{inputTable, AuditSideInput, input}, {outputTable, AuditSideOutput, output},
+		} {
+			if side.row == nil {
+				continue
+			}
+			field := strings.TrimSpace(record.AuditKey)
+			if field == "" {
+				field = strings.TrimSpace(record.EventID)
+			}
+			if field != "" {
+				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
+				if err != nil {
+					return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+				}
+				if written {
+					continue
+				}
+			}
+
+			side.row["CommId"] = record.CommID
+			rowsByTable[side.table] = append(rowsByTable[side.table], side.row)
+			marksByTable[side.table] = append(marksByTable[side.table], auditMark{field: field, side: side.name})
+		}
+	}
+
+	for table, rows := range rowsByTable {
+		if err := insertCoreAuditBatch(ctx, db, table, rows); err != nil {
+			return err
+		}
+		for _, mark := range marksByTable[table] {
+			if mark.field != "" {
+				if err := commredis.MarkAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, mark.field, mark.side); err != nil {
+					return fmt.Errorf("mark Core audit %s/%s: %w", mark.field, mark.side, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+type auditMark struct{ field, side string }
+
+func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error) {
+	switch mapper {
+	case MapperZapCashRcsCore:
+		inputTable, err = approvedTable(config.Configs.SdkRcsInputTable)
+		if err != nil {
+			return "", "", err
+		}
+
+		outputTable, err = approvedTable(config.Configs.RcsOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashWhatsappCore:
+		inputTable, err = approvedTable(config.Configs.SdkWhatsappInputTable)
+		if err != nil {
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.WhatsappOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashIvrCore:
+		inputTable, err = approvedTable(config.Configs.SdkIvrInputTable)
+		if err != nil {
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.IvrOutputTable)
+		return inputTable, outputTable, err
+	default:
+		return "", "", fmt.Errorf("unsupported zapcash core mapper %q", mapper)
+	}
 }
 
 func writeMarketingSMS(ctx context.Context, db *gorm.DB, records []Record) error {
@@ -125,20 +238,65 @@ func executeBatch(parent context.Context, db *gorm.DB, query string, args []inte
 	})
 }
 
+// Core rows are inserted directly (without a per-row transaction) in one
+// multi-VALUES statement per audit table. The async stream record remains
+// pending if the statement fails, so the existing bounded retry/reclaim path applies.
+func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	columnSet := make(map[string]struct{})
+	for _, row := range rows {
+		for column := range row {
+			columnSet[column] = struct{}{}
+		}
+	}
+	columns := make([]string, 0, len(columnSet))
+	for column := range columnSet {
+		columns = append(columns, column)
+	}
+
+	sort.Strings(columns)
+	values := make([]string, 0, len(rows))
+	args := make([]interface{}, 0, len(rows)*len(columns))
+	for _, row := range rows {
+		placeholders := make([]string, len(columns))
+		for i, column := range columns {
+			placeholders[i] = "?"
+			args = append(args, row[column])
+		}
+
+		values = append(values, "("+strings.Join(placeholders, ",")+")")
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
+	defer cancel()
+	return db.WithContext(ctx).Exec(query, args...).Error
+}
+
 // BatchLimit exposes the stable per-mapper read/write ceiling for startup and
 // black-box tests. It does not alter the Redis record contract.
 func BatchLimit(mapper string) int64 {
-	if mapper == MapperMarketingSMS {
+	switch mapper {
+	case MapperMarketingSMS:
 		return smsBatchLimit
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return zapCashCoreBatchLimit
+	default:
+		return whatsappBatchLimit
 	}
-	return whatsappBatchLimit
 }
 
 func BatchParameterCount(mapper string) int {
-	if mapper == MapperMarketingSMS {
+	switch mapper {
+	case MapperMarketingSMS:
 		return smsBatchLimit * smsColumnCount
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+		return zapCashCoreBatchLimit
+	default:
+		return whatsappBatchLimit * whatsappColumnCount
 	}
-	return whatsappBatchLimit * whatsappColumnCount
 }
 
 func approvedTable(table string) (string, error) {

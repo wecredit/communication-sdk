@@ -1071,6 +1071,13 @@ func processMessage(ctx context.Context, sqsClient *sqs.SQS, queueURL string, ms
 			if PushRedeliveryWaits(data.Channel, redisTxn, redisErr) {
 				return false, false
 			}
+			// Sealed accept with missing Core audits: durable enqueue or sync repair
+			// before ACK. Blank in-flight duplicates still delete immediately.
+			if !marketingRedisClaimBlank(redisTxn, redisErr) {
+				if !repairZapCashSealedChannelAudits(ctx, data, dbMappedData, redisTxn, redisErr) {
+					return true, false
+				}
+			}
 			deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete duplicate in-flight zapcash message: %v", delErr))
@@ -1143,6 +1150,40 @@ func handleIVR(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	result := ivr.SendAttempt(ctx, &data, dbMappedData)
 	if result.InactiveVendor {
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
+	}
+
+	if result.AlreadyMarked {
+		// Same repair as skipSend: derive IsSent from the sealed claim so
+		// rejected redeliveries are not recorded as accepts, and sync hold-ACK
+		// redeliveries retry both audits before delete.
+		redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+		_, redisTxn, redisErr, getErr := redis.GetMobileDataFromRedis(config.Configs.CommIdempotentKey, redisKey, redis.RDB)
+		if getErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] IVR redelivery claim read failed: %v", data.Client, data.CommId, getErr))
+			return true, false
+		}
+
+		if !repairZapCashSealedChannelAudits(ctx, data, dbMappedData, redisTxn, redisErr) {
+			return true, false
+		}
+
+		deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if !deleted {
+			utils.Error(fmt.Errorf("failed to delete already-marked IVR message: %v", delErr))
+		}
+		return true, deleted
+	}
+
+	if result.DeferredPersist {
+		if err := enqueueZapCashCoreAudits(ctx, data, result.InputAudit, result.OutputAudit); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] IVR async audit enqueue failed: %v", data.Client, data.CommId, err))
+			return true, false
+		}
+		deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if !deleted {
+			utils.Error(fmt.Errorf("failed to delete message after IVR async audit enqueue: %v", delErr))
+		}
+		return true, deleted
 	}
 
 	if !result.DeleteMessage {
@@ -1303,7 +1344,17 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	// Non-marketing WhatsApp also requires the channel input audit. RawCommData
 	// is a separate legacy source table and must not control this audit write.
 	dbMappedData["CommId"] = data.CommId
-	database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
+	asyncCore := zapCashCoreAsyncActive(data.Client, data.Channel)
+	zapCashClient := strings.EqualFold(strings.TrimSpace(data.Client), variables.ZapCash)
+	inputAudit := copyAuditMap(dbMappedData)
+	var inputErr error
+	switch {
+	case asyncCore:
+	case zapCashClient:
+		inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkWhatsappInputTable, redis.AuditSideInput, dbMappedData)
+	default:
+		database.InsertRow(data.Client, config.Configs.SdkWhatsappInputTable, dbMappedData)
+	}
 	var deleted bool
 	var delErr error
 
@@ -1312,10 +1363,31 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 	dbMappedData = wpResult.DBData
 	if err != nil {
 		utils.Error(fmt.Errorf("error in sending whatsapp: %v", err))
-		// If processing failed, don't delete message - let it retry after visibility timeout
-		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		outputRow := MapWhatsappMysqlOutput(dbMappedData)
+		if asyncCore && isMessageProcessed {
+			if enqueueErr := enqueueZapCashCoreAudits(ctx, data, inputAudit, outputRow); enqueueErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] WhatsApp async audit enqueue failed: %v", data.Client, data.CommId, enqueueErr))
+				releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+				return isMessageProcessed, false
+			}
 
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after partial whatsapp processing: %v", delErr))
+			}
+
+			releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+			return isMessageProcessed, deleted
+		}
+
+		outputErr := persistWhatsappOutputAudit(data, outputRow, zapCashClient)
 		if isMessageProcessed {
+			if zapCashClient && database.HoldSQSAckAfterAcceptedAudits(wpResult.Accepted, inputErr, outputErr) {
+				logHeldSQSAckForAudits(data, "WhatsApp", inputErr, outputErr)
+				releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+				return isMessageProcessed, false
+			}
+
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial whatsapp processing: %v", delErr))
@@ -1323,7 +1395,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		} else if isMarketingSMSDispatch(data) {
 			releaseMarketingDispatchClaims(data)
 		}
-		releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
+		releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
 		return isMessageProcessed, deleted
 	}
 
@@ -1340,8 +1412,35 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		}
 	}
 
-	// if message processed successfully, delete it and then insert it into database
+	outputRow := MapWhatsappMysqlOutput(dbMappedData)
+	if asyncCore {
+		if isMessageProcessed {
+			if err := enqueueZapCashCoreAudits(ctx, data, inputAudit, outputRow); err != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] WhatsApp async audit enqueue failed: %v", data.Client, data.CommId, err))
+				releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+				return isMessageProcessed, false
+			}
+
+			deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after successful whatsapp processing: %v", err))
+			}
+		} else if isMarketingSMSDispatch(data) {
+			releaseMarketingDispatchClaims(data)
+		}
+
+		releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+		return isMessageProcessed, deleted
+	}
+
+	outputErr := persistWhatsappOutputAudit(data, outputRow, zapCashClient)
 	if isMessageProcessed {
+		if zapCashClient && database.HoldSQSAckAfterAcceptedAudits(wpResult.Accepted, inputErr, outputErr) {
+			logHeldSQSAckForAudits(data, "WhatsApp", inputErr, outputErr)
+			releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
+			return isMessageProcessed, false
+		}
+
 		deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful whatsapp processing: %v", err))
@@ -1350,9 +1449,7 @@ func handleWhatsapp(ctx context.Context, data sdkModels.CommApiRequestBody, dbMa
 		releaseMarketingDispatchClaims(data)
 	}
 
-	database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, MapWhatsappMysqlOutput(dbMappedData))
-
-	releaseZapCashClaimIfUnsent(data, queueURL, dbMappedData["IsSent"] == 1)
+	releaseZapCashClaimIfUnsent(data, queueURL, wpResult.Accepted)
 	return isMessageProcessed, deleted
 
 }
@@ -1615,16 +1712,47 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	// RCS input audit belongs to the consumer path. RawCommData is unrelated;
 	// disabling that legacy source table must not disable channel-level RCS audit.
 	dbMappedData["CommId"] = data.CommId
-	database.InsertRow(data.Client, config.Configs.SdkRcsInputTable, dbMappedData)
+	asyncCore := zapCashCoreAsyncActive(data.Client, data.Channel)
+	zapCashClient := strings.EqualFold(strings.TrimSpace(data.Client), variables.ZapCash)
+	var inputErr error
+	switch {
+	case asyncCore:
+		// Core audits enqueue after seal.
+	case zapCashClient:
+		inputErr = channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.SdkRcsInputTable, redis.AuditSideInput, dbMappedData)
+	default:
+		database.InsertRow(data.Client, config.Configs.SdkRcsInputTable, dbMappedData)
+	}
 
 	rcsResult, err := rcs.SendRcsByProcess(data)
 	isMessageProcessed := rcsResult.Processed
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] error in sending RCS: %v", data.Client, data.CommId, err))
-		// If processing failed, don't delete message - let it retry after visibility timeout
-		// However, if isMessageProcessed is true (partial success), we should delete to prevent duplicates
+		sealZapCashRcsTerminal(data, queueURL, rcsResult)
+		if asyncCore && isMessageProcessed {
+			if enqueueErr := enqueueZapCashCoreAudits(ctx, data, dbMappedData, rcsResult.OutputAudit); enqueueErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] RCS async audit enqueue failed: %v", data.Client, data.CommId, enqueueErr))
+				releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+				return isMessageProcessed, false
+			}
 
+			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after partial RCS processing: %v", delErr))
+			}
+
+			releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+			return isMessageProcessed, deleted
+		}
+
+		outputErr := persistRcsOutputAudit(data, rcsResult, zapCashClient)
 		if isMessageProcessed {
+			if zapCashClient && database.HoldSQSAckAfterAcceptedAudits(rcsResult.Accepted, inputErr, outputErr) {
+				logHeldSQSAckForAudits(data, "RCS", inputErr, outputErr)
+				releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+				return isMessageProcessed, false
+			}
+
 			deleted, delErr = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 			if !deleted {
 				utils.Error(fmt.Errorf("failed to delete message after partial RCS processing: %v", delErr))
@@ -1650,8 +1778,36 @@ func handleRCS(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 		}
 	}
 
+	sealZapCashRcsTerminal(data, queueURL, rcsResult)
+	if asyncCore {
+		if isMessageProcessed {
+			if enqueueErr := enqueueZapCashCoreAudits(ctx, data, dbMappedData, rcsResult.OutputAudit); enqueueErr != nil {
+				utils.Error(fmt.Errorf("[Client:%s CommId:%s] RCS async audit enqueue failed: %v", data.Client, data.CommId, enqueueErr))
+				releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+				return isMessageProcessed, false
+			}
+
+			deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
+			if !deleted {
+				utils.Error(fmt.Errorf("failed to delete message after successful RCS processing: %v", err))
+			}
+		} else if isMarketingSMSDispatch(data) {
+			releaseMarketingDispatchClaims(data)
+		}
+
+		releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+		return isMessageProcessed, deleted
+	}
+
+	outputErr := persistRcsOutputAudit(data, rcsResult, zapCashClient)
 	if isMessageProcessed {
-		deleted, err := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if zapCashClient && database.HoldSQSAckAfterAcceptedAudits(rcsResult.Accepted, inputErr, outputErr) {
+			logHeldSQSAckForAudits(data, "RCS", inputErr, outputErr)
+			releaseZapCashClaimIfUnsent(data, queueURL, rcsResult.Accepted)
+			return isMessageProcessed, false
+		}
+
+		deleted, err = deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
 			utils.Error(fmt.Errorf("failed to delete message after successful RCS processing: %v", err))
 		}
@@ -2182,6 +2338,205 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 	}
 	if err := redis.ReleaseMobileChannelHashField(redis.RDB, config.Configs.CommIdempotentKey, redisKey); err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to release zapcash redis claim: %v", data.Client, data.CommId, err))
+	}
+}
+
+func zapCashCoreAsyncActive(client, channel string) bool {
+	switch strings.ToUpper(strings.TrimSpace(channel)) {
+	case variables.RCS, variables.WhatsApp, variables.IVR:
+		return marketingAsyncActive(client, channel)
+	default:
+		return false
+	}
+}
+
+func logHeldSQSAckForAudits(data sdkModels.CommApiRequestBody, channel string, inputErr, outputErr error) {
+	utils.Error(fmt.Errorf(
+		"[Client:%s CommId:%s] holding SQS ack after accepted %s send: input_audit=%v output_audit=%v",
+		data.Client, data.CommId, channel, inputErr, outputErr,
+	))
+}
+
+func writeRcsOutputAuditSync(data sdkModels.CommApiRequestBody, result rcs.SendRcsResult) error {
+	if result.OutputAudit == nil {
+		return nil
+	}
+	return channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.RcsOutputTable, redis.AuditSideOutput, result.OutputAudit)
+}
+
+func persistRcsOutputAudit(data sdkModels.CommApiRequestBody, result rcs.SendRcsResult, zapCashClient bool) error {
+	if result.OutputAudit == nil {
+		return nil
+	}
+	if zapCashClient {
+		return writeRcsOutputAuditSync(data, result)
+	}
+	database.InsertRow(data.Client, config.Configs.RcsOutputTable, result.OutputAudit)
+	return nil
+}
+
+func persistWhatsappOutputAudit(data sdkModels.CommApiRequestBody, outputRow map[string]interface{}, zapCashClient bool) error {
+	if zapCashClient {
+		return channelHelper.PersistZapCashAuditIfNeeded(data, config.Configs.WhatsappOutputTable, redis.AuditSideOutput, outputRow)
+	}
+	database.InsertRow(data.Client, config.Configs.WhatsappOutputTable, outputRow)
+	return nil
+}
+
+func sealZapCashRcsTerminal(data sdkModels.CommApiRequestBody, queueURL string, result rcs.SendRcsResult) {
+	if !LenderEventClaimApplies(data, queueURL) || !result.Processed {
+		return
+	}
+	outcome := "rejected"
+	if result.Accepted {
+		outcome = "submitted"
+	}
+	if err := channelHelper.SealRedisTerminalResult(data, result.TransactionID, result.TransactionID, outcome, result.ResponseMessage, time.Now()); err != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] failed to seal RCS redis terminal: %v", data.Client, data.CommId, err))
+	}
+}
+
+func enqueueZapCashCoreAudits(ctx context.Context, data sdkModels.CommApiRequestBody, input, output map[string]interface{}) error {
+	terminal, err := channelHelper.GetRedisTerminalResult(data)
+	if err != nil {
+		return fmt.Errorf("read sealed zapcash terminal: %w", err)
+	}
+	record, err := persistence.ZapCashCoreRecord(data, input, output, terminal)
+	if errors.Is(err, persistence.ErrMissingHitAt) {
+		hitAt := time.Now()
+		terminal.TransactionId = firstNonBlankPersistenceValue(terminal.TransactionId, mapStringAudit(output, "TransactionId"))
+		terminal.ProviderMessageID = firstNonBlankPersistenceValue(terminal.ProviderMessageID, terminal.TransactionId)
+		if terminal.Outcome == "" {
+			if terminal.TransactionId != "" || mapBoolAudit(output, "IsSent") {
+				terminal.Outcome = "submitted"
+			} else {
+				terminal.Outcome = "rejected"
+			}
+		}
+		terminal.ErrorMessage = firstNonBlankPersistenceValue(terminal.ErrorMessage, mapStringAudit(output, "ResponseMessage"))
+		if sealErr := channelHelper.SealRedisTerminalResult(data, terminal.TransactionId, terminal.ProviderMessageID, terminal.Outcome, terminal.ErrorMessage, hitAt); sealErr != nil {
+			return fmt.Errorf("seal zapcash terminal timestamp: %w", sealErr)
+		}
+		terminal.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+		record, err = persistence.ZapCashCoreRecord(data, input, output, terminal)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = persistence.EnqueueDurably(ctx, record)
+	return err
+}
+
+func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedData map[string]interface{}, redisTxn, redisErr string) bool {
+	// ivr_attempted means the dial is still in flight. Do not write a false
+	// rejection or ACK; leave the message until the claim is sealed.
+	if ZapCashIvrClaimInFlight(data.Channel, redisTxn, redisErr) {
+		return false
+	}
+
+	if dbMappedData == nil {
+		dbMappedData = map[string]interface{}{}
+	}
+	dbMappedData["CommId"] = data.CommId
+	accepted := zapCashSealedClaimAccepted(redisTxn, redisErr)
+	outputRow := map[string]interface{}{
+		"CommId":          data.CommId,
+		"Vendor":          data.Vendor,
+		"MobileNumber":    data.Mobile,
+		"TransactionId":   redisTxn,
+		"IsSent":          accepted,
+		"ResponseMessage": redisErr,
+	}
+	if strings.TrimSpace(redisErr) == "" && accepted {
+		outputRow["ResponseMessage"] = "redelivery audit repair"
+	}
+
+	if zapCashCoreAsyncActive(data.Client, data.Channel) {
+		if err := enqueueZapCashCoreAudits(ctx, data, dbMappedData, outputRow); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] sealed redelivery async audit enqueue failed: %v", data.Client, data.CommId, err))
+			return false
+		}
+		return true
+	}
+
+	inputTable, outputTable := zapCashChannelAuditTables(data.Channel)
+	if inputTable == "" || outputTable == "" {
+		return true
+	}
+	inputErr := channelHelper.PersistZapCashAuditIfNeeded(data, inputTable, redis.AuditSideInput, dbMappedData)
+	outputErr := channelHelper.PersistZapCashAuditIfNeeded(data, outputTable, redis.AuditSideOutput, outputRow)
+	if database.HoldSQSAckAfterAcceptedAudits(accepted, inputErr, outputErr) {
+		logHeldSQSAckForAudits(data, data.Channel, inputErr, outputErr)
+		return false
+	}
+	return true
+}
+
+// zapCashSealedClaimAccepted is true when the sealed Redis claim records a
+// provider accept (transaction id, or IVR's txn-less ivr_accepted marker).
+func zapCashSealedClaimAccepted(redisTxn, redisErr string) bool {
+	if strings.TrimSpace(redisTxn) != "" {
+		return true
+	}
+
+	return strings.TrimSpace(redisErr) == "ivr_accepted"
+}
+
+// ZapCashIvrClaimInFlight is true while IVR has stamped ivr_attempted and has
+// not yet written a terminal transactionId or outcome marker.
+func ZapCashIvrClaimInFlight(channel, redisTxn, redisErr string) bool {
+	if !strings.EqualFold(strings.TrimSpace(channel), variables.IVR) {
+		return false
+	}
+
+	return strings.TrimSpace(redisTxn) == "" && strings.TrimSpace(redisErr) == "ivr_attempted"
+}
+
+func zapCashChannelAuditTables(channel string) (inputTable, outputTable string) {
+	switch strings.ToUpper(strings.TrimSpace(channel)) {
+	case variables.RCS:
+		return config.Configs.SdkRcsInputTable, config.Configs.RcsOutputTable
+	case variables.WhatsApp:
+		return config.Configs.SdkWhatsappInputTable, config.Configs.WhatsappOutputTable
+	case variables.IVR:
+		return config.Configs.SdkIvrInputTable, config.Configs.IvrOutputTable
+	default:
+		return "", ""
+	}
+}
+
+func copyAuditMap(row map[string]interface{}) map[string]interface{} {
+	if row == nil {
+		return nil
+	}
+	copied := make(map[string]interface{}, len(row))
+	for key, value := range row {
+		copied[key] = value
+	}
+	return copied
+}
+
+func mapStringAudit(values map[string]interface{}, key string) string {
+	if values == nil || values[key] == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(values[key]))
+}
+
+func mapBoolAudit(values map[string]interface{}, key string) bool {
+	switch value := values[key].(type) {
+	case bool:
+		return value
+	case int:
+		return value == 1
+	case int64:
+		return value == 1
+	case float64:
+		return value == 1
+	case string:
+		return strings.TrimSpace(value) == "1" || strings.EqualFold(strings.TrimSpace(value), "true")
+	default:
+		return false
 	}
 }
 

@@ -137,42 +137,84 @@ func InsertRow(client, table string, row map[string]interface{}) {
 	}
 }
 
+// HoldSQSAckAfterAcceptedAudits is true when an accepted provider send failed
+// either Input or Output channel audit. Callers must leave the SQS message so a
+// redelivery can retry the missing insert after the claim is sealed.
+func HoldSQSAckAfterAcceptedAudits(accepted bool, inputErr, outputErr error) bool {
+	return accepted && (inputErr != nil || outputErr != nil)
+}
+
 // InsertRowSync writes one channel audit row on the caller.
 // A disabled destination or a nil pool is a success. A full slot or a database
-// error is returned. Channel handlers that must delete SQS when the send is
-// finished, including PUSH, use InsertRow instead.
+// error is returned. ZapCash hold-ACK redelivery skips already-written sides via
+// Redis audit flags (inputAuditWritten / outputAuditWritten), not SQL COUNT.
+// Channel handlers that must delete SQS when the send is finished, including
+// PUSH, use InsertRow instead. ZapCash RCS/WhatsApp/IVR accepted-send paths use
+// this when Core async writers are off.
 func InsertRowSync(client, table string, row map[string]interface{}) error {
+	_, err := InsertRowSyncDetailed(client, table, row)
+	return err
+}
+
+type AuditInsertResult struct {
+	CommunicationWritten bool
+	CoreWritten          bool
+}
+
+// InsertRowSyncDetailed reports which destination committed even when another
+// enabled destination failed, allowing retries to skip the successful insert.
+func InsertRowSyncDetailed(client, table string, row map[string]interface{}) (AuditInsertResult, error) {
+	return insertRowSyncMissing(client, table, row, false, false)
+}
+
+// InsertRowSyncMissing retries only destinations whose audit marker is absent.
+func InsertRowSyncMissing(client, table string, row map[string]interface{}, communicationDone, coreDone bool) (AuditInsertResult, error) {
+	return insertRowSyncMissing(client, table, row, communicationDone, coreDone)
+}
+
+func insertRowSyncMissing(client, table string, row map[string]interface{}, communicationDone, coreDone bool) (AuditInsertResult, error) {
 	writeComm, writeCore := ChannelAuditDestinations(
 		client,
 		commInputOutputWriteWeCredit,
 		commInputOutputWriteZapCash,
 		zapCashV1InputOutputWrite,
 	)
+	writeComm = writeComm && !communicationDone
+	writeCore = writeCore && !coreDone
 	commDB := DBtechWrite
 	coreDB := DBZapCashV1
 	if (!writeComm || commDB == nil) && (!writeCore || coreDB == nil) {
-		return nil
+		return AuditInsertResult{}, nil
 	}
 
 	copied := copyAuditRow(row)
 	select {
 	case auditInsertSlots <- struct{}{}:
 	default:
-		return fmt.Errorf("audit insert busy")
+		return AuditInsertResult{}, fmt.Errorf("audit insert busy")
 	}
 
 	defer func() { <-auditInsertSlots }()
 
+	var result AuditInsertResult
 	var err error
 	if writeComm && commDB != nil {
-		err = insertAuditWithTimeout(table, commDB, copied)
+		if insertErr := insertAuditWithTimeout(table, commDB, copied); insertErr != nil {
+			err = errors.Join(err, insertErr)
+		} else {
+			result.CommunicationWritten = true
+		}
 	}
 
 	if writeCore && coreDB != nil {
-		err = errors.Join(err, insertAuditWithTimeout(table, coreDB, copied))
+		if insertErr := insertAuditWithTimeout(table, coreDB, copied); insertErr != nil {
+			err = errors.Join(err, insertErr)
+		} else {
+			result.CoreWritten = true
+		}
 	}
 
-	return err
+	return result, err
 }
 
 func insertAuditWithTimeout(table string, db *gorm.DB, row map[string]interface{}) error {
