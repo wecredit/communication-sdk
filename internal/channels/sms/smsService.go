@@ -131,6 +131,12 @@ func SendSmsByProcessWithContext(ctx context.Context, msg sdkModels.CommApiReque
 		return buildSmsResult(msg, req, response)
 	}
 
+	// Re-check immediately before Hit* so template work cannot push a 19:59 admit past the hour.
+	// WaitFor inside vendor APIs can still cross the boundary (same rare gap as WeCredit SMS policy).
+	if decision := channelHelper.EvaluateZapCashSendCutoff(msg.Client); !decision.Allowed() {
+		return zapCashSendCutoffBlockedResult(msg, req, decision)
+	}
+
 	hitAt := time.Now()
 	switch msg.Vendor {
 	case variables.TIMES:

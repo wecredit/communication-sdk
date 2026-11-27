@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/sms/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -63,6 +64,11 @@ func HitPinnacleApiWithContext(ctx context.Context, data extapimodels.SmsRequest
 	if decision := smspolicy.Evaluate(data.Source, data.SourceRowId, data.Channel, data.CampaignDate, smspolicy.Now()); !decision.Allowed() {
 		pinnacleSmsResponse.ResponseMessage = decision.ErrorMessage()
 		pinnacleSmsResponse.Outcome = outcome.FailedFinal
+		return pinnacleSmsResponse
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(data.Client); blocked {
+		pinnacleSmsResponse.ResponseMessage = message
+		pinnacleSmsResponse.Outcome = outcome.Skipped
 		return pinnacleSmsResponse
 	}
 

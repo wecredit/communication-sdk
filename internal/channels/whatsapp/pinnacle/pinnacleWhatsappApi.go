@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	pinnaclepayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/pinnacle/pinnaclePayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
@@ -57,6 +58,10 @@ func HitPinnacleWhatsappApi(pinnacleApiModel extapimodels.WhatsappRequestBody) e
 
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.PINNACLE, pinnacleApiModel.Client, "whatsapp")); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(pinnacleApiModel.Client); blocked {
+		responseBody.ResponseMessage = message
 		return responseBody
 	}
 

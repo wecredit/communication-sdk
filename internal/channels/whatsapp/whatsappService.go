@@ -99,7 +99,7 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	utils.Debug(fmt.Sprintf("Channel: %s CommId: %s, Should hit vendor: %v", msg.Channel, msg.CommId, shouldHitVendor))
 
 	cutoff := channelHelper.EvaluateZapCashSendCutoff(msg.Client)
-	if shouldHitVendor && !cutoff.Allowed() {
+	if !cutoff.Allowed() {
 		shouldHitVendor = false
 		response.ResponseMessage = cutoff.ErrorMessage()
 		if err := channelHelper.HandleZapCashSendCutoffError(msg, cutoff); err != nil {
@@ -108,6 +108,17 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	}
 
 	var hitAt time.Time
+	if shouldHitVendor {
+		// Re-check immediately before vendor Hit* (WaitFor inside vendor APIs can cross the hour).
+		if decision := channelHelper.EvaluateZapCashSendCutoff(msg.Client); !decision.Allowed() {
+			cutoff = decision
+			shouldHitVendor = false
+			response.ResponseMessage = decision.ErrorMessage()
+			if err := channelHelper.HandleZapCashSendCutoffError(msg, decision); err != nil {
+				utils.Error(fmt.Errorf("failed to seal ZapCash WhatsApp send cutoff: %v", err))
+			}
+		}
+	}
 	if shouldHitVendor {
 		hitAt = time.Now()
 		started := hitAt
@@ -184,7 +195,6 @@ func SendWpByProcess(msg sdkModels.CommApiRequestBody) (SendWhatsappResult, erro
 	}
 
 	if !shouldHitVendor {
-		// Step 2: Once you have error message, update the error message in redis
 		if !cutoff.Allowed() {
 			dbMappedData["ResponseMessage"] = cutoff.ErrorMessage()
 		} else {
