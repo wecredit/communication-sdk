@@ -23,6 +23,7 @@ import (
 	"github.com/wecredit/communication-sdk/pkg/cache"
 	sdkHelper "github.com/wecredit/communication-sdk/sdk/helper"
 	"github.com/wecredit/communication-sdk/sdk/models/sdkModels"
+	"github.com/wecredit/communication-sdk/sdk/policy"
 	"github.com/wecredit/communication-sdk/sdk/utils"
 	"github.com/wecredit/communication-sdk/sdk/variables"
 	"gorm.io/gorm"
@@ -144,6 +145,52 @@ func TestPinnacleIVRTransportErrorIsOneCall(t *testing.T) {
 	if pinnacleIvr.IvrHTTPTimeout != 30*time.Second {
 		t.Fatalf("timeout = %s", pinnacleIvr.IvrHTTPTimeout)
 	}
+}
+
+func TestIVRSendCutoffBlocksBeforePostSingleCall(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("at_20_00_blocks", func(t *testing.T) {
+		env := startIVR(t)
+		config.Configs.ZapCashSendCutoffHourIST = "20"
+		restoreClock := policy.SetClockForTest(func() time.Time {
+			return time.Date(2026, 11, 27, 20, 0, 0, 0, loc)
+		})
+		t.Cleanup(restoreClock)
+
+		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{"Mobile": int64(7014850582)})
+		if env.calls.Load() != 0 {
+			t.Fatalf("PostSingleCall ran after cutoff: calls=%d", env.calls.Load())
+		}
+		if !got.DeleteMessage {
+			t.Fatal("cutoff must delete SQS")
+		}
+		value, ok := env.claims.get("ivr-test", "event-1")
+		if !ok || value != "ivr_not_sent" {
+			t.Fatalf("claim=%q ok=%v, want ivr_not_sent", value, ok)
+		}
+		if !strings.Contains(env.logs.String(), "ZAPCASH_SEND_CUTOFF") {
+			t.Fatalf("missing cutoff log/category: %s", env.logs.String())
+		}
+	})
+
+	t.Run("at_19_59_allows", func(t *testing.T) {
+		env := startIVR(t)
+		config.Configs.ZapCashSendCutoffHourIST = "20"
+		restoreClock := policy.SetClockForTest(func() time.Time {
+			return time.Date(2026, 11, 27, 19, 59, 0, 0, loc)
+		})
+		t.Cleanup(restoreClock)
+
+		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
+		if env.calls.Load() != 1 || !got.DeleteMessage {
+			t.Fatalf("19:59 should dial: calls=%d delete=%v", env.calls.Load(), got.DeleteMessage)
+		}
+	})
+
 }
 
 func TestIVRAttemptDoesNotCallTwice(t *testing.T) {
@@ -422,6 +469,8 @@ func startIVR(t *testing.T) *ivrEnv {
 	config.Configs.PinnacleZapcashIvrApiPassword = "secret-ivr-password"
 	config.Configs.SdkIvrInputTable = "IvrInputAuditTable"
 	config.Configs.IvrOutputTable = "IvrOutputTable"
+	// Keep existing dial tests independent of wall-clock IST hour.
+	config.Configs.ZapCashSendCutoffHourIST = "-1"
 	previousLogger := utils.Logger.Writer()
 	env := &ivrEnv{t: t, claims: newClaimMap(), voice: "57965"}
 	utils.Logger.SetOutput(&env.logs)

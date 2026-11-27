@@ -99,12 +99,21 @@ func SendAttempt(ctx context.Context, data *sdkModels.CommApiRequestBody, inputA
 		return finishNotSent(*data, inputAudit, templateName, "should_hit_vendor_off")
 	}
 
+	if decision := channelHelper.EvaluateZapCashSendCutoff(data.Client); !decision.Allowed() {
+		return finishNotSent(*data, inputAudit, templateName, decision.Code)
+	}
+
 	if ctx.Err() != nil {
 		return cancelBeforeStamp(*data)
 	}
 
 	if err := ratelimit.WaitFor(ctx, ratelimit.KeyWithChannel(variables.PINNACLE, data.Client, "ivr")); err != nil || ctx.Err() != nil {
 		return cancelBeforeStamp(*data)
+	}
+
+	// Re-check after WaitFor so a 19:59 admit cannot dial past the IST hour.
+	if decision := channelHelper.EvaluateZapCashSendCutoff(data.Client); !decision.Allowed() {
+		return finishNotSent(*data, inputAudit, templateName, decision.Code)
 	}
 
 	redisKey := channelHelper.GenerateRedisKeyForRequest(*data)

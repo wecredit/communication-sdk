@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	"github.com/wecredit/communication-sdk/internal/channels/sms/outcome"
 	vapiopayloads "github.com/wecredit/communication-sdk/internal/channels/sms/vapio/vapioPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
@@ -61,6 +62,11 @@ func HitVapioSmsApiWithContext(ctx context.Context, data extapimodels.SmsRequest
 	if err := ratelimit.WaitFor(ctx, ratelimit.KeyWithChannel(variables.VAPIO, data.Client, "sms")); err != nil {
 		vapioSmsResponse.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
 		vapioSmsResponse.Outcome = outcome.FailedRetryable
+		return vapioSmsResponse
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(data.Client); blocked {
+		vapioSmsResponse.ResponseMessage = message
+		vapioSmsResponse.Outcome = outcome.Skipped
 		return vapioSmsResponse
 	}
 

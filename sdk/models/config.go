@@ -228,6 +228,11 @@ type Config struct {
 	ConsumerClientBufferSize     string `envconfig:"CONSUMER_CLIENT_BUFFER_SIZE" default:"200"`
 	GoMaxProcs                   string `envconfig:"GOMAXPROCS" default:"1"`
 	LogLevel                     string `envconfig:"LOG_LEVEL" default:"info"`
+	// ZapCashSendCutoffHourIST is the ZapCash-only hard send stop (IST hour 0–23). Default 20 (8 PM).
+	// Blank/non-numeric → 20. Staging may set -1 to disable (never in prod).
+	// WeCredit SMS + WhatsApp keep their own 20:00 IST policy (nurture COMM_DISPATCH_WINDOW_* +
+	// sdk/policy/wecredit_sms.go for SMS); this knob must not gate WeCredit.
+	ZapCashSendCutoffHourIST string `envconfig:"ZAPCASH_SEND_CUTOFF_HOUR_IST" default:"20"`
 	// CommAsyncWriteChannels is the only async persistence control. Entries use
 	// client:channel, for example wecredit:sms,wecredit:whatsapp. Blank is off.
 	CommAsyncWriteChannels string `envconfig:"COMM_ASYNC_WRITE_CHANNELS"`

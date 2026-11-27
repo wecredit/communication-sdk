@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wecredit/communication-sdk/config"
+	"github.com/wecredit/communication-sdk/internal/channels/channelHelper"
 	timespayloads "github.com/wecredit/communication-sdk/internal/channels/whatsapp/times/timesPayloads"
 	extapimodels "github.com/wecredit/communication-sdk/internal/models/extApiModels"
 	"github.com/wecredit/communication-sdk/internal/ratelimit"
@@ -71,6 +72,10 @@ func HitTimesWhatsappApi(timesApiModel extapimodels.WhatsappRequestBody) extapim
 
 	if err := ratelimit.WaitFor(context.Background(), ratelimit.KeyWithChannel(variables.TIMES, timesApiModel.Client, config.TimesWpRateChannel(mode))); err != nil {
 		responseBody.ResponseMessage = fmt.Sprintf("rate limit wait cancelled: %v", err)
+		return responseBody
+	}
+	if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(timesApiModel.Client); blocked {
+		responseBody.ResponseMessage = message
 		return responseBody
 	}
 

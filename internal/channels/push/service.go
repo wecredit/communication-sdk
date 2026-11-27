@@ -30,7 +30,10 @@ const (
 	outcomeSkipped        = "skipped"
 )
 
-var errClaimLost = errors.New("PUSH event claim is no longer current")
+var (
+	errClaimLost      = errors.New("PUSH event claim is no longer current")
+	errPushSendCutoff = errors.New("zapcash send cutoff")
+)
 
 // TerminalStore records a device that already reached a terminal FCM outcome.
 // A later delivery of the same EventId must not submit that device again.
@@ -93,6 +96,10 @@ func (s *Service) Send(ctx context.Context, request sdkModels.CommApiRequestBody
 
 	if !channelHelper.ShouldHitVendor(request.Client, request.Channel) {
 		return skippedVendorOff(request, tokens), nil
+	}
+
+	if decision := channelHelper.EvaluateZapCashSendCutoff(request.Client); !decision.Allowed() {
+		return skippedSendCutoff(request, tokens, decision.ErrorMessage()), nil
 	}
 
 	title, body, templateName, resolvedVendor, err := resolveContent(request)
@@ -205,6 +212,14 @@ func contentFailureCode(err error) string {
 }
 
 func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Result {
+	return skippedTerminal(request, tokens, vendorOffMessage(request.Mobile))
+}
+
+func skippedSendCutoff(request sdkModels.CommApiRequestBody, tokens []string, code string) Result {
+	return skippedTerminal(request, tokens, truncateErrorCode(code))
+}
+
+func skippedTerminal(request sdkModels.CommApiRequestBody, tokens []string, skipMsg string) Result {
 	templateName := ""
 	vendor := strings.TrimSpace(request.Vendor)
 	if _, _, resolvedName, resolvedVendor, resolveErr := resolveContent(request); resolveErr == nil {
@@ -228,7 +243,6 @@ func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Res
 		FreshOutputAudits: make([]map[string]interface{}, 0, len(tokens)),
 	}
 
-	skipMsg := vendorOffMessage(request.Mobile)
 	for _, token := range tokens {
 		fingerprint, err := FingerprintToken(token)
 		if err != nil {
@@ -240,6 +254,15 @@ func skippedVendorOff(request sdkModels.CommApiRequestBody, tokens []string) Res
 	}
 
 	return result
+}
+
+func truncateErrorCode(code string) string {
+	const maxLen = 64
+	code = strings.TrimSpace(code)
+	if len(code) <= maxLen {
+		return code
+	}
+	return code[:maxLen]
 }
 
 func buildInputAudit(
@@ -302,19 +325,39 @@ func (s *Service) sendToken(
 
 	claimID := EventClaimID(ctx)
 	redisKey := channelHelper.GenerateRedisKeyForRequest(request)
-	var guard fcm.RetryGuard
-	var observer fcm.AttemptObserver
-	if claimID != "" {
-		guard = func(context.Context) (bool, error) {
-			return s.claimStillCurrent(claimID, redisKey)
+	var cutoffMessage string
+	checkCutoff := func() error {
+		if blocked, message := channelHelper.ZapCashSendCutoffBlocksVendor(request.Client); blocked {
+			cutoffMessage = message
+			return errPushSendCutoff
 		}
-		observer = func(context.Context, int) error {
-			return s.refreshEventClaim(claimID, redisKey)
-		}
+		return nil
 	}
+	guard := fcm.RetryGuard(func(context.Context) (bool, error) {
+		if err := checkCutoff(); err != nil {
+			return false, err
+		}
+		if claimID == "" {
+			return true, nil
+		}
+		return s.claimStillCurrent(claimID, redisKey)
+	})
+	observer := fcm.AttemptObserver(func(context.Context, int) error {
+		if err := checkCutoff(); err != nil {
+			return err
+		}
+		if claimID == "" {
+			return nil
+		}
+		return s.refreshEventClaim(claimID, redisKey)
+	})
 
 	execution, err := s.executor.ExecuteWithObserver(ctx, request.Client, payload, guard, observer)
 	if err != nil {
+		if errors.Is(err, errPushSendCutoff) {
+			execution := fcm.ExecutionResult{Outcome: fcm.OutcomeFailedFinal, Code: truncateErrorCode(cutoffMessage)}
+			return buildOutputAudit(request, fingerprint, outcomeSkipped, execution), outcomeSkipped, true, nil
+		}
 		if claimNoLongerCurrent(err) {
 			return nil, outcomeCancelledStale, false, nil
 		}
