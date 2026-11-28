@@ -445,6 +445,7 @@ var supportedCommWriteWorkerLanes = map[string]struct{}{
 	"zapcash:rcs":       {},
 	"zapcash:whatsapp":  {},
 	"zapcash:ivr":       {},
+	"zapcash:push":      {},
 }
 
 // ValidateCommWriteWorkerOverrides validates internal persistence concurrency.

@@ -1177,7 +1177,11 @@ func handleIVR(ctx context.Context, data sdkModels.CommApiRequestBody, dbMappedD
 	if result.DeferredPersist {
 		if err := enqueueZapCashCoreAudits(ctx, data, result.InputAudit, result.OutputAudit); err != nil {
 			utils.Error(fmt.Errorf("[Client:%s CommId:%s] IVR async audit enqueue failed: %v", data.Client, data.CommId, err))
-			return true, false
+			// Cutoff / not-sent / provider-reject set DeleteMessage so a full
+			// zapcash:ivr write stream cannot hold the SQS receipt overnight.
+			if !result.DeleteMessage {
+				return true, false
+			}
 		}
 		deleted, delErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 		if !deleted {
@@ -1203,36 +1207,37 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		return rejectRequestedVendor(ctx, data, sqsClient, queueURL, msg)
 	}
 
+	asyncCore := zapCashCoreAsyncActive(data.Client, data.Channel)
 	result, err := push.Send(ctx, data)
 	if err != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH processing failed: %w",
 			data.Client, data.CommId, data.EventId, err))
 	}
 
-	// A redelivery owns the claim. Record whatever this worker finished, then
-	// leave Redis and the SQS message alone so that owner can delete them.
+	// A redelivery owns the claim. Persist audits first, then note terminals so a
+	// busy/failed insert can still retry FreshOutputAudits on the next receive.
 	if result.Superseded {
-		writePushAudits(data.Client, result)
-		if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
-			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
-				data.Client, data.CommId, data.EventId, noteErr))
+		if writeErr := writePushAuditsDurable(data.Client, result); writeErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH superseded audit write failed: %w",
+				data.Client, data.CommId, data.EventId, writeErr))
+			return false, false
 		}
+
+		notePushFreshTerminals(data, result.FreshOutputAudits)
 		return false, false
 	}
 
-	// Remember devices that already reached FCM before deciding the SQS delete.
-	// A note failure must not finish an unfinished batch: tokens that never
-	// reached FCM stay on the queue for retry.
-	if noteErr := push.NoteFreshTerminals(data, result.FreshOutputAudits); noteErr != nil {
-		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
-			data.Client, data.CommId, data.EventId, noteErr))
-	}
-
-	// Same as WhatsApp and RCS: the audit write is log-only and does not keep
-	// the SQS message. An unfinished token batch stays so the remaining devices
-	// can be retried.
-	writePushAudits(data.Client, result)
+	// Unfinished token batches stay on the queue. Durable sync write then note so
+	// retries never mark tokens whose audits were dropped as busy/failed.
 	if !PushAttemptDeletesSQS(result) {
+		if writeErr := writePushAuditsDurable(data.Client, result); writeErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH unfinished audit write failed: %w",
+				data.Client, data.CommId, data.EventId, writeErr))
+			releaseOwnedEventClaim(ctx, data, queueURL)
+			return result.Processed, false
+		}
+
+		notePushFreshTerminals(data, result.FreshOutputAudits)
 		releaseOwnedEventClaim(ctx, data, queueURL)
 		return result.Processed, false
 	}
@@ -1244,12 +1249,47 @@ func handlePush(ctx context.Context, data sdkModels.CommApiRequestBody, sqsClien
 		}
 	}
 
+	if asyncCore {
+		enqueueErr := enqueueZapCashPushAudits(ctx, data, result)
+		// Note after the enqueue attempt so sealed redelivery can rebuild
+		// per-token TokenFingerprint/Outcome rows via Redis (FreshOutputAudits
+		// are gone once this worker returns).
+		notePushFreshTerminals(data, result.FreshOutputAudits)
+		if enqueueErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH async audit enqueue failed: %v",
+				data.Client, data.CommId, data.EventId, enqueueErr))
+			return result.Processed, false
+		}
+
+		deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
+		if deleteErr != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
+				data.Client, data.CommId, data.EventId, deleteErr))
+		}
+
+		return result.Processed, deleted
+	}
+
+	if writeErr := writePushAuditsDurable(data.Client, result); writeErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal audit write failed: %w",
+			data.Client, data.CommId, data.EventId, writeErr))
+		return result.Processed, false
+	}
+
+	notePushFreshTerminals(data, result.FreshOutputAudits)
 	deleted, deleteErr := deleteMessage(ctx, sqsClient, queueURL, msg, data)
 	if deleteErr != nil {
 		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] failed to delete terminal PUSH message: %w",
 			data.Client, data.CommId, data.EventId, deleteErr))
 	}
 	return result.Processed, deleted
+}
+
+func notePushFreshTerminals(data sdkModels.CommApiRequestBody, outputs []map[string]interface{}) {
+	if noteErr := push.NoteFreshTerminals(data, outputs); noteErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s EventId:%s] PUSH terminal note failed: %w",
+			data.Client, data.CommId, data.EventId, noteErr))
+	}
 }
 
 // ZapCashPushClaimSeal is the outer EventId outcome for a finished PUSH attempt.
@@ -1282,16 +1322,23 @@ func sealZapCashPushClaim(data sdkModels.CommApiRequestBody, queueURL, transacti
 	return channelHelper.UpdateRedisErrorMessage(data, errorMessage)
 }
 
-// writePushAudits records PUSH input and output rows the same way WhatsApp and
-// RCS record theirs. InsertRow logs a busy or failed insert and returns. The
-// caller still deletes a finished SQS message.
-func writePushAudits(client string, result push.Result) {
+// writePushAuditsDurable records PUSH input/output with InsertRowSync so a busy
+// or failed write is visible to the caller. Callers must note terminals only
+// after this returns nil, otherwise retries replay noted tokens and skip audits.
+func writePushAuditsDurable(client string, result push.Result) error {
 	if result.InputAudit != nil && result.Replayed == 0 && len(result.FreshOutputAudits) > 0 {
-		database.InsertRow(client, config.Configs.PushInputAuditTable, result.InputAudit)
+		if err := database.InsertRowSync(client, config.Configs.PushInputAuditTable, result.InputAudit); err != nil {
+			return err
+		}
 	}
+
 	for _, output := range result.FreshOutputAudits {
-		database.InsertRow(client, config.Configs.PushOutputTable, output)
+		if err := database.InsertRowSync(client, config.Configs.PushOutputTable, output); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // PushAttemptDeletesSQS is true when this PUSH attempt is finished.
@@ -2343,11 +2390,51 @@ func releaseZapCashClaimIfUnsent(data sdkModels.CommApiRequestBody, queueURL str
 
 func zapCashCoreAsyncActive(client, channel string) bool {
 	switch strings.ToUpper(strings.TrimSpace(channel)) {
-	case variables.RCS, variables.WhatsApp, variables.IVR:
+	case variables.RCS, variables.WhatsApp, variables.IVR, variables.PUSH:
 		return marketingAsyncActive(client, channel)
 	default:
 		return false
 	}
+}
+
+func enqueueZapCashPushAudits(ctx context.Context, data sdkModels.CommApiRequestBody, result push.Result) error {
+	outputs := result.FreshOutputAudits
+	if len(outputs) == 0 {
+		outputs = result.OutputAudits
+	}
+
+	terminal, err := channelHelper.GetRedisTerminalResult(data)
+	if err != nil {
+		return fmt.Errorf("read sealed zapcash push terminal: %w", err)
+	}
+
+	record, err := persistence.ZapCashPushCoreRecord(data, result.InputAudit, outputs, terminal)
+	if errors.Is(err, persistence.ErrMissingHitAt) {
+		hitAt := time.Now()
+		txn, errMsg := ZapCashPushClaimSeal(result)
+		outcome := "rejected"
+		if txn != "" {
+			outcome = "submitted"
+		}
+
+		if sealErr := channelHelper.SealRedisTerminalResult(data, txn, txn, outcome, errMsg, hitAt); sealErr != nil {
+			return fmt.Errorf("seal zapcash push terminal timestamp: %w", sealErr)
+		}
+
+		terminal.HitAt = hitAt.UTC().Format(time.RFC3339Nano)
+		terminal.TransactionId = firstNonBlankPersistenceValue(terminal.TransactionId, txn)
+		terminal.ProviderMessageID = firstNonBlankPersistenceValue(terminal.ProviderMessageID, txn)
+		terminal.Outcome = outcome
+		terminal.ErrorMessage = firstNonBlankPersistenceValue(terminal.ErrorMessage, errMsg)
+		record, err = persistence.ZapCashPushCoreRecord(data, result.InputAudit, outputs, terminal)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	_, err = persistence.EnqueueDurably(ctx, record)
+	return err
 }
 
 func logHeldSQSAckForAudits(data sdkModels.CommApiRequestBody, channel string, inputErr, outputErr error) {
@@ -2439,6 +2526,11 @@ func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommAp
 	}
 	dbMappedData["CommId"] = data.CommId
 	accepted := zapCashSealedClaimAccepted(redisTxn, redisErr)
+
+	if strings.EqualFold(strings.TrimSpace(data.Channel), variables.PUSH) {
+		return repairZapCashSealedPushAudits(ctx, data, dbMappedData, redisTxn, redisErr, accepted)
+	}
+
 	outputRow := map[string]interface{}{
 		"CommId":          data.CommId,
 		"Vendor":          data.Vendor,
@@ -2472,6 +2564,83 @@ func repairZapCashSealedChannelAudits(ctx context.Context, data sdkModels.CommAp
 	return true
 }
 
+func repairZapCashSealedPushAudits(ctx context.Context, data sdkModels.CommApiRequestBody, input map[string]interface{}, redisTxn, redisErr string, accepted bool) bool {
+	outputs, rebuildErr := push.RebuildTerminalOutputAudits(data)
+	if rebuildErr != nil {
+		utils.Error(fmt.Errorf("[Client:%s CommId:%s] PUSH sealed redelivery rebuild failed: %v", data.Client, data.CommId, rebuildErr))
+		return false
+	}
+	if len(outputs) == 0 {
+		// Fall back only when Redis has no per-token notes (legacy failures).
+		outcome := "failed_final"
+		if accepted {
+			outcome = "submitted"
+		}
+		errorCode := redisErr
+		if strings.TrimSpace(redisErr) == "" && accepted {
+			errorCode = "redelivery audit repair"
+		}
+		outputs = []map[string]interface{}{{
+			"CommId": data.CommId, "Vendor": data.Vendor, "EventId": data.EventId,
+			"Outcome": outcome, "ProviderMessageId": redisTxn, "ErrorCode": errorCode,
+		}}
+	}
+
+	if zapCashCoreAsyncActive(data.Client, data.Channel) {
+		if err := enqueueZapCashPushAudits(ctx, data, push.Result{
+			InputAudit:        input,
+			FreshOutputAudits: outputs,
+			OutputAudits:      outputs,
+		}); err != nil {
+			utils.Error(fmt.Errorf("[Client:%s CommId:%s] PUSH sealed redelivery async audit enqueue failed: %v", data.Client, data.CommId, err))
+			return false
+		}
+
+		return true
+	}
+
+	inputTable, outputTable := zapCashChannelAuditTables(data.Channel)
+	if inputTable == "" || outputTable == "" {
+		return true
+	}
+
+	inputErr := channelHelper.PersistZapCashAuditIfNeeded(data, inputTable, redis.AuditSideInput, input)
+	outputErr := persistZapCashPushOutputAuditsSync(data, outputTable, outputs)
+	if database.HoldSQSAckAfterAcceptedAudits(accepted, inputErr, outputErr) {
+		logHeldSQSAckForAudits(data, data.Channel, inputErr, outputErr)
+		return false
+	}
+
+	return true
+}
+
+// persistZapCashPushOutputAuditsSync inserts every token Output row once, then
+// stamps a single outputAuditWritten flag. Per-row PersistZapCashAuditIfNeeded
+// would mark after the first token and skip the rest.
+func persistZapCashPushOutputAuditsSync(data sdkModels.CommApiRequestBody, outputTable string, outputs []map[string]interface{}) error {
+	if len(outputs) == 0 {
+		return nil
+	}
+
+	redisKey := channelHelper.GenerateRedisKeyForRequest(data)
+	written, err := redis.IsAuditSideWritten(redis.RDB, config.Configs.CommIdempotentKey, redisKey, redis.AuditSideOutput)
+	if err != nil {
+		return err
+	}
+
+	if written {
+		return nil
+	}
+
+	for _, output := range outputs {
+		if err := database.InsertRowSync(data.Client, outputTable, output); err != nil {
+			return err
+		}
+	}
+
+	return channelHelper.MarkChannelAuditSideWritten(data, redis.AuditSideOutput)
+}
+
 // zapCashSealedClaimAccepted is true when the sealed Redis claim records a
 // provider accept (transaction id, or IVR's txn-less ivr_accepted marker).
 func zapCashSealedClaimAccepted(redisTxn, redisErr string) bool {
@@ -2500,6 +2669,8 @@ func zapCashChannelAuditTables(channel string) (inputTable, outputTable string) 
 		return config.Configs.SdkWhatsappInputTable, config.Configs.WhatsappOutputTable
 	case variables.IVR:
 		return config.Configs.SdkIvrInputTable, config.Configs.IvrOutputTable
+	case variables.PUSH:
+		return config.Configs.PushInputAuditTable, config.Configs.PushOutputTable
 	default:
 		return "", ""
 	}

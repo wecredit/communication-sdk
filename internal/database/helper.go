@@ -148,9 +148,9 @@ func HoldSQSAckAfterAcceptedAudits(accepted bool, inputErr, outputErr error) boo
 // A disabled destination or a nil pool is a success. A full slot or a database
 // error is returned. ZapCash hold-ACK redelivery skips already-written sides via
 // Redis audit flags (inputAuditWritten / outputAuditWritten), not SQL COUNT.
-// Channel handlers that must delete SQS when the send is finished, including
-// PUSH, use InsertRow instead. ZapCash RCS/WhatsApp/IVR accepted-send paths use
-// this when Core async writers are off.
+// PUSH uses InsertRowSync via writePushAuditsDurable so notes run only after a
+// confirmed write. ZapCash RCS/WhatsApp/IVR accepted-send paths use this when
+// Core async writers are off.
 func InsertRowSync(client, table string, row map[string]interface{}) error {
 	_, err := InsertRowSyncDetailed(client, table, row)
 	return err

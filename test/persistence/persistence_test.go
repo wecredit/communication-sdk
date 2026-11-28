@@ -359,6 +359,29 @@ func TestBatchLimitsStayBelowSQLServerParameterLimit(t *testing.T) {
 	if got := persistence.BatchParameterCount(persistence.MapperMarketingWhatsapp); got != 1470 || got > 2100 {
 		t.Fatalf("WhatsApp parameters = %d, want 1470 and <=2100", got)
 	}
+	if got := persistence.BatchParameterCount(persistence.MapperZapCashPushCore); got > 2100 {
+		t.Fatalf("ZapCash Core parameter budget = %d, want <=2100", got)
+	}
+}
+
+func TestCoreAuditBatchChunksExpandedPushRows(t *testing.T) {
+	// Nine-column PUSH output rows: 2100/9 = 233 rows per INSERT chunk.
+	const columns = 9
+	limit := persistence.CoreAuditBatchRowLimitForTest(columns)
+	if limit != 2100/columns {
+		t.Fatalf("row limit = %d, want %d", limit, 2100/columns)
+	}
+	expanded := 50 * 5 // 50 stream records × 5 tokens
+	if expanded <= limit {
+		t.Fatalf("fixture too small to require chunking: expanded=%d limit=%d", expanded, limit)
+	}
+	chunks := (expanded + limit - 1) / limit
+	if chunks < 2 {
+		t.Fatalf("expected multiple chunks for %d rows at limit %d", expanded, limit)
+	}
+	if limit*columns > 2100 {
+		t.Fatalf("chunk would exceed parameter limit: %d", limit*columns)
+	}
 }
 
 func TestBusinessLockKeysUseLaneAndNonPIIIdentity(t *testing.T) {
@@ -536,5 +559,36 @@ func TestZapCashAsyncEnabledRequiresFlagAndBudget(t *testing.T) {
 	config.Configs.CommWriteStreamBudgetOverrides = ""
 	if persistence.AsyncEnabled("zapcash", "rcs") {
 		t.Fatal("async write must stay off without a verified stream budget")
+	}
+}
+
+func TestZapCashPushCoreRecordEncodesOutputArray(t *testing.T) {
+	hitAt := time.Date(2026, 11, 27, 9, 30, 0, 0, time.UTC)
+	record, err := persistence.ZapCashPushCoreRecord(sdkModels.CommApiRequestBody{
+		Client: "zapcash", Channel: "PUSH", CommId: "WC-push-1", EventId: "event-push-1",
+		Vendor: "FCM", ProcessName: "ZAPCASH", Mobile: "9999999999",
+	}, map[string]interface{}{"CommId": "WC-push-1", "Mobile": int64(9999999999)},
+		[]map[string]interface{}{
+			{"CommId": "WC-push-1", "IsSent": true, "ProviderMessageId": "msg-a"},
+			{"CommId": "WC-push-1", "IsSent": false, "ErrorCode": "skipped"},
+		},
+		redisModels.MobileChannelRedisData{
+			TransactionId: "msg-a", ProviderMessageID: "msg-a", Outcome: "submitted",
+			HitAt: hitAt.Format(time.RFC3339Nano),
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Mapper != persistence.MapperZapCashPushCore || record.Channel != "PUSH" {
+		t.Fatalf("record identity = %+v", record)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(record.OutputJSON), "[") {
+		t.Fatalf("PUSH OutputJSON must be an array, got %q", record.OutputJSON)
+	}
+	if !strings.Contains(record.OutputJSON, "msg-a") || !strings.Contains(record.OutputJSON, "skipped") {
+		t.Fatalf("output array missing token rows: %q", record.OutputJSON)
+	}
+	if !persistence.IsZapCashCoreMapper(record.Mapper) {
+		t.Fatal("PUSH mapper must be a ZapCash Core mapper")
 	}
 }

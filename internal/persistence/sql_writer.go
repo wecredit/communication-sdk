@@ -48,7 +48,7 @@ func writeRecords(ctx context.Context, db *gorm.DB, records []Record) error {
 		return writeMarketingSMS(ctx, db, deduped)
 	case MapperMarketingWhatsapp:
 		return writeMarketingWhatsapp(ctx, db, deduped)
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
 		return writeZapCashCore(ctx, db, deduped)
 	default:
 		return fmt.Errorf("unsupported persistence mapper %q", deduped[0].Mapper)
@@ -93,29 +93,49 @@ func writeZapCashCore(ctx context.Context, db *gorm.DB, records []Record) error 
 		if err != nil {
 			return fmt.Errorf("decode input audit: %w", err)
 		}
-		output, err := unmarshalAuditMap(record.OutputJSON)
+		outputs, err := unmarshalAuditMaps(record.OutputJSON)
 		if err != nil {
 			return fmt.Errorf("decode output audit: %w", err)
 		}
-		for _, side := range []struct {
+
+		field := strings.TrimSpace(record.AuditKey)
+		if field == "" {
+			field = strings.TrimSpace(record.EventID)
+		}
+
+		type sideRow struct {
 			table, name string
 			row         map[string]interface{}
-		}{
-			{inputTable, AuditSideInput, input}, {outputTable, AuditSideOutput, output},
-		} {
+		}
+
+		sides := make([]sideRow, 0, 1+len(outputs))
+		if input != nil {
+			sides = append(sides, sideRow{table: inputTable, name: AuditSideInput, row: input})
+		}
+
+		for _, output := range outputs {
+			if output == nil {
+				continue
+			}
+			sides = append(sides, sideRow{table: outputTable, name: AuditSideOutput, row: output})
+		}
+
+		writtenSides := map[string]bool{}
+		for _, side := range sides {
 			if side.row == nil {
 				continue
 			}
-			field := strings.TrimSpace(record.AuditKey)
-			if field == "" {
-				field = strings.TrimSpace(record.EventID)
-			}
 			if field != "" {
-				written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
-				if err != nil {
-					return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+				if _, seen := writtenSides[side.name]; !seen {
+					written, err := commredis.IsAuditSideWritten(commredis.RDB, config.Configs.CommIdempotentKey, field, side.name)
+					if err != nil {
+						return fmt.Errorf("check Core audit marker %s/%s: %w", field, side.name, err)
+					}
+
+					writtenSides[side.name] = written
 				}
-				if written {
+
+				if writtenSides[side.name] {
 					continue
 				}
 			}
@@ -166,6 +186,13 @@ func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error
 			return "", "", err
 		}
 		outputTable, err = approvedTable(config.Configs.IvrOutputTable)
+		return inputTable, outputTable, err
+	case MapperZapCashPushCore:
+		inputTable, err = approvedTable(config.Configs.PushInputAuditTable)
+		if err != nil {
+			return "", "", err
+		}
+		outputTable, err = approvedTable(config.Configs.PushOutputTable)
 		return inputTable, outputTable, err
 	default:
 		return "", "", fmt.Errorf("unsupported zapcash core mapper %q", mapper)
@@ -238,9 +265,10 @@ func executeBatch(parent context.Context, db *gorm.DB, query string, args []inte
 	})
 }
 
-// Core rows are inserted directly (without a per-row transaction) in one
-// multi-VALUES statement per audit table. The async stream record remains
-// pending if the statement fails, so the existing bounded retry/reclaim path applies.
+// Core rows are inserted in multi-VALUES chunks sized by expanded-row parameter
+// count (PUSH fans one stream record into many token outputs). Chunks share one
+// transaction so a mid-batch failure does not leave unmarked partial inserts.
+// The async stream record remains pending if the statement fails.
 func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
@@ -255,24 +283,58 @@ func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, row
 	for column := range columnSet {
 		columns = append(columns, column)
 	}
-
 	sort.Strings(columns)
-	values := make([]string, 0, len(rows))
-	args := make([]interface{}, 0, len(rows)*len(columns))
-	for _, row := range rows {
-		placeholders := make([]string, len(columns))
-		for i, column := range columns {
-			placeholders[i] = "?"
-			args = append(args, row[column])
-		}
 
-		values = append(values, "("+strings.Join(placeholders, ",")+")")
-	}
-
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+	chunkSize := coreAuditBatchRowLimit(len(columns))
 	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
 	defer cancel()
-	return db.WithContext(ctx).Exec(query, args...).Error
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for start := 0; start < len(rows); start += chunkSize {
+			end := start + chunkSize
+			if end > len(rows) {
+				end = len(rows)
+			}
+
+			chunk := rows[start:end]
+			values := make([]string, 0, len(chunk))
+			args := make([]interface{}, 0, len(chunk)*len(columns))
+			for _, row := range chunk {
+				placeholders := make([]string, len(columns))
+				for i, column := range columns {
+					placeholders[i] = "?"
+					args = append(args, row[column])
+				}
+				values = append(values, "("+strings.Join(placeholders, ",")+")")
+			}
+			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+			if err := tx.Exec(query, args...).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// coreAuditBatchRowLimit caps rows so each INSERT stays under the 2,100-parameter
+// budget used by Marketing SMS/WhatsApp writers (safe for MySQL Core too when
+// PUSH expands one CommId into many token rows).
+func coreAuditBatchRowLimit(columnCount int) int {
+	if columnCount < 1 {
+		return 1
+	}
+
+	limit := sqlServerParameterLimit / columnCount
+	if limit < 1 {
+		return 1
+	}
+
+	return limit
+}
+
+// CoreAuditBatchRowLimitForTest exposes the insert chunk size for black-box tests.
+func CoreAuditBatchRowLimitForTest(columnCount int) int {
+	return coreAuditBatchRowLimit(columnCount)
 }
 
 // BatchLimit exposes the stable per-mapper read/write ceiling for startup and
@@ -281,7 +343,7 @@ func BatchLimit(mapper string) int64 {
 	switch mapper {
 	case MapperMarketingSMS:
 		return smsBatchLimit
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
 		return zapCashCoreBatchLimit
 	default:
 		return whatsappBatchLimit
@@ -292,8 +354,10 @@ func BatchParameterCount(mapper string) int {
 	switch mapper {
 	case MapperMarketingSMS:
 		return smsBatchLimit * smsColumnCount
-	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore:
-		return zapCashCoreBatchLimit
+	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
+		// Core writers chunk by expanded rows × columns; the record batch ceiling
+		// stays zapCashCoreBatchLimit and each INSERT stays ≤2100 parameters.
+		return sqlServerParameterLimit
 	default:
 		return whatsappBatchLimit * whatsappColumnCount
 	}

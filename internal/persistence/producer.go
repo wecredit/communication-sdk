@@ -360,4 +360,5 @@ var supportedChannels = map[string]string{
 	"zapcash:rcs":       MapperZapCashRcsCore,
 	"zapcash:whatsapp":  MapperZapCashWhatsappCore,
 	"zapcash:ivr":       MapperZapCashIvrCore,
+	"zapcash:push":      MapperZapCashPushCore,
 }

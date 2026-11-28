@@ -417,6 +417,39 @@ func (s *Service) terminalStore() TerminalStore {
 	return store
 }
 
+// RebuildTerminalOutputAudits rebuilds per-token Output audit maps from the
+// DeviceTokens on the request and Redis terminal notes. Used when a sealed
+// PUSH redelivery must enqueue Core audits without the original FreshOutputAudits.
+func RebuildTerminalOutputAudits(request sdkModels.CommApiRequestBody) ([]map[string]interface{}, error) {
+	runtimeMu.RLock()
+	service := runtimeService
+	runtimeMu.RUnlock()
+	if service == nil {
+		return nil, errors.New("PUSH service is not initialized")
+	}
+	return service.RebuildTerminalOutputAudits(request)
+}
+
+// RebuildTerminalOutputAudits rebuilds one Output audit per unique device token
+// that already has a terminal Redis note.
+func (s *Service) RebuildTerminalOutputAudits(request sdkModels.CommApiRequestBody) ([]map[string]interface{}, error) {
+	outputs := make([]map[string]interface{}, 0, len(request.DeviceTokens))
+	for _, deviceToken := range uniqueTokens(request.DeviceTokens) {
+		fingerprint, err := FingerprintToken(deviceToken)
+		if err != nil {
+			continue
+		}
+		output, _, found, err := s.replayTerminal(request, fingerprint)
+		if err != nil {
+			return nil, err
+		}
+		if found && output != nil {
+			outputs = append(outputs, output)
+		}
+	}
+	return outputs, nil
+}
+
 // NoteFreshTerminals stores devices whose audits were just written, so a retry
 // of an unfinished batch does not submit them again.
 func NoteFreshTerminals(request sdkModels.CommApiRequestBody, outputs []map[string]interface{}) error {
