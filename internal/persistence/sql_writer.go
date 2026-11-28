@@ -190,7 +190,6 @@ func zapCashCoreTables(mapper string) (inputTable, outputTable string, err error
 	case MapperZapCashPushCore:
 		inputTable, err = approvedTable(config.Configs.PushInputAuditTable)
 		if err != nil {
-		
 			return "", "", err
 		}
 		outputTable, err = approvedTable(config.Configs.PushOutputTable)
@@ -266,9 +265,10 @@ func executeBatch(parent context.Context, db *gorm.DB, query string, args []inte
 	})
 }
 
-// Core rows are inserted directly (without a per-row transaction) in one
-// multi-VALUES statement per audit table. The async stream record remains
-// pending if the statement fails, so the existing bounded retry/reclaim path applies.
+// Core rows are inserted in multi-VALUES chunks sized by expanded-row parameter
+// count (PUSH fans one stream record into many token outputs). Chunks share one
+// transaction so a mid-batch failure does not leave unmarked partial inserts.
+// The async stream record remains pending if the statement fails.
 func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
@@ -283,24 +283,58 @@ func insertCoreAuditBatch(parent context.Context, db *gorm.DB, table string, row
 	for column := range columnSet {
 		columns = append(columns, column)
 	}
-
 	sort.Strings(columns)
-	values := make([]string, 0, len(rows))
-	args := make([]interface{}, 0, len(rows)*len(columns))
-	for _, row := range rows {
-		placeholders := make([]string, len(columns))
-		for i, column := range columns {
-			placeholders[i] = "?"
-			args = append(args, row[column])
-		}
 
-		values = append(values, "("+strings.Join(placeholders, ",")+")")
-	}
-
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+	chunkSize := coreAuditBatchRowLimit(len(columns))
 	ctx, cancel := context.WithTimeout(parent, sqlStatementTimeout)
 	defer cancel()
-	return db.WithContext(ctx).Exec(query, args...).Error
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for start := 0; start < len(rows); start += chunkSize {
+			end := start + chunkSize
+			if end > len(rows) {
+				end = len(rows)
+			}
+
+			chunk := rows[start:end]
+			values := make([]string, 0, len(chunk))
+			args := make([]interface{}, 0, len(chunk)*len(columns))
+			for _, row := range chunk {
+				placeholders := make([]string, len(columns))
+				for i, column := range columns {
+					placeholders[i] = "?"
+					args = append(args, row[column])
+				}
+				values = append(values, "("+strings.Join(placeholders, ",")+")")
+			}
+			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", table, strings.Join(columns, ","), strings.Join(values, ","))
+			if err := tx.Exec(query, args...).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// coreAuditBatchRowLimit caps rows so each INSERT stays under the 2,100-parameter
+// budget used by Marketing SMS/WhatsApp writers (safe for MySQL Core too when
+// PUSH expands one CommId into many token rows).
+func coreAuditBatchRowLimit(columnCount int) int {
+	if columnCount < 1 {
+		return 1
+	}
+
+	limit := sqlServerParameterLimit / columnCount
+	if limit < 1 {
+		return 1
+	}
+
+	return limit
+}
+
+// CoreAuditBatchRowLimitForTest exposes the insert chunk size for black-box tests.
+func CoreAuditBatchRowLimitForTest(columnCount int) int {
+	return coreAuditBatchRowLimit(columnCount)
 }
 
 // BatchLimit exposes the stable per-mapper read/write ceiling for startup and
@@ -321,7 +355,9 @@ func BatchParameterCount(mapper string) int {
 	case MapperMarketingSMS:
 		return smsBatchLimit * smsColumnCount
 	case MapperZapCashRcsCore, MapperZapCashWhatsappCore, MapperZapCashIvrCore, MapperZapCashPushCore:
-		return zapCashCoreBatchLimit
+		// Core writers chunk by expanded rows × columns; the record batch ceiling
+		// stays zapCashCoreBatchLimit and each INSERT stays ≤2100 parameters.
+		return sqlServerParameterLimit
 	default:
 		return whatsappBatchLimit * whatsappColumnCount
 	}

@@ -449,15 +449,17 @@ func HandleShouldHitVendorOffError(msg sdkModels.CommApiRequestBody) error {
 	return UpdateRedisErrorMessage(msg, errorMessage)
 }
 
-// EvaluateZapCashSendCutoff blocks ZapCash vendor hits at/after ZAPCASH_SEND_CUTOFF_HOUR_IST (IST).
+// EvaluateZapCashSendCutoff blocks ZapCash vendor hits outside
+// [ZAPCASH_SEND_OPEN_HOUR_IST, ZAPCASH_SEND_CUTOFF_HOUR_IST) IST (defaults 08–21).
 // Non-ZapCash clients are always allowed. Uses the shared policy IST clock.
 func EvaluateZapCashSendCutoff(client string) policy.Decision {
-	hour := policy.ParseZapCashSendCutoffHourIST(config.Configs.ZapCashSendCutoffHourIST)
-	return policy.EvaluateZapCashSendCutoff(client, policy.Now(), hour)
+	openHour := policy.ParseZapCashSendOpenHourIST(config.Configs.ZapCashSendOpenHourIST)
+	cutoffHour := policy.ParseZapCashSendCutoffHourIST(config.Configs.ZapCashSendCutoffHourIST)
+	return policy.EvaluateZapCashSendCutoff(client, policy.Now(), openHour, cutoffHour)
 }
 
 // HandleZapCashSendCutoffError seals the Redis claim with the cutoff decision so
-// a failed SQS delete cannot re-dial after 20:00 IST.
+// a failed SQS delete cannot re-dial outside the send window.
 func HandleZapCashSendCutoffError(msg sdkModels.CommApiRequestBody, decision policy.Decision) error {
 	if decision.Allowed() {
 		return nil
@@ -466,7 +468,7 @@ func HandleZapCashSendCutoffError(msg sdkModels.CommApiRequestBody, decision pol
 	return UpdateRedisErrorMessage(msg, decision.ErrorMessage())
 }
 
-// ZapCashSendCutoffBlocksVendor is true when ZapCash is past ZAPCASH_SEND_CUTOFF_HOUR_IST.
+// ZapCashSendCutoffBlocksVendor is true when ZapCash is outside the IST send window.
 // Call after ratelimit.WaitFor so a pre-hour admit cannot hit the provider past the hour.
 func ZapCashSendCutoffBlocksVendor(client string) (blocked bool, message string) {
 	decision := EvaluateZapCashSendCutoff(client)

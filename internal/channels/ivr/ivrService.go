@@ -259,9 +259,13 @@ func deferZapCashCoreAudits(client, channel string) bool {
 func finalizeAudits(data sdkModels.CommApiRequestBody, inputAudit map[string]interface{}, templateName string, isSent bool, responseMessage, transactionID, campaignID string) AttemptResult {
 	input, output := buildAuditMaps(data, inputAudit, templateName, isSent, responseMessage, transactionID, campaignID)
 	if deferZapCashCoreAudits(data.Client, data.Channel) {
+		// Terminal not-sent / provider rejects must still ACK SQS even when the
+		// async Core stream is paused — otherwise overnight reclaim redials.
+		// Accepted dials keep hold-ACK until enqueue succeeds (repair on sealed redelivery).
 		return AttemptResult{
 			Accepted:        isSent,
 			DeferredPersist: true,
+			DeleteMessage:   !isSent,
 			InputAudit:      input,
 			OutputAudit:     output,
 		}

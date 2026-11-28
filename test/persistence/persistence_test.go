@@ -359,6 +359,29 @@ func TestBatchLimitsStayBelowSQLServerParameterLimit(t *testing.T) {
 	if got := persistence.BatchParameterCount(persistence.MapperMarketingWhatsapp); got != 1470 || got > 2100 {
 		t.Fatalf("WhatsApp parameters = %d, want 1470 and <=2100", got)
 	}
+	if got := persistence.BatchParameterCount(persistence.MapperZapCashPushCore); got > 2100 {
+		t.Fatalf("ZapCash Core parameter budget = %d, want <=2100", got)
+	}
+}
+
+func TestCoreAuditBatchChunksExpandedPushRows(t *testing.T) {
+	// Nine-column PUSH output rows: 2100/9 = 233 rows per INSERT chunk.
+	const columns = 9
+	limit := persistence.CoreAuditBatchRowLimitForTest(columns)
+	if limit != 2100/columns {
+		t.Fatalf("row limit = %d, want %d", limit, 2100/columns)
+	}
+	expanded := 50 * 5 // 50 stream records × 5 tokens
+	if expanded <= limit {
+		t.Fatalf("fixture too small to require chunking: expanded=%d limit=%d", expanded, limit)
+	}
+	chunks := (expanded + limit - 1) / limit
+	if chunks < 2 {
+		t.Fatalf("expected multiple chunks for %d rows at limit %d", expanded, limit)
+	}
+	if limit*columns > 2100 {
+		t.Fatalf("chunk would exceed parameter limit: %d", limit*columns)
+	}
 }
 
 func TestBusinessLockKeysUseLaneAndNonPIIIdentity(t *testing.T) {

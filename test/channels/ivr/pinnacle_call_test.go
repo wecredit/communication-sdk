@@ -153,11 +153,12 @@ func TestIVRSendCutoffBlocksBeforePostSingleCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("at_20_00_blocks", func(t *testing.T) {
+	t.Run("at_21_00_blocks", func(t *testing.T) {
 		env := startIVR(t)
-		config.Configs.ZapCashSendCutoffHourIST = "20"
+		config.Configs.ZapCashSendOpenHourIST = "8"
+		config.Configs.ZapCashSendCutoffHourIST = "21"
 		restoreClock := policy.SetClockForTest(func() time.Time {
-			return time.Date(2026, 11, 27, 20, 0, 0, 0, loc)
+			return time.Date(2026, 11, 27, 21, 0, 0, 0, loc)
 		})
 		t.Cleanup(restoreClock)
 
@@ -177,17 +178,36 @@ func TestIVRSendCutoffBlocksBeforePostSingleCall(t *testing.T) {
 		}
 	})
 
-	t.Run("at_19_59_allows", func(t *testing.T) {
+	t.Run("overnight_blocks_without_dial", func(t *testing.T) {
 		env := startIVR(t)
-		config.Configs.ZapCashSendCutoffHourIST = "20"
+		config.Configs.ZapCashSendOpenHourIST = "8"
+		config.Configs.ZapCashSendCutoffHourIST = "21"
 		restoreClock := policy.SetClockForTest(func() time.Time {
-			return time.Date(2026, 11, 27, 19, 59, 0, 0, loc)
+			return time.Date(2026, 11, 28, 0, 22, 0, 0, loc)
+		})
+		t.Cleanup(restoreClock)
+
+		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{"Mobile": int64(7014850582)})
+		if env.calls.Load() != 0 {
+			t.Fatalf("overnight leftover must not dial: calls=%d", env.calls.Load())
+		}
+		if !got.DeleteMessage {
+			t.Fatal("overnight cutoff must delete SQS")
+		}
+	})
+
+	t.Run("at_20_59_allows", func(t *testing.T) {
+		env := startIVR(t)
+		config.Configs.ZapCashSendOpenHourIST = "8"
+		config.Configs.ZapCashSendCutoffHourIST = "21"
+		restoreClock := policy.SetClockForTest(func() time.Time {
+			return time.Date(2026, 11, 27, 20, 59, 0, 0, loc)
 		})
 		t.Cleanup(restoreClock)
 
 		got := ivr.SendAttempt(context.Background(), env.request(), map[string]interface{}{})
 		if env.calls.Load() != 1 {
-			t.Fatalf("19:59 should dial: calls=%d delete=%v deferred=%v", env.calls.Load(), got.DeleteMessage, got.DeferredPersist)
+			t.Fatalf("20:59 should dial: calls=%d delete=%v deferred=%v", env.calls.Load(), got.DeleteMessage, got.DeferredPersist)
 		}
 	})
 
